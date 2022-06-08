@@ -52,10 +52,10 @@ def parse_message(update, context) -> None:
                                                update.message.message_id,
                                                media=InputMediaPhoto('img/pixel.jpeg'))
                 logger.info(f"delete_message from {name} bot: {update.message.text}")
-            except:
-                sleep(10)
-                context.bot.delete_message(update.effective_chat.id, update.message.message_id)
-                logger.info(f"delete_message from {name} bot: {update.message.text}")
+            # except:
+            #     sleep(10)
+            #     context.bot.delete_message(update.effective_chat.id, update.message.message_id)
+            #     logger.info(f"delete_message from {name} bot: {update.message.text}")
     msg = clean_string(update.message.text.lower())
     _id = update.message.from_user.id
     text, prob = ifs(msg, _id, context.bot_data["spam_mode"])
