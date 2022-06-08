@@ -1,0 +1,172 @@
+Index: utils.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from numpy.random import normal, uniform\nfrom time import sleep\nfrom random import choice\nfrom quotes import quotes\nimport string\nfrom const import *\nfrom probabilities import *\nfrom typing import Tuple\nfrom pprint import pprint\n\n\ndef sleep_choice(choices):\n    sleep(choice(choices))\n\n\ndef quote_choice() -> str:\n    return choice(quotes)\n\n\ndef clean_string(s: str = '') -> str:\n    return s.translate(str.maketrans('', '', string.punctuation))\n\n\ndef check_is_in(msg: str, sentences: list) -> bool:\n    return any([word in msg for word in sentences])\n\n\ndef check_admin(uid: int, admins_list) -> bool:\n    return uid in admins_list\n\n\ndef roll_probability(percent: float = 0.5) -> bool:\n    mu, sigma = 0.5, 0.15\n    return abs(normal(mu, sigma)) >= percent\n\n\ndef draw_probs(spam_mode: str,\n               keys: tuple):\n    if spam_mode == \"chaos\":\n        prob_dict = {key: uniform(0, 1) for key in keys}\n    elif spam_mode == \"soft\":\n        prob_dict = {key: uniform(.35, 1) for key in keys}\n    elif spam_mode == \"medium\":\n        prob_dict = {key: uniform(.5, 1) for key in keys}\n    elif spam_mode == \"rare\":\n        prob_dict = {key: uniform(.8, 1) for key in keys}\n    else:\n        prob_dict = {key: .75 for key in keys}\n    return prob_dict\n\n\ndef ifs(msg: str = None, spam_mode: str = \"medium\") -> Tuple[str, int]:\n    text = None\n    prob = 0\n    keys_choice = (\"josko\", \"pizdec\", \"duck\", \"no\", \"yes\", \"scene\", \"betrayal\", \"fuck_you\",\n                   \"snail\", \"belmondo_hi\", \"davai\", \"a\", \"pizdet\", \"balabama\", \"box\")\n    prob_dict = draw_probs(spam_mode, keys_choice)\n\n    if check_is_in(msg, josko_conditions):\n        text = choice(JOSKO)\n        prob = roll_probability(prob_dict[\"josko\"])\n    elif check_is_in(msg, pizdec_ebok):\n        text = choice(PIZDEC)\n        prob = roll_probability(prob_dict[\"pizdec\"])\n    elif check_is_in(msg, oxxxy_list):\n        print(oxxxy_rap)\n        text = choice(oxxxy_rap)\n        prob = 1\n    elif \"жя\" in msg:\n        text = \"Тось, иди нахуй.\"\n        prob = 1\n    elif \"кря\" in msg:\n        text = \"Кря!\"\n        prob = roll_probability(prob_dict[\"duck\"])\n    elif \"нет\" in msg:\n        text = \"Пидора ответ!\"\n        if msg == \"нет\":\n            prob = roll_probability(prob_dict[\"no\"])\n        else:\n            prob = roll_probability(.9)\n    elif \"да\" in msg:\n        text = \"Пизда!\"\n        if msg == \"да\":\n            prob = roll_probability(prob_dict[\"yes\"])\n        else:\n            prob = roll_probability(.911)\n    elif check_is_in(msg, scene_msg):\n        text = choice(movie_here)\n        prob = 1\n    elif check_is_in(msg, betrayal):\n        text = \"в кинетическую спину потенциального друга!\"\n        prob = 1\n    elif \"бельмор\" in msg or msg == \"бельморда\" or msg == \"бот лох\" or msg == \"бот лопух\":\n        text = choice(fuck_you)\n        prob = 1\n    elif \"\uD83D\uDC0C\" in msg:\n        text = choice(snail)\n        prob = roll_probability(prob_dict[\"snail\"])\n    elif \"улит\" in msg:\n        text = choice(snail)\n        prob = roll_probability(.75)\n    elif check_is_in(msg, belmondo_hi):\n        text = choice(profi_here)\n        prob = 1\n    elif \"ну давай\" in msg:\n        text = \"аа ню давай!\"\n        prob = roll_probability(.75)\n    elif \"а?\" == msg or \"а\" == msg:\n        text = \"A?\"\n        prob = roll_probability(.51488)\n    elif \"чича\" in msg:\n        text = \"Лучший!\"\n        prob = roll_probability(.35)\n    elif \"пиздеть\" in msg:\n        text = \"кто ПИЗДЕЛ?!\"\n        prob = roll_probability(.35)\n    elif \"индидей\" in msg:\n        text = \"Индидейка, чувак. Индидейка!\"\n        prob = roll_probability(.35)\n    elif check_is_in(msg, balabama):\n        text = choice(balabama_here)\n        prob = roll_probability(.35)\n    elif \"боксер\" in msg:\n        text = \"он боксёр\"\n        prob = roll_probability(.75)\n    return text, prob\n\ndef _ifs(msg: str = None) -> Tuple[str, int]:\n    text = None\n    prob = 0\n    if check_is_in(msg, josko_conditions):\n        text = choice(JOSKO)\n        prob = roll_probability()\n    elif check_is_in(msg, pizdec_ebok):\n        text = choice(PIZDEC)\n        prob = roll_probability(.6969)\n    elif check_is_in(msg, oxxxy_list):\n        print(oxxxy_rap)\n        text = choice(oxxxy_rap)\n        prob = 1\n    elif \"жя\" in msg:\n        text = \"Тось, иди нахуй.\"\n        prob = 1\n    elif \"кря\" in msg:\n        text = \"Кря!\"\n        prob = roll_probability(.25)\n    elif \"нет\" in msg:\n        text = \"Пидора ответ!\"\n        if msg == \"нет\":\n            prob = roll_probability()\n        else:\n            prob = roll_probability(.9)\n    elif \"да\" in msg:\n        text = \"Пизда!\"\n        if msg == \"да\":\n            prob = roll_probability()\n        else:\n            prob = roll_probability(.911)\n    elif check_is_in(msg, scene_msg):\n        text = choice(movie_here)\n        prob = 1\n    elif check_is_in(msg, betrayal):\n        text = \"в кинетическую спину потенциального друга!\"\n        prob = 1\n    elif \"бельмор\" in msg or msg == \"бельморда\" or msg == \"бот лох\" or msg == \"бот лопух\":\n        text = choice(fuck_you)\n        prob = 1\n    elif \"\uD83D\uDC0C\" in msg:\n        text = choice(snail)\n        prob = roll_probability(.5)\n    elif \"улит\" in msg:\n        text = choice(snail)\n        prob = roll_probability(.75)\n    elif check_is_in(msg, belmondo_hi):\n        text = choice(profi_here)\n        prob = 1\n    elif \"ну давай\" in msg:\n        text = \"аа ню давай!\"\n        prob = roll_probability(.75)\n    elif \"а?\" == msg or \"а\" == msg:\n        text = \"A?\"\n        prob = roll_probability(.51488)\n    elif \"чича\" in msg:\n        text = \"Лучший!\"\n        prob = roll_probability(.35)\n    elif \"пиздеть\" in msg:\n        text = \"кто ПИЗДЕЛ?!\"\n        prob = roll_probability(.35)\n    elif \"индидей\" in msg:\n        text = \"Индидейка, чувак. Индидейка!\"\n        prob = roll_probability(.35)\n    elif check_is_in(msg, balabama):\n        text = choice(balabama_here)\n        prob = roll_probability(.35)\n    elif \"боксер\" in msg:\n        text = \"он боксёр\"\n        prob = roll_probability(.75)\n    return text, prob
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/utils.py b/utils.py
+--- a/utils.py	(revision 037d0b1b24738812063f988b6639f87186dff9e0)
++++ b/utils.py	(date 1654622449574)
+@@ -4,7 +4,6 @@
+ from quotes import quotes
+ import string
+ from const import *
+-from probabilities import *
+ from typing import Tuple
+ from pprint import pprint
+ 
+Index: main.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import datetime\nfrom telegram import Bot\nfrom telegram.ext import Updater, CommandHandler, MessageHandler, Filters\nimport fire\n\nfrom random import choice\nfrom logger import get_logger\nfrom utils import *\nfrom const import *\n\n\nlogger = get_logger(\"Belmondo Logger\")\n# TODO: команда квас - прокидывает картинку бомжа в ответ\n# TODO: дебажить завод\n# TODO: не работает удалялка говнобота - нужен фастфикс\n# TODO: playlist c oxхxy в ответ на команду окси\n# TODO: если кря крутит пингвин - то единичка вероятность\n# TODO: переписать глобалы на bot_data\n# TODO: блочить спам стикерами от одного человека\n# TODO: упдайтить счетчик фемосрача\n\n\ndef quote(update, context) -> None:\n    text = quote_choice()\n    logger.info(f\"quote: {text[:10]}...\")\n    context.bot.send_message(chat_id=update.effective_chat.id,\n                             text=text)\n\n\ndef answer_message(update, context) -> None:\n    text = None\n    prob = 0\n\n    msg = clean_string(update.message.text.lower())\n    text, prob = ifs(msg, context.bot_data[\"spam_mode\"])\n    logger.info(f\"answer_message: {text} and flag to show was {prob}\")\n    # send sticker\n    if \"любителям синтетики\" in msg:\n        with open(\"GM.webp\", \"rb\") as f:\n            context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker\n            logger.info(\"answer_message: sticker sended\")\n    if text == \"О, морская!\" and prob:\n            with open(\"img/snail.jpeg\", \"rb\") as f:\n                context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)\n            logger.info(\"answer_message: snail photo sended\")\n    if text is not None and prob:\n        context.bot.send_message(chat_id=update.effective_chat.id,\n                                 reply_to_message_id=update.message.message_id,\n                                 text=text,\n                                 parse_mode=\"markdown\")\n\n\ndef delete_message(update, context) -> None:\n    condition = update.message.via_bot.id == SHIT_BOT_ID\n    if condition:\n        sleep_choice(CHOICES)\n        context.bot.delete_message(update.effective_chat.id, update.message.message_id)\n        logger.info(f\"delete_message: {update.message.text}\")\n\n\ndef delete_dice(update, context) -> None:\n    if update.message.dice.emoji in emojis:\n        sleep_choice(CHOICES)\n        context.bot.delete_message(update.effective_chat.id,\n                                   update.message.message_id)\n        logger.info(f\"delete_dice: {update.message.text}\")\n\n\ndef send_morning_sticker(update, context) -> None:\n    bot_data = context.bot_data\n\n    # text = \"Русские, в офис / на завод!\\n\" \\\n    #        \"...loading...\"\n    context.bot.send_message(chat_id=update.effective_chat.id,\n                             reply_to_message_id=update.message.message_id,\n                             text=text,\n                             parse_mode=\"markdown\")\n    logger.info(F\"send_morning_sticker: morning sticker sended\")\n    # username = update.effective_user.username\n    # if dt is None:\n    #     dt = datetime.datetime.now()\n    #     ZAVOD_CHECK = True\n    # else:\n    #     ZAVOD_CHECK = (datetime.datetime.now() - dt).days > 0\n    # if ZAVOD_CHECK:\n    #     zavod_text = f\"Офисчанин/Заводчанин дня - @{username}!\"\n    #     context.bot.send_message(chat_id=update.effective_chat.id,\n    #                              text=zavod_text)\n    #     with open(\"GM.webp\", \"rb\") as f:\n    #         context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker\n    #\n    # else:\n    #     text = \"Поздно, другалёчек!\\n\" + zavod_text.strip(\"@\")\n    #     context.bot.send_message(chat_id=update.effective_chat.id,\n    #                              text=text)\n\n\ndef roll_dice(update, context) -> None:\n    context.bot.send_dice(chat_id=update.effective_message.chat_id,\n                          reply_to_message_id=update.message.message_id)\n    logger.info(f\"roll_dice: success\")\n\n\ndef my_handler(update, context):\n    print(context.args)\n\n\ndef main(mode: str = \"dev\",\n         spam_mode: str = \"medium\") -> None:\n    vars_dict[\"spam_mode\"] = spam_mode\n    if mode == \"dev\" or mode is None:\n        bot = Bot(DEV_TOKEN)\n        updater = Updater(token=DEV_TOKEN, use_context=True)\n    elif mode == \"prod\":\n        bot = Bot(TOKEN)\n        updater = Updater(token=TOKEN, use_context=True)\n    else:\n        print(\"Да ты охуел, пидор\")\n    dispatcher = updater.dispatcher\n    job = updater.job_queue\n    dispatcher.bot_data.update(vars_dict)\n\n    quote_handler = CommandHandler(\"quote\", quote)\n    dispatcher.add_handler(quote_handler)\n\n    answer_handler = MessageHandler(Filters.text & (~Filters.command), answer_message)\n    dispatcher.add_handler(answer_handler)\n\n    delete_handler = MessageHandler(Filters.text & (~Filters.command), delete_message)\n    dispatcher.add_handler(delete_handler)\n\n    delete_dice_handler = MessageHandler(Filters.dice, delete_dice)\n    dispatcher.add_handler(delete_dice_handler)\n\n    morning_handler = CommandHandler(\"zavod\", send_morning_sticker)\n    dispatcher.add_handler(morning_handler)\n\n    roll_handler = CommandHandler(\"roll\", roll_dice)\n    dispatcher.add_handler(roll_handler)\n\n    updater.dispatcher.add_handler(CommandHandler('cmd', my_handler, pass_args=True))\n\n    updater.start_polling()\n    updater.idle()\n\n\nif __name__ == '__main__':\n    fire.Fire(main)\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/main.py b/main.py
+--- a/main.py	(revision 037d0b1b24738812063f988b6639f87186dff9e0)
++++ b/main.py	(date 1654622774713)
+@@ -4,109 +4,30 @@
+ import fire
+ 
+ from random import choice
++from pprint import pprint
+ from logger import get_logger
+ from utils import *
+ from const import *
+ 
+ 
+ logger = get_logger("Belmondo Logger")
+-# TODO: команда квас - прокидывает картинку бомжа в ответ
+-# TODO: дебажить завод
+-# TODO: не работает удалялка говнобота - нужен фастфикс
+-# TODO: playlist c oxхxy в ответ на команду окси
+-# TODO: если кря крутит пингвин - то единичка вероятность
+-# TODO: переписать глобалы на bot_data
+-# TODO: блочить спам стикерами от одного человека
+-# TODO: упдайтить счетчик фемосрача
+-
+-
+-def quote(update, context) -> None:
+-    text = quote_choice()
+-    logger.info(f"quote: {text[:10]}...")
+-    context.bot.send_message(chat_id=update.effective_chat.id,
+-                             text=text)
+-
+-
+-def answer_message(update, context) -> None:
+-    text = None
+-    prob = 0
+-
+-    msg = clean_string(update.message.text.lower())
+-    text, prob = ifs(msg, context.bot_data["spam_mode"])
+-    logger.info(f"answer_message: {text} and flag to show was {prob}")
+-    # send sticker
+-    if "любителям синтетики" in msg:
+-        with open("GM.webp", "rb") as f:
+-            context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+-            logger.info("answer_message: sticker sended")
+-    if text == "О, морская!" and prob:
+-            with open("img/snail.jpeg", "rb") as f:
+-                context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+-            logger.info("answer_message: snail photo sended")
+-    if text is not None and prob:
+-        context.bot.send_message(chat_id=update.effective_chat.id,
+-                                 reply_to_message_id=update.message.message_id,
+-                                 text=text,
+-                                 parse_mode="markdown")
+ 
+ 
+ def delete_message(update, context) -> None:
+-    condition = update.message.via_bot.id == SHIT_BOT_ID
++    condition = update.message.via_bot.id == SHIT_BOT_ID or update.message.via_bot.id == "HowYourBot"
+     if condition:
+         sleep_choice(CHOICES)
+         context.bot.delete_message(update.effective_chat.id, update.message.message_id)
+         logger.info(f"delete_message: {update.message.text}")
+ 
+ 
+-def delete_dice(update, context) -> None:
+-    if update.message.dice.emoji in emojis:
+-        sleep_choice(CHOICES)
+-        context.bot.delete_message(update.effective_chat.id,
+-                                   update.message.message_id)
+-        logger.info(f"delete_dice: {update.message.text}")
+-
+-
+-def send_morning_sticker(update, context) -> None:
+-    bot_data = context.bot_data
+-
+-    # text = "Русские, в офис / на завод!\n" \
+-    #        "...loading..."
+-    context.bot.send_message(chat_id=update.effective_chat.id,
+-                             reply_to_message_id=update.message.message_id,
+-                             text=text,
+-                             parse_mode="markdown")
+-    logger.info(F"send_morning_sticker: morning sticker sended")
+-    # username = update.effective_user.username
+-    # if dt is None:
+-    #     dt = datetime.datetime.now()
+-    #     ZAVOD_CHECK = True
+-    # else:
+-    #     ZAVOD_CHECK = (datetime.datetime.now() - dt).days > 0
+-    # if ZAVOD_CHECK:
+-    #     zavod_text = f"Офисчанин/Заводчанин дня - @{username}!"
+-    #     context.bot.send_message(chat_id=update.effective_chat.id,
+-    #                              text=zavod_text)
+-    #     with open("GM.webp", "rb") as f:
+-    #         context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+-    #
+-    # else:
+-    #     text = "Поздно, другалёчек!\n" + zavod_text.strip("@")
+-    #     context.bot.send_message(chat_id=update.effective_chat.id,
+-    #                              text=text)
+-
+-
+-def roll_dice(update, context) -> None:
+-    context.bot.send_dice(chat_id=update.effective_message.chat_id,
+-                          reply_to_message_id=update.message.message_id)
+-    logger.info(f"roll_dice: success")
+-
+-
+ def my_handler(update, context):
+     print(context.args)
+ 
+ 
+ def main(mode: str = "dev",
+          spam_mode: str = "medium") -> None:
++    logger.info(f"bot enabled")
+     vars_dict["spam_mode"] = spam_mode
+     if mode == "dev" or mode is None:
+         bot = Bot(DEV_TOKEN)
+@@ -117,29 +38,12 @@
+     else:
+         print("Да ты охуел, пидор")
+     dispatcher = updater.dispatcher
+-    job = updater.job_queue
++
+     dispatcher.bot_data.update(vars_dict)
+ 
+-    quote_handler = CommandHandler("quote", quote)
+-    dispatcher.add_handler(quote_handler)
+-
+-    answer_handler = MessageHandler(Filters.text & (~Filters.command), answer_message)
+-    dispatcher.add_handler(answer_handler)
+-
+     delete_handler = MessageHandler(Filters.text & (~Filters.command), delete_message)
+     dispatcher.add_handler(delete_handler)
+ 
+-    delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
+-    dispatcher.add_handler(delete_dice_handler)
+-
+-    morning_handler = CommandHandler("zavod", send_morning_sticker)
+-    dispatcher.add_handler(morning_handler)
+-
+-    roll_handler = CommandHandler("roll", roll_dice)
+-    dispatcher.add_handler(roll_handler)
+-
+-    updater.dispatcher.add_handler(CommandHandler('cmd', my_handler, pass_args=True))
+-
+     updater.start_polling()
+     updater.idle()
+ 
