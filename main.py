@@ -47,11 +47,11 @@ def parse_message(update, context) -> None:
             logger.info(f"delete_message from {name} bot: {update.message.text}")
         elif godnoscop_bot:
             name = "godnoscop"
-            try:
-                context.bot.edit_message_media(update.effective_chat.id,
-                                               update.message.message_id,
-                                               media=InputMediaPhoto('img/pixel.jpeg'))
-                logger.info(f"delete_message from {name} bot: {update.message.text}")
+            # try:
+            context.bot.edit_message_media(update.effective_chat.id,
+                                           update.message.message_id,
+                                           media=InputMediaPhoto('img/pixel.jpeg'))
+            logger.info(f"delete_message from {name} bot: {update.message.text}")
             # except:
             #     sleep(10)
             #     context.bot.delete_message(update.effective_chat.id, update.message.message_id)
