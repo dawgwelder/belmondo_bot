@@ -38,7 +38,7 @@ def parse_message(update, context) -> None:
     print(update)
 
     # delete shit
-    if update.message.via_bot:
+    if update.message & update.message.via_bot:
         shit_bot = update.message.via_bot.id == SHIT_BOT_ID  # or update.message.via_bot.username == "HowYourBot"
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
         if shit_bot:
@@ -106,18 +106,21 @@ def send_morning(update, context) -> None:
         bot_data["dt"] = datetime.datetime.now()
         bot_data["ZAVOD_CHECK"] = True
     else:
-        bot_data["ZAVOD_CHECK"] = (datetime.datetime.now() - bot_data["dt"]).seconds > 1  # days > 0
+        bot_data["ZAVOD_CHECK"] = (datetime.datetime.now() - bot_data["dt"]).days > 0
+        bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
-        zavod_user = f"Офисчанин/Заводчанин дня - @{username}!"
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text=zavod_user)
-        with open("GM.webp", "rb") as f:
-            context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-        logger.info(F"send_morning: zavod success!")
+        file = choice(["img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"])
+        with open(file, "rb") as f:
+            zavod_user = f"Офисчанин/Заводчанин дня - @{username}!"
+            context.bot.send_photo(chat_id=update.effective_chat.id,
+                                   reply_to_message_id=update.message.message_id,
+                                   caption=zavod_user,
+                                   photo=f)
+            logger.info(F"send_morning: zavod success!")
 
     else:
-        zavod_user = zavod_user.replace("@", '')
-        text = f"fПоздно, другалёчек!\n{zavod_user}"
+        zavod_user = bot_data["username"].replace("@", '')
+        text = f"Поздно, другалёчек!\n" + f"Офисчанин/Заводчанин дня - @{zavod_user}!"
         context.bot.send_message(chat_id=update.effective_chat.id,
                                  text=text)
         logger.info(F"send_morning: zavod success but late!")

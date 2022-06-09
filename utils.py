@@ -21,7 +21,10 @@ def clean_string(s: str = '') -> str:
 
 
 def check_is_in(msg: str, sentences: list) -> bool:
-    return any([word in msg for word in sentences])
+    for word in sentences:
+        if word in msg:
+            return True
+
 
 
 def check_admin(uid: int, admins_list) -> bool:

@@ -13,7 +13,8 @@ josko_conditions = ["жестк", "жостк", "жоск", "жеск"]
 vars_dict = {"ZAVOD_CHECK": False,
              "dt": None,
              "zavod_text": "",
-             "spam_mode": "medium"}
+             "spam_mode": "medium",
+             "username": None}
 
 emojis = ["🎯", "🏀", "⚽", "🎰", "🎳"]
 pizdec_ebok = ["пиздец", "ебок"]
