@@ -54,7 +54,7 @@ def parse_message(update, context) -> None:
                                                media=InputMediaPhoto('img/pixel.jpeg'))
                 logger.info(f"delete_message from {name} bot: {update.message.text}")
             except:
-                context.bot.send_message(update.effective_chat.id, update.message.text)
+                context.bot.send_message(update.effective_chat.id, update.message.text.replace('#No War', ''))
                 context.bot.delete_message(update.effective_chat.id, update.message.message_id)
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
     msg = clean_string(update.message.text.lower())
