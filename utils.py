@@ -67,7 +67,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         text = choice(oxxxy_rap)
         prob = True
     elif "жя" in msg:
-        text = "Тось, иди нахуй."
+        text = choice["Татьяна, иди нахрен.", "Нормы РУССКОГО языка, Татьяна!"]
         prob = True
     elif "кря" in msg:
         text = "Кря!"
@@ -113,12 +113,15 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         prob = roll_probability(.51488)
     elif "чича" in msg:
         text = "Лучший!"
-        prob = roll_probability(.35)
+        prob = roll_probability(.5)
     elif "пиздеть" in msg or "пиздел" in msg:
         text = "кто ПИЗДЕЛ?!"
-        prob = roll_probability(.25)
+        prob = roll_probability(.45)
     elif "индидей" in msg:
         text = "Индидейка, чувак. Индидейка!"
+        prob = roll_probability(.35)
+    elif "индедей" in msg:
+        text = "Индедейка, чувак. Индедейка!"
         prob = roll_probability(.35)
     elif check_is_in(msg, balabama):
         text = choice(balabama_here)

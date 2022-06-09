@@ -20,6 +20,7 @@ logger = get_logger("Belmondo Logger")
 # TODO: блочить спам стикерами от одного человека
 # TODO: упдайтить счетчик фемосрача
 # TODO: удалять гороскопу фото? Удалять гороскопы?
+# HINT: Копировать текст гороскопа, присылать, исходное удалять
 
 
 def quote(update, context) -> None:
@@ -47,15 +48,15 @@ def parse_message(update, context) -> None:
             logger.info(f"delete_message from {name} bot: {update.message.text}")
         elif godnoscop_bot:
             name = "godnoscop"
-            # try:
-            context.bot.edit_message_media(update.effective_chat.id,
-                                           update.message.message_id,
-                                           media=InputMediaPhoto('img/pixel.jpeg'))
-            logger.info(f"delete_message from {name} bot: {update.message.text}")
-            # except:
-            #     sleep(10)
-            #     context.bot.delete_message(update.effective_chat.id, update.message.message_id)
-            #     logger.info(f"delete_message from {name} bot: {update.message.text}")
+            try:
+                context.bot.edit_message_media(update.effective_chat.id,
+                                               update.message.message_id,
+                                               media=InputMediaPhoto('img/pixel.jpeg'))
+                logger.info(f"delete_message from {name} bot: {update.message.text}")
+            except:
+                context.bot.send_message(update.effective_chat.id, update.message.text)
+                context.bot.delete_message(update.effective_chat.id, update.message.message_id)
+                logger.info(f"edited_message from {name} bot: {update.message.text}")
     msg = clean_string(update.message.text.lower())
     _id = update.message.from_user.id
     text, prob = ifs(msg, _id, context.bot_data["spam_mode"])
@@ -69,6 +70,12 @@ def parse_message(update, context) -> None:
             with open("img/snail.jpeg", "rb") as f:
                 context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
             logger.info("answer_message: snail photo sended")
+    if msg == "вот так вот":
+            with open("img/nevsky.jpeg", "rb") as f:
+                context.bot.send_photo(chat_id=update.effective_chat.id,
+                                       reply_to_message_id=update.message.message_id,
+                                       photo=f)
+            logger.info("answer_message: nevsky photo sended")
     if text is not None and prob:
         context.bot.send_message(chat_id=update.effective_chat.id,
                                  reply_to_message_id=update.message.message_id,
