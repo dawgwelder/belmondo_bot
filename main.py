@@ -57,30 +57,31 @@ def parse_message(update, context) -> None:
                 context.bot.send_message(update.effective_chat.id, update.message.text.replace('#NoWar', ''))
                 context.bot.delete_message(update.effective_chat.id, update.message.message_id)
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
-    msg = clean_string(update.message.text.lower())
-    _id = update.message.from_user.id
-    text, prob = ifs(msg, _id, context.bot_data["spam_mode"])
-    logger.info(f"answer_message: {text} and flag to show was {bool(prob)}")
-    # send sticker
-    if "любителям синтетики" in msg:
-        with open("GM.webp", "rb") as f:
-            context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-            logger.info("answer_message: sticker sended")
-    if text == "О, морская!" and prob:
-            with open("img/snail.jpeg", "rb") as f:
-                context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-            logger.info("answer_message: snail photo sended")
-    if msg == "вот так вот":
-            with open("img/nevsky.jpeg", "rb") as f:
-                context.bot.send_photo(chat_id=update.effective_chat.id,
-                                       reply_to_message_id=update.message.message_id,
-                                       photo=f)
-            logger.info("answer_message: nevsky photo sended")
-    if text is not None and prob:
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 reply_to_message_id=update.message.message_id,
-                                 text=text,
-                                 parse_mode="markdown")
+    if update.message.text is not None:
+        msg = clean_string(update.message.text.lower())
+        _id = update.message.from_user.id
+        text, prob = ifs(msg, _id, context.bot_data["spam_mode"])
+        logger.info(f"answer_message: {text} and flag to show was {bool(prob)}")
+        # send sticker
+        if "любителям синтетики" in msg:
+            with open("GM.webp", "rb") as f:
+                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                logger.info("answer_message: sticker sended")
+        if text == "О, морская!" and prob:
+                with open("img/snail.jpeg", "rb") as f:
+                    context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+                logger.info("answer_message: snail photo sended")
+        if msg == "вот так вот":
+                with open("img/nevsky.jpeg", "rb") as f:
+                    context.bot.send_photo(chat_id=update.effective_chat.id,
+                                           reply_to_message_id=update.message.message_id,
+                                           photo=f)
+                logger.info("answer_message: nevsky photo sended")
+        if text is not None and prob:
+            context.bot.send_message(chat_id=update.effective_chat.id,
+                                     reply_to_message_id=update.message.message_id,
+                                     text=text,
+                                     parse_mode="markdown")
 
 
 def delete_dice(update, context) -> None:
