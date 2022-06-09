@@ -76,8 +76,10 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
 
     text = None
     prob = 0
-    keys_choice = ("josko", "pizdec", "duck", "no", "yes", "scene", "betrayal", "fuck_you",
-                   "snail", "belmondo_hi", "davai", "a", "chicha", "pizdel", "balabama", "box",
+    keys_choice = ("josko", "pizdec", "duck", "no", "yes",
+                   "scene", "betrayal", "fuck_you",
+                   "snail", "belmondo_hi", "davai", "a", "chicha", "brat",
+                   "pizdel", "balabama", "box",
                    "house_woman")
 
     prob_dict = draw_probs(spam_mode, keys_choice)
@@ -158,6 +160,9 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
     elif "индедей" in msg:
         text = "Индедейка, чувак. Индедейка!"
         prob = roll_probability(.35)
+    elif "любишь медок" in msg:
+        text = "люби и холодок"
+        prob = roll_probability(prob_dict["brat"])
     elif check_is_in(msg, balabama):
         text = choice(balabama_here)
         prob = roll_probability(prob_dict["balabama"])
