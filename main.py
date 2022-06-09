@@ -38,7 +38,7 @@ def parse_message(update, context) -> None:
     print(update)
 
     # delete shit
-    if update.message & update.message.via_bot:
+    if update.message.via_bot is not None:
         shit_bot = update.message.via_bot.id == SHIT_BOT_ID  # or update.message.via_bot.username == "HowYourBot"
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
         if shit_bot:
