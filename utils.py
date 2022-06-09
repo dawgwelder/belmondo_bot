@@ -55,7 +55,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
     text = None
     prob = 0
     keys_choice = ("josko", "pizdec", "duck", "no", "yes", "scene", "betrayal", "fuck_you",
-                   "snail", "belmondo_hi", "davai", "a", "pizdet", "balabama", "box")
+                   "snail", "belmondo_hi", "davai", "a", "chicha", "pizdel", "balabama", "box")
 
     prob_dict = draw_probs(spam_mode, keys_choice)
 
@@ -97,7 +97,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         text = "в кинетическую спину потенциального друга!"
         prob = True
     elif "бельмор" in msg or msg == "бельморда" or msg == "бот лох" or msg == "бот лопух":
-        text = choice(fuck_you)
+        text = choice(prob_dict["fuck_you"])
         prob = True
     elif "🐌" in msg:
         text = choice(snail)
@@ -116,10 +116,10 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         prob = roll_probability(.51488)
     elif "чича" in msg:
         text = "Лучший!"
-        prob = roll_probability(.5)
+        prob = roll_probability(prob_dict["chicha"])
     elif "пиздеть" in msg or "пиздел" in msg:
         text = "кто ПИЗДЕЛ?!"
-        prob = roll_probability(.45)
+        prob = roll_probability(prob_dict["pizdel"])
     elif "индидей" in msg:
         text = "Индидейка, чувак. Индидейка!"
         prob = roll_probability(.35)
@@ -128,8 +128,8 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         prob = roll_probability(.35)
     elif check_is_in(msg, balabama):
         text = choice(balabama_here)
-        prob = roll_probability(.35)
+        prob = roll_probability(prob_dict["balabama"])
     elif "боксер" in msg:
         text = "он боксёр"
-        prob = roll_probability(.75)
+        prob = roll_probability(prob_dict["box"])
     return text, prob
