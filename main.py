@@ -105,9 +105,11 @@ def send_morning(update, context) -> None:
     if bot_data["dt"] is None:
         bot_data["dt"] = datetime.datetime.now()
         bot_data["ZAVOD_CHECK"] = True
+        bot_data["username"] = username
     else:
         bot_data["ZAVOD_CHECK"] = (datetime.datetime.now() - bot_data["dt"]).days > 0
-        bot_data["username"] = username
+        if bot_data["ZAVOD_CHECK"]:
+            bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
         file = choice(["img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"])
         with open(file, "rb") as f:
