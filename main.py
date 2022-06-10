@@ -94,7 +94,8 @@ def parse_message(update, context) -> None:
                                          parse_mode="markdown")
                 logger.info("answer_message: good night crackheads sticker sent")
         if "залуп" in msg:
-            with open("img/zalupa.webp", "rb") as f:
+            file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
+            with open(file, "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
                     context.bot.send_message(chat_id=update.effective_chat.id,
                                              reply_to_message_id=update.message.message_id,
