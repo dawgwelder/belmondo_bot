@@ -171,6 +171,8 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
                                                                     "Да в пизду эту хуйню"],
                      trigger_type="trap", text=text, prob=prob,
                      prob_dict=prob_dict)
-
+    text, prob = _if(msg=msg, words=["оля"], answers=["Оля топ!"],
+                     trigger_type="trap", text=text, prob=prob,
+                     prob_dict=prob_dict, exact=True)
 
     return text, prob
