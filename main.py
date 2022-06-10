@@ -10,6 +10,7 @@ from logger import get_logger
 from if_rules import ifs
 from utils import *
 from const import *
+from oxxxy_urls import oxxxy_playlist
 
 
 logger = get_logger("Belmondo Logger")
@@ -111,12 +112,21 @@ def parse_message(update, context) -> None:
                                              parse_mode="markdown")
                     logger.info("answer_message: jackpot sticker sent")
 
-
         if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
                                      text=text,
                                      parse_mode="markdown")
+            logger.info(f"answer_message: replied with {text}")
+
+
+def send_oxxxy(update, context) -> None:
+    url = choice(oxxxy_playlist)
+    context.bot.send_message(chat_id=update.effective_chat.id,
+                             reply_to_message_id=update.message.message_id,
+                             text=f"{url}",
+                             parse_mode="markdown")
+    logger.info(f"send_oxxxy: oxxy mashup {url} sticker sent")
 
 
 def send_goblin(update, context) -> None:
@@ -243,6 +253,9 @@ def main(mode: str = "dev",
 
     goblin_handler = CommandHandler("goblin", send_goblin)
     dispatcher.add_handler(goblin_handler)
+
+    oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
+    dispatcher.add_handler(oxxxy_handler)
 
     morning_handler = CommandHandler("zavod", send_morning)
     dispatcher.add_handler(morning_handler)
