@@ -70,21 +70,21 @@ def parse_message(update, context) -> None:
         if "любителям синтетики" in msg:
             with open("GM.webp", "rb") as f:
                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                logger.info("answer_message: sticker sended")
+                logger.info("answer_message: sticker sent")
         if text == "О, морская!" and prob:
                 with open("img/snail.jpeg", "rb") as f:
                     context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-                logger.info("answer_message: snail photo sended")
+                logger.info("answer_message: snail photo sent")
         if msg == "вот так вот":
                 with open("img/nevsky.jpeg", "rb") as f:
                     context.bot.send_photo(chat_id=update.effective_chat.id,
                                            reply_to_message_id=update.message.message_id,
                                            photo=f)
-                logger.info("answer_message: nevsky photo sended")
+                logger.info("answer_message: nevsky photo sent")
         if msg == "доброе утро":
                 with open("img/GM_SHUE.webp", "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                    logger.info("answer_message: good morning crackheads sticker sended")
+                    logger.info("answer_message: good morning crackheads sticker sent")
         if "ой ночи" in msg:
                 with open("img/GN.webp", "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
@@ -92,7 +92,7 @@ def parse_message(update, context) -> None:
                                              reply_to_message_id=update.message.message_id,
                                              text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
                                              parse_mode="markdown")
-                    logger.info("answer_message: good morning crackheads sticker sended")
+                    logger.info("answer_message: good morning crackheads sticker sent")
         if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
@@ -102,10 +102,10 @@ def parse_message(update, context) -> None:
 
 def send_goblin(update, context) -> None:
         goblin_dir = "img/goblin/"
-        mode = choice(["gif", "sticker", "text", "youtube"])
+        mode = choice(["mp4", "image", "sticker", "text", "youtube"])
         urls = goblin_urls
 
-        if mode == "gif":
+        if mode == "mp4":
             animation = os.path.join(goblin_dir,
                                      choice([file for file
                                              in os.listdir(goblin_dir)
@@ -116,25 +116,35 @@ def send_goblin(update, context) -> None:
                 context.bot.send_animation(chat_id=update.effective_chat.id,
                                            animation=f, timeout=20,
                                            reply_to_message_id=update.message.message_id)
+                logger.info(f"send_goblin: mode {mode} file {animation} sent")
+        if mode == "img":
+            img = os.path.join(goblin_dir,
+                                   choice([file for file in os.listdir(goblin_dir) if file.endswith(".jpeg")]))
+            with open(img, "rb") as f:
+                context.bot.send_photo(chat_id=update.effective_chat.id,
+                                       reply_to_message_id=update.message.message_id,
+                                       photo=f)
+                logger.info(f"send_goblin: mode {mode} file {img} sent")
         if mode == "sticker":
             sticker = os.path.join(goblin_dir,
                                    choice([file for file in os.listdir(goblin_dir) if file.endswith(".webp")]))
             with open(sticker, "rb") as f:
                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                logger.info(f"send_goblin: mode {mode} file {sticker} sent")
         if mode == "text":
             text = choice([goblin_pasta])
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
                                      text=text,
                                      parse_mode="markdown")
+            logger.info(f"send_goblin: mode {mode} file text sent")
         if mode == "youtube":
             url = choice(urls)
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
                                      text=f"СМОТРЕТЬ ВСЕМ\n{url}",
                                      parse_mode="markdown")
-
-
+            logger.info(f"send_goblin: mode {mode} file {url} sent")
 
 
 def delete_dice(update, context) -> None:
