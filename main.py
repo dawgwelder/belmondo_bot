@@ -82,17 +82,35 @@ def parse_message(update, context) -> None:
                                            photo=f)
                 logger.info("answer_message: nevsky photo sent")
         if msg == "доброе утро":
-                with open("img/GM_SHUE.webp", "rb") as f:
-                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                    logger.info("answer_message: good morning crackheads sticker sent")
+            with open("img/GM_SHUE.webp", "rb") as f:
+                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                logger.info("answer_message: good morning crackheads sticker sent")
         if "ой ночи" in msg:
-                with open("img/GN.webp", "rb") as f:
+            with open("img/GN.webp", "rb") as f:
+                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                context.bot.send_message(chat_id=update.effective_chat.id,
+                                         reply_to_message_id=update.message.message_id,
+                                         text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
+                                         parse_mode="markdown")
+                logger.info("answer_message: good night crackheads sticker sent")
+        if "залуп" in msg:
+            with open("img/zalupa.webp", "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
                     context.bot.send_message(chat_id=update.effective_chat.id,
                                              reply_to_message_id=update.message.message_id,
-                                             text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
+                                             text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
                                              parse_mode="markdown")
-                    logger.info("answer_message: good morning crackheads sticker sent")
+                    logger.info("answer_message: zalupa sticker sent")
+        if "джекпот" in msg:
+            with open("img/jackpot.webp", "rb") as f:
+                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                    context.bot.send_message(chat_id=update.effective_chat.id,
+                                             reply_to_message_id=update.message.message_id,
+                                             text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
+                                             parse_mode="markdown")
+                    logger.info("answer_message: jackpot sticker sent")
+
+
         if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
