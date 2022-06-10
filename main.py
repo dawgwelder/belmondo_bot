@@ -35,7 +35,7 @@ def quote(update, context) -> None:
 # delete photo for godnobot
 def parse_message(update, context) -> None:
     bot_data = context.bot_data
-    text = None
+    text = ""
     prob = 0
     logger.info(update.message)
 
@@ -64,7 +64,7 @@ def parse_message(update, context) -> None:
         _id = update.message.from_user.id
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
-            logger.info(f"answer_message: {text} and flag to show was {bool(prob)}")
+            logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
         # send sticker
         if "любителям синтетики" in msg:
             with open("GM.webp", "rb") as f:
@@ -80,7 +80,7 @@ def parse_message(update, context) -> None:
                                            reply_to_message_id=update.message.message_id,
                                            photo=f)
                 logger.info("answer_message: nevsky photo sended")
-        if text is not None and prob:
+        if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
                                      text=text,
