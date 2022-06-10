@@ -1,3 +1,4 @@
+import os
 import fire
 import datetime
 import telegram
@@ -84,11 +85,56 @@ def parse_message(update, context) -> None:
                 with open("img/GM_SHUE.webp", "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
                     logger.info("answer_message: good morning crackheads sticker sended")
+        if "ой ночи" in msg:
+                with open("img/GN.webp", "rb") as f:
+                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                    context.bot.send_message(chat_id=update.effective_chat.id,
+                                             reply_to_message_id=update.message.message_id,
+                                             text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
+                                             parse_mode="markdown")
+                    logger.info("answer_message: good morning crackheads sticker sended")
         if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
                                      text=text,
                                      parse_mode="markdown")
+
+
+def send_goblin(update, context) -> None:
+        goblin_dir = "img/goblin/"
+        mode = choice(["gif", "sticker", "text", "youtube"])
+        urls = goblin_urls
+
+        if mode == "gif":
+            animation = os.path.join(goblin_dir,
+                                     choice([file for file
+                                             in os.listdir(goblin_dir)
+                                             if file.endswith(".mp4")]
+                                            )
+                                     )
+            with open(animation, "rb") as f:
+                context.bot.send_animation(chat_id=update.effective_chat.id,
+                                           animation=f, timeout=20,
+                                           reply_to_message_id=update.message.message_id)
+        if mode == "sticker":
+            sticker = os.path.join(goblin_dir,
+                                   choice([file for file in os.listdir(goblin_dir) if file.endswith(".webp")]))
+            with open(sticker, "rb") as f:
+                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+        if mode == "text":
+            text = choice([goblin_pasta])
+            context.bot.send_message(chat_id=update.effective_chat.id,
+                                     reply_to_message_id=update.message.message_id,
+                                     text=text,
+                                     parse_mode="markdown")
+        if mode == "youtube":
+            url = choice(urls)
+            context.bot.send_message(chat_id=update.effective_chat.id,
+                                     reply_to_message_id=update.message.message_id,
+                                     text=f"СМОТРЕТЬ ВСЕМ\n{url}",
+                                     parse_mode="markdown")
+
+
 
 
 def delete_dice(update, context) -> None:
@@ -115,7 +161,8 @@ def send_morning(update, context) -> None:
         bot_data["ZAVOD_CHECK"] = True
         bot_data["username"] = username
     else:
-        bot_data["ZAVOD_CHECK"] = (datetime.datetime.now() - bot_data["dt"]).days > 0
+        bot_data["ZAVOD_CHECK"] = (datetime.datetime.now() - bot_data["dt"]).days > 0 \
+                                  and (datetime.datetime.now().hour > 12)
         if bot_data["ZAVOD_CHECK"]:
             bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
@@ -148,10 +195,10 @@ def main(mode: str = "dev",
     vars_dict["spam_mode"] = spam_mode
     if mode == "dev" or mode is None:
         bot = Bot(token)
-        updater = Updater(token=token, use_context=True)
+        updater = Updater(token=token, use_context=True, request_kwargs={'read_timeout': 1000, 'connect_timeout': 1000})
     elif mode == "prod":
         bot = Bot(token)
-        updater = Updater(token=token, use_context=True)
+        updater = Updater(token=token, use_context=True, request_kwargs={'read_timeout': 1000, 'connect_timeout': 1000})
     else:
         logger.error(f"Bot start: FAIL!")
     logger.info(f"Bot start: success!")
@@ -164,6 +211,9 @@ def main(mode: str = "dev",
 
     delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
     dispatcher.add_handler(delete_dice_handler)
+
+    goblin_handler = CommandHandler("goblin", send_goblin)
+    dispatcher.add_handler(goblin_handler)
 
     morning_handler = CommandHandler("zavod", send_morning)
     dispatcher.add_handler(morning_handler)
