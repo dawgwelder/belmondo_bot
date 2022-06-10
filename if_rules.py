@@ -55,7 +55,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
                    "scene", "betrayal", "fuck_you",
                    "snail", "profi", "davai", "a", "chicha", "brat",
                    "pizdel", "balabama", "box",
-                   "house_woman", "###")
+                   "house_woman", "###", "trap")
 
     prob_dict = draw_probs(spam_mode, keys_choice)
     # test at dev first
@@ -166,5 +166,11 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
                                                                          "пиздопроебище хуеплетское"],
                      trigger_type="###", text=text, prob=prob,
                      prob_dict=prob_dict)
+    text, prob = _if(msg=msg, words=["бельмондо траншея"], answers=["И тут ловушка для Арбуза!",
+                                                                    "Выкопал, профессионал свое дело знает",
+                                                                    "Да в пизду эту хуйню"],
+                     trigger_type="trap", text=text, prob=prob,
+                     prob_dict=prob_dict)
+
 
     return text, prob
