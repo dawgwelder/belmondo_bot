@@ -80,6 +80,10 @@ def parse_message(update, context) -> None:
                                            reply_to_message_id=update.message.message_id,
                                            photo=f)
                 logger.info("answer_message: nevsky photo sended")
+        if msg == "доброе утро":
+                with open("img/GM_SHUE.webp", "rb") as f:
+                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+                    logger.info("answer_message: good morning crackheads sticker sended")
         if text and prob:
             context.bot.send_message(chat_id=update.effective_chat.id,
                                      reply_to_message_id=update.message.message_id,
