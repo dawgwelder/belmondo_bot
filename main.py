@@ -1,11 +1,12 @@
 import fire
 import datetime
 import telegram
-from telegram import Bot
+from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from time import sleep
 from random import choice
 from logger import get_logger
+from if_rules import ifs
 from utils import *
 from const import *
 
@@ -33,9 +34,10 @@ def quote(update, context) -> None:
 # Вынести в отдельный файл? Написать класс?
 # delete photo for godnobot
 def parse_message(update, context) -> None:
+    bot_data = context.bot_data
     text = None
     prob = 0
-    print(update)
+    logger.info(update.message)
 
     # delete shit
     if update.message.via_bot is not None:
@@ -60,8 +62,9 @@ def parse_message(update, context) -> None:
     if update.message.text is not None:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
-        text, prob = ifs(msg, _id, context.bot_data["spam_mode"])
-        logger.info(f"answer_message: {text} and flag to show was {bool(prob)}")
+        if msg:
+            text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
+            logger.info(f"answer_message: {text} and flag to show was {bool(prob)}")
         # send sticker
         if "любителям синтетики" in msg:
             with open("GM.webp", "rb") as f:
