@@ -64,7 +64,7 @@ def parse_message(update, context) -> None:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
         if "понос " in msg and " на " in msg:
-            user = msg.split()[1]
+            user = msg.split("понос ")[-1].split(" на")[0]
             value = int(re.sub("[^0-9]", "", msg))
             roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
             sleep(2.5)
