@@ -1,4 +1,5 @@
 import os
+import re
 import fire
 import datetime
 import telegram
@@ -14,16 +15,11 @@ from oxxxy_urls import oxxxy_playlist
 
 
 logger = get_logger("Belmondo Logger")
+
 # TODO: команда квас - прокидывает картинку бомжа в ответ
 # TODO: дебажить завод
-# TODO: не работает удалялка говнобота - нужен фастфикс
-# TODO: playlist c oxхxy в ответ на команду окси
-# TODO: если кря крутит пингвин - то единичка вероятность
-# TODO: переписать глобалы на bot_data
 # TODO: блочить спам стикерами от одного человека
 # TODO: упдайтить счетчик фемосрача
-# TODO: удалять гороскопу фото? Удалять гороскопы?
-# HINT: Копировать текст гороскопа, присылать, исходное удалять
 
 
 def quote(update, context) -> None:
@@ -67,6 +63,23 @@ def parse_message(update, context) -> None:
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
+        if "понос " in msg and " на " in msg:
+            user = msg.split()[1]
+            value = int(re.sub("[^0-9]", "", msg))
+            roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
+            if roll.dice.value == value:
+                text = f"*Понос* {user} обеспечен"
+                context.bot.send_message(chat_id=update.effective_chat.id,
+                                         reply_to_message_id=update.message.message_id,
+                                         text=text,
+                                         parse_mode="markdown")
+            else:
+                text = f"_Каст поноса был провален!_"
+                context.bot.send_message(chat_id=update.effective_chat.id,
+                                         reply_to_message_id=update.message.message_id,
+                                         text=text,
+                                         parse_mode="markdown")
+
         # send sticker
         if "любителям синтетики" in msg:
             with open("GM.webp", "rb") as f:
@@ -215,7 +228,7 @@ def send_morning(update, context) -> None:
             logger.info(F"send_morning: zavod success!")
 
     else:
-        zavod_user = bot_data["username"].replace("@", '')
+        zavod_user = bot_data["username"].replace("@", "")
         text = f"Поздно, другалёчек!\n" + f"Офисчанин/Заводчанин дня - @{zavod_user}!"
         context.bot.send_message(chat_id=update.effective_chat.id,
                                  text=text)
@@ -234,10 +247,10 @@ def main(mode: str = "dev",
     vars_dict["spam_mode"] = spam_mode
     if mode == "dev" or mode is None:
         bot = Bot(token)
-        updater = Updater(token=token, use_context=True, request_kwargs={'read_timeout': 1000, 'connect_timeout': 1000})
+        updater = Updater(token=token, use_context=True, request_kwargs={"read_timeout": 1000, "connect_timeout": 1000})
     elif mode == "prod":
         bot = Bot(token)
-        updater = Updater(token=token, use_context=True, request_kwargs={'read_timeout': 1000, 'connect_timeout': 1000})
+        updater = Updater(token=token, use_context=True, request_kwargs={"read_timeout": 1000, "connect_timeout": 1000})
     else:
         logger.error(f"Bot start: FAIL!")
     logger.info(f"Bot start: success!")
@@ -270,5 +283,5 @@ def main(mode: str = "dev",
     updater.idle()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     fire.Fire(main)
