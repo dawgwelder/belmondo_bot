@@ -57,83 +57,82 @@ def parse_message(update, context) -> None:
                 context.bot.send_message(update.effective_chat.id, update.message.text.replace('#NoWar', ''))
                 context.bot.delete_message(update.effective_chat.id, update.message.message_id)
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
-    if update.message.text is not None:
-        msg = clean_string(update.message.text.lower())
-        _id = update.message.from_user.id
-        if msg:
-            text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
-            logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
-        if msg.startswith("понос ") and " на " in msg:
-            user = msg.split("понос ")[-1].split(" на")[0]
-            reg_value = re.sub("[^0-9]", "", msg)
-            reg_value = int(reg_value) if reg_value else -999
-            value = msg[-1]
-            text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
-            if value.isdigit():
-                value = int(value)
-                if 1 <= value <= 6 and reg_value == value:
-                    roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
-                    sleep(2.7)
-                    if roll.dice.value == value:
-                        text = f"*Понос* {user} обеспечен"
-                    else:
-                        text = f"_Каст поноса был провален!_"
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 reply_to_message_id=update.message.message_id,
-                                 text=text,
-                                 parse_mode="markdown")
-
-        # send sticker
-        if "любителям синтетики" in msg:
-            with open("GM.webp", "rb") as f:
-                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                logger.info("answer_message: sticker sent")
-        if text == "О, морская!" and prob:
-                with open("img/snail.jpeg", "rb") as f:
-                    context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-                logger.info("answer_message: snail photo sent")
-        if msg == "вот так вот":
-                with open("img/nevsky.jpeg", "rb") as f:
-                    context.bot.send_photo(chat_id=update.effective_chat.id,
-                                           reply_to_message_id=update.message.message_id,
-                                           photo=f)
-                logger.info("answer_message: nevsky photo sent")
-        if msg == "доброе утро":
-            with open("img/GM_SHUE.webp", "rb") as f:
-                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                logger.info("answer_message: good morning crackheads sticker sent")
-        if "ой ночи" in msg:
-            with open("img/GN.webp", "rb") as f:
-                context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                context.bot.send_message(chat_id=update.effective_chat.id,
-                                         reply_to_message_id=update.message.message_id,
-                                         text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
-                                         parse_mode="markdown")
-                logger.info("answer_message: good night crackheads sticker sent")
-        if "залуп" in msg:
-            file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
-            with open(file, "rb") as f:
-                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                    context.bot.send_message(chat_id=update.effective_chat.id,
-                                             reply_to_message_id=update.message.message_id,
-                                             text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
-                                             parse_mode="markdown")
-                    logger.info("answer_message: zalupa sticker sent")
-        if "джекпот" in msg:
-            with open("img/jackpot.webp", "rb") as f:
-                    context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-                    context.bot.send_message(chat_id=update.effective_chat.id,
-                                             reply_to_message_id=update.message.message_id,
-                                             text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
-                                             parse_mode="markdown")
-                    logger.info("answer_message: jackpot sticker sent")
-
-        if text and prob:
-            context.bot.send_message(chat_id=update.effective_chat.id,
-                                     reply_to_message_id=update.message.message_id,
-                                     text=text,
-                                     parse_mode="markdown")
-            logger.info(f"answer_message: replied with {text}")
+    # if update.message.text is not None:
+    #     msg = clean_string(update.message.text.lower())
+    #     _id = update.message.from_user.id
+    #     if msg:
+    #         text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
+    #         logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
+    #         if text and prob:
+    #             context.bot.send_message(chat_id=update.effective_chat.id,
+    #                                      reply_to_message_id=update.message.message_id,
+    #                                      text=text,
+    #                                      parse_mode="markdown")
+    #             logger.info(f"answer_message: replied with {text}")
+    #     if msg.startswith("понос ") and " на " in msg:
+    #         user = msg.split("понос ")[-1].split(" на")[0]
+    #         reg_value = re.sub("[^0-9]", "", msg)
+    #         reg_value = int(reg_value) if reg_value else -999
+    #         value = msg[-1]
+    #         text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
+    #         if value.isdigit():
+    #             value = int(value)
+    #             if 1 <= value <= 6 and reg_value == value:
+    #                 roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
+    #                 sleep(2.7)
+    #                 if roll.dice.value == value:
+    #                     text = f"*Понос* {user} обеспечен"
+    #                 else:
+    #                     text = f"_Каст поноса был провален!_"
+    #     context.bot.send_message(chat_id=update.effective_chat.id,
+    #                              reply_to_message_id=update.message.message_id,
+    #                              text=text,
+    #                              parse_mode="markdown")
+    #
+    #     # send sticker
+    #     if "любителям синтетики" in msg:
+    #         with open("GM.webp", "rb") as f:
+    #             context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+    #             logger.info("answer_message: sticker sent")
+    #     if text == "О, морская!" and prob:
+    #             with open("img/snail.jpeg", "rb") as f:
+    #                 context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+    #             logger.info("answer_message: snail photo sent")
+    #     if msg == "вот так вот":
+    #             with open("img/nevsky.jpeg", "rb") as f:
+    #                 context.bot.send_photo(chat_id=update.effective_chat.id,
+    #                                        reply_to_message_id=update.message.message_id,
+    #                                        photo=f)
+    #             logger.info("answer_message: nevsky photo sent")
+    #     if msg == "доброе утро":
+    #         with open("img/GM_SHUE.webp", "rb") as f:
+    #             context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+    #             logger.info("answer_message: good morning crackheads sticker sent")
+    #     if "ой ночи" in msg:
+    #         with open("img/GN.webp", "rb") as f:
+    #             context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+    #             context.bot.send_message(chat_id=update.effective_chat.id,
+    #                                      reply_to_message_id=update.message.message_id,
+    #                                      text=choice(["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]),
+    #                                      parse_mode="markdown")
+    #             logger.info("answer_message: good night crackheads sticker sent")
+    #     if "залуп" in msg:
+    #         file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
+    #         with open(file, "rb") as f:
+    #                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+    #                 context.bot.send_message(chat_id=update.effective_chat.id,
+    #                                          reply_to_message_id=update.message.message_id,
+    #                                          text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
+    #                                          parse_mode="markdown")
+    #                 logger.info("answer_message: zalupa sticker sent")
+    #     if "джекпот" in msg:
+    #         with open("img/jackpot.webp", "rb") as f:
+    #                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
+    #                 context.bot.send_message(chat_id=update.effective_chat.id,
+    #                                          reply_to_message_id=update.message.message_id,
+    #                                          text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
+    #                                          parse_mode="markdown")
+    #                 logger.info("answer_message: jackpot sticker sent")
 
 
 def send_oxxxy(update, context) -> None:

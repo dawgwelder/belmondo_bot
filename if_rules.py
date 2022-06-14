@@ -29,18 +29,19 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
             use_end: int = 0,
             exact: bool = False):
         put_answer = check_is_in(msg, words, exact=exact)
+        print(msg, words, put_answer)
 
         if put_answer:
             text = choice(answers)
+            prob = roll_probability((prob_dict[trigger_type]))
             if use_prob:
                 prob = use_prob
-            elif excepts_uids:
+            if excepts_uids:
                 prob = check_is_in(update_uid, excepts_uids)  # wrong usage but who cares?
-            elif use_end:
-                if msg == msg[:-use_end]:
-                    prob = roll_probabilty(.9)
-            else:
-                prob = roll_probability((prob_dict[trigger_type]))
+            if use_end:
+                if words[0] == msg.split()[-1]:
+                    prob = roll_probability(.6)
+
             # if not text:
             #     text, prob = _text, _prob
             # else:
@@ -82,11 +83,11 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
 
     text, prob = _if(msg=msg, words=["нет"], answers=["Пидора ответ!"],
                      trigger_type="no", text=text, prob=prob,
-                     prob_dict=prob_dict, use_end=3)
+                     prob_dict=prob_dict, use_end=True, exact=True)
 
     text, prob = _if(msg=msg, words=["да"], answers=["Пизда!"],
                      trigger_type="yes", text=text, prob=prob,
-                     prob_dict=prob_dict, use_end=2)
+                     prob_dict=prob_dict, use_end=True, exact=True)
 
     text, prob = _if(msg=msg, words=scene_msg, answers=movie_here,
                      trigger_type="scene", text=text, prob=prob,
