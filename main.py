@@ -67,6 +67,7 @@ def parse_message(update, context) -> None:
             user = msg.split()[1]
             value = int(re.sub("[^0-9]", "", msg))
             roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
+            sleep(1)
             if roll.dice.value == value:
                 text = f"*Понос* {user} обеспечен"
                 context.bot.send_message(chat_id=update.effective_chat.id,
