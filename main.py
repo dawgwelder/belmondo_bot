@@ -63,23 +63,25 @@ def parse_message(update, context) -> None:
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
-        if "понос " in msg and " на " in msg:
+        if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
-            value = int(re.sub("[^0-9]", "", msg))
-            roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
-            sleep(2.5)
-            if roll.dice.value == value:
-                text = f"*Понос* {user} обеспечен"
-                context.bot.send_message(chat_id=update.effective_chat.id,
-                                         reply_to_message_id=update.message.message_id,
-                                         text=text,
-                                         parse_mode="markdown")
-            else:
-                text = f"_Каст поноса был провален!_"
-                context.bot.send_message(chat_id=update.effective_chat.id,
-                                         reply_to_message_id=update.message.message_id,
-                                         text=text,
-                                         parse_mode="markdown")
+            reg_value = re.sub("[^0-9]", "", msg)
+            reg_value = int(reg_value) if reg_value else -999
+            value = msg[-1]
+            text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
+            if value.isdigit():
+                value = int(value)
+                if 1 <= value <= 6 and reg_value == value:
+                    roll = context.bot.send_dice(chat_id=update.effective_message.chat_id)
+                    sleep(2.7)
+                    if roll.dice.value == value:
+                        text = f"*Понос* {user} обеспечен"
+                    else:
+                        text = f"_Каст поноса был провален!_"
+        context.bot.send_message(chat_id=update.effective_chat.id,
+                                 reply_to_message_id=update.message.message_id,
+                                 text=text,
+                                 parse_mode="markdown")
 
         # send sticker
         if "любителям синтетики" in msg:
