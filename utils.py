@@ -40,19 +40,17 @@ def check_id(uid: int, update_uid: int):
 
 def roll_probability(percent: float = 0.5) -> bool:
     mu, sigma = 0.5, 0.15
-    return abs(normal(mu, sigma)) >= percent
+    value = abs(normal(mu, sigma))
+    return value >= percent
 
 
-def draw_probs(spam_mode: str,
-               keys: tuple):
+def draw_prob(spam_mode: str,):
     if spam_mode == "chaos":
-        prob_dict = {key: uniform(0, 1) for key in keys}
+        return uniform(0, 1) 
     elif spam_mode == "soft":
-        prob_dict = {key: uniform(0, .5) for key in keys}
+        return uniform(.1, .5)
     elif spam_mode == "medium":
-        prob_dict = {key: uniform(.5, .8) for key in keys}
+        return uniform(.5, .8)
     elif spam_mode == "rare":
-        prob_dict = {key: uniform(.8, 1) for key in keys}
-    else:
-        prob_dict = {key: .75 for key in keys}
-    return prob_dict
+        return uniform(.85, .1)
+    return .75
