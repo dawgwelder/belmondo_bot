@@ -35,7 +35,6 @@ def parse_message(update, context) -> None:
     bot_data = context.bot_data
     text = ""
     prob = 0
-    logger.info(update.message)
 
     # delete shit
     if update.message.via_bot is not None:
@@ -62,6 +61,7 @@ def parse_message(update, context) -> None:
         _id = update.message.from_user.id
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
+            logger.info(f"triggered by: {msg}")
             logger.info(f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}")
             if text and prob:
                 context.bot.send_message(chat_id=update.effective_chat.id,
