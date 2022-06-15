@@ -2,7 +2,6 @@ from utils import *
 from const import *
 import json
 
-
 with open("speaking/triggers.json") as f:
     speaking = json.load(f)
 
@@ -19,15 +18,17 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
             ):
         put_answer = check_is_in(msg, words, exact=exact)
         text = ""
+        _prob = 0
         if put_answer:
             text = choice(answers)
             if prob == 0:
                 _prob = draw_prob(spam_mode=spam_mode)
                 prob = roll_probability(_prob)
+            else:
+                prob = 1
             if exclude_uids:
                 if update_uid in exclude_uids:  #
                     prob = 1
-            print("from _if: ", text, prob, _prob)
         return text, prob
 
     text, prob = "", 0
@@ -48,5 +49,4 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
                 prob = [prob, _prob][new]
             else:
                 text, prob = _text, _prob
-    print('exit msg ', text, prob)
     return text, prob
