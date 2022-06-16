@@ -22,8 +22,8 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         if put_answer:
             text = choice(answers)
             if prob == 0:
-                _prob = draw_prob(spam_mode=spam_mode)
-                prob = roll_probability(_prob)
+                # _prob = draw_prob(spam_mode=spam_mode)
+                prob = answer_probability(spam_mode)
             else:
                 prob = 1
             if exclude_uids:

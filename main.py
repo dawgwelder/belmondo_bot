@@ -68,7 +68,7 @@ def parse_message(update, context) -> None:
                                          reply_to_message_id=update.message.message_id,
                                          text=text,
                                          parse_mode="markdown")
-                logger.info(f"answer_message: replied with {text}")
+                logger.info(f"answer_message: replied with {text[:10]}...{text[-5:]}")
         if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
             reg_value = re.sub("[^0-9]", "", msg)

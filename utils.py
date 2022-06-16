@@ -44,13 +44,13 @@ def roll_probability(percent: float = 0.5) -> bool:
     return value >= percent
 
 
-def draw_prob(spam_mode: str,):
+def answer_probability(spam_mode: str,):
     if spam_mode == "chaos":
-        return uniform(0, 1) 
+        return uniform(0, 1) > 0
     elif spam_mode == "soft":
-        return uniform(.1, .5)
+        return uniform(0, 1) > .5
     elif spam_mode == "medium":
-        return uniform(.5, .8)
+        return uniform(0, 1) >= .75
     elif spam_mode == "rare":
-        return uniform(.85, .1)
+        return uniform(0, .1) > .8
     return .75
