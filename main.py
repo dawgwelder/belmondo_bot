@@ -91,7 +91,7 @@ def parse_message(update, context) -> None:
 
         # send sticker
         if "любителям синтетики" in msg:
-            with open("GM.webp", "rb") as f:
+            with open("img/GM.webp", "rb") as f:
                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
                 logger.info("answer_message: sticker sent")
         if text == "О, морская!" and prob:
