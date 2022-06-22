@@ -68,7 +68,11 @@ def parse_message(update, context) -> None:
                                          reply_to_message_id=update.message.message_id,
                                          text=text,
                                          parse_mode="markdown")
-                logger.info(f"answer_message: replied with {text[:10]}...{text[-5:]}")
+                log_text = text
+                if len(log_text) > 20:
+                    log_text = f"{' '.join([log_text.split()[idx] for idx in range(5)])}" \
+                               f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
+                logger.info(f"answer_message: replied with {log_text}")
         if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
             reg_value = re.sub("[^0-9]", "", msg)
