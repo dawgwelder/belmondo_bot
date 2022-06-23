@@ -120,14 +120,16 @@ def parse_message(update, context) -> None:
                 parse_mode="markdown",
             )
 
-        if len(msg.split()) == 3 and msg.split()[1] == "или":
-            text = choice([msg.split()[0], msg.split()[-1]])
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=text,
-                parse_mode="markdown",
-            )
+        if "или" in msg:
+            words = msg.split()
+            if words[len(words) // 2] == "или":
+                text = clean_string(choice(update.message.text.split(" или ")))
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown",
+                )
 
         # send sticker
         if "любителям синтетики" in msg:
