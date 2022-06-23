@@ -16,8 +16,8 @@ def quote_choice() -> str:
     return choice(quotes)
 
 
-def clean_string(s: str = '') -> str:
-    return s.translate(str.maketrans('', '', string.punctuation))
+def clean_string(s: str = "") -> str:
+    return s.translate(str.maketrans("", "", string.punctuation))
 
 
 def check_is_in(msg: str, sentences: list, exact: bool = False) -> bool:
@@ -34,7 +34,7 @@ def check_admin(uid: int, admins_list) -> bool:
     return uid in admins_list
 
 
-def check_id(uid: int, update_uid: int):
+def check_id(uid: int, update_uid: int) -> bool:
     return uid == update_uid
 
 
@@ -44,13 +44,13 @@ def roll_probability(percent: float = 0.5) -> bool:
     return value >= percent
 
 
-def answer_probability(spam_mode: str,):
+def answer_probability(spam_mode: str,) -> float:
     if spam_mode == "chaos":
         return uniform(0, 1) > 0
     elif spam_mode == "soft":
-        return uniform(0, 1) > .5
+        return uniform(0, 1) > 0.5
     elif spam_mode == "medium":
-        return uniform(0, 1) >= .75
+        return uniform(0, 1) >= 0.75
     elif spam_mode == "rare":
-        return uniform(0, .1) > .8
-    return .75
+        return uniform(0, 0.1) > 0.8
+    return 0.75
