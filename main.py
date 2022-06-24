@@ -73,7 +73,7 @@ def parse_message(update, context) -> None:
                 )
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
                 
-    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == 2057615456:
+    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
         text = model.make_sentence()
         context.bot.send_message(
             chat_id=update.effective_chat.id,
