@@ -3,18 +3,23 @@ import re
 import fire
 import datetime
 import telegram
+
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+
 from time import sleep
 from random import choice
 from logger import get_logger
+
 from if_rules import ifs
+from markov import get_model
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
 
 
 logger = get_logger("Belmondo Logger")
+model = get_model()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
 # TODO: дебажить завод
@@ -67,7 +72,18 @@ def parse_message(update, context) -> None:
                     update.effective_chat.id, update.message.message_id
                 )
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
-    if update.message.text is not None:
+                
+    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == 2057615456:
+        text = model.make_sentence()
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info("markov model: generated text sent")
+        
+    if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
 
@@ -86,7 +102,7 @@ def parse_message(update, context) -> None:
                 )
                 log_text = text
                 
-                if len(log_text) > 20:
+                if len(log_text.split()) > 20:
                     log_text = (
                         f"{' '.join([log_text.split()[idx] for idx in range(5)])}"
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
