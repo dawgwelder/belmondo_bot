@@ -74,7 +74,8 @@ def parse_message(update, context) -> None:
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
-        if "или" in msg and update.message.reply_to_message.from_user.id == SELF_ID:
+        if "или" in update.message.text.lower():
+            msg = clean_string(update.message.text.lower())
             words = msg.split()
             if words[len(words) // 2] == "или":
                 text = clean_string(choice(update.message.text.split(" или ")))
