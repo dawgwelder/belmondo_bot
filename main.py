@@ -74,14 +74,26 @@ def parse_message(update, context) -> None:
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
-        text = model.make_short_sentence(280)
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info("markov model: generated text sent")
+        if "или" in msg and update.message.reply_to_message.from_user.id == SELF_ID:
+            words = msg.split()
+            if words[len(words) // 2] == "или":
+                text = clean_string(choice(update.message.text.split(" или ")))
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+            logger.info("parse_message: or sentence answered")
+        else:
+            text = model.make_short_sentence(280)
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
+            logger.info("markov model: generated text sent")
         
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
@@ -135,17 +147,6 @@ def parse_message(update, context) -> None:
                 text=text,
                 parse_mode="markdown",
             )
-
-        # if "или" in msg and update.message.reply_to_message.from_user.id == SELF_ID:
-        #     words = msg.split()
-        #     if words[len(words) // 2] == "или":
-        #         text = clean_string(choice(update.message.text.split(" или ")))
-        #         context.bot.send_message(
-        #             chat_id=update.effective_chat.id,
-        #             reply_to_message_id=update.message.message_id,
-        #             text=text,
-        #             parse_mode="markdown",
-        #         )
 
         # send sticker
         if "любителям синтетики" in msg:
