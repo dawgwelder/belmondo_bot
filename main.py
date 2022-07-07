@@ -83,7 +83,7 @@ def parse_message(update, context) -> None:
                 text=text,
                 parse_mode="markdown",
             )
-            sleep(choice([.5, 1.2, 1, .75]))
+            sleep(choice([.5, .25, 1, .75, .666]))
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
         if "или" in update.message.text.lower():
