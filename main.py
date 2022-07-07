@@ -74,8 +74,17 @@ def parse_message(update, context) -> None:
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
 
     if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
-        count = int(re.findall(r"\d+", clean_string(update.message.text.lower()))[0])
+        rgx = re.compile(r"(?:/Date\()(-?\d+)(?:\)/)")
+        count = int(rgx.findall(r"\d+", update.message.text)[0])
         count = 100 if count > 999 else count
+        if count <= 0:
+            text = "Ты неправильно накастовал уже"
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
         for _ in range(count):
             text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
             context.bot.send_message(
