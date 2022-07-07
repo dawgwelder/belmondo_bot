@@ -73,7 +73,7 @@ def parse_message(update, context) -> None:
                 )
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
 
-    if update.message.from_user.id in [113300226, 1276243648] and "нахуй баб" in update.message.text.lower():
+    if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
         count = int(re.findall(r"\d+", clean_string(update.message.text.lower()))[0])
         count = 100 if count > 999 else count
         for _ in range(count):
