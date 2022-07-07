@@ -74,7 +74,8 @@ def parse_message(update, context) -> None:
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
 
     if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
-        number = [re.sub(r"[^-0-9]", "", x) for x in [update.message.text.lower()]][0]
+        regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
+        number = re.findall(regex, update.message.text)[0]
 
         if not number.isdigit():
             text = "Ты неправильно накастовал, дебил"
