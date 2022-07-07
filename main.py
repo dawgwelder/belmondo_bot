@@ -75,6 +75,7 @@ def parse_message(update, context) -> None:
 
     if update.message.from_user.id == 113300226 and "нахуй баб" in update.message.text.lower():
         count = int(re.findall(r"\d+", clean_string(update.message.text.lower()))[0])
+        count = 100 if count > 999 else count
         for _ in range(count):
             text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
             context.bot.send_message(
