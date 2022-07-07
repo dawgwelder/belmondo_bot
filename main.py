@@ -74,25 +74,27 @@ def parse_message(update, context) -> None:
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
 
     if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
-        rgx = re.compile(r"(?:/Date\()(-?\d+)(?:\)/)")
-        count = int(rgx.findall(r"\d+", update.message.text)[0])
-        count = 100 if count > 999 else count
-        if count <= 0:
-            text = "Ты неправильно накастовал уже"
+        number = [re.sub(r"[^-0-9]", "", x) for x in [update.message.text.lower()]][0]
+
+        if not number.isdigit():
+            text = "Ты неправильно накастовал, дебил"
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
                 text=text,
                 parse_mode="markdown",
             )
-        for _ in range(count):
-            text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=text,
-                parse_mode="markdown",
-            )
-            sleep(choice([.5, .25, 1, .75, .666]))
+        else:
+            count = int(number)
+            count = 100 if count > 999 else count
+            for _ in range(count):
+                text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+                sleep(choice([.5, .25, 1, .75, .666]))
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
         if "или" in update.message.text.lower():
