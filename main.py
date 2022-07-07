@@ -72,6 +72,16 @@ def parse_message(update, context) -> None:
                     update.effective_chat.id, update.message.message_id
                 )
                 logger.info(f"edited_message from {name} bot: {update.message.text}")
+
+    if update.message.from_user.id == 113300226 and "нахуй баб" in update.message.text.lower():
+        count = int(re.findall(r"\d+", clean_string(update.message.text.lower()))[0])
+        for _ in range(count):
+            text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=text,
+                parse_mode="markdown",
+            )
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
         if "или" in update.message.text.lower():
