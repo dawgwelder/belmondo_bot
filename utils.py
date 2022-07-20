@@ -6,6 +6,7 @@ import string
 from const import *
 from typing import Tuple
 from pprint import pprint
+import pandas as pd
 
 
 def sleep_choice(choices):
@@ -54,3 +55,38 @@ def answer_probability(spam_mode: str,) -> float:
     elif spam_mode == "rare":
         return uniform(0, 0.1) > 0.8
     return 0.75
+
+
+def get_last_record(df, _id):
+    if _id in df.id.values:
+        return df.where(df.id == _id).max()
+    else:
+        return None
+
+
+def parse_length(length):
+    text = f"{length} см"
+    meter = length // 100
+    kilometer = length // 100000
+
+    if kilometer:
+        text = f"{kilometer} км {meter} м " + text
+    elif meter:
+        text = f" {meter} м " + text
+
+    return text
+
+def get_length(df, stats=False):
+    plotina_length = df["overall_build"].sum()
+    plotina = parse_length(plotina_length)
+
+    if not stats:
+        text = f"Бобер {first_name} сделал плотину выше на {random_number} см! " \
+               f"Общая высота плотины {plotina}"
+    else:
+        active_length = df["overall_build"].max()
+        active = df[df["overall_build"] == active_length]["first_name"][0]
+        active_length = parse_length(active_length)
+        text = f"Общая высота плотины - {plotina}! \n" \
+               f"Самый активный бобёр - {active}, он построил {active_length}."
+    return text

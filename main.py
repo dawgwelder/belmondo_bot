@@ -11,6 +11,8 @@ from time import sleep
 from random import choice
 from logger import get_logger
 
+import pandas as pd
+
 from if_rules import ifs
 from markov import get_model
 from utils import *
@@ -253,7 +255,7 @@ def send_oxxxy(update, context) -> None:
         text=f"{url}",
         parse_mode="markdown",
     )
-    logger.info(f"send_oxxxy: oxxy mashup {url} sticker sent")
+    logger.info(f"send_oxxxy: oxxy mashup {url} sent")
 
 
 def send_goblin(update, context) -> None:
@@ -343,7 +345,7 @@ def send_morning(update, context) -> None:
     else:
         bot_data["ZAVOD_CHECK"] = (
             datetime.datetime.now() - bot_data["dt"]
-        ).days > 0 and (datetime.datetime.now().hour > 12)
+        ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
         if bot_data["ZAVOD_CHECK"]:
             bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
@@ -375,6 +377,48 @@ def roll_dice(update, context) -> None:
     logger.info(f"roll_dice: success")
 
 
+def build_plotina(update, context) -> None:
+    df = pd.read_parquet("plotina.parquet")
+    _id = update.effective_user.id
+    username = update.effective_user.username
+    first_name = update.effective_user.first_name
+    last_name = update.effective_user.last_name
+    dt = datetime.datetime.now()
+    random_number = choice(range(1, 10))
+    if choice(range(10)) > 7:
+        random_number = choice(range(1, 101))
+    if _id in df.id.values:
+        record = df[df.id == _id]
+        if (dt - pd.to_datetime(record.dt))[0].seconds // 3600:
+            record["dt"] = dt
+            record["last_build"] = random_number
+            record["overall_build"] = record["overall_build"] + random_number
+            df.update(record)
+            text = get_length(df)
+            context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        else:
+            text = f"Бобер {first_name} все еще спит!"
+            context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        
+    else:
+        record = pd.DataFrame({"id": [_id],
+                               "username": [username],
+                               "first_name": [first_name],
+                               "last_name": [last_name],
+                               "dt": [dt],
+                               "last_build": [random_number],
+                               "overall_build": [random_number]})
+        text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
+        context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        df.update(record)
+    df.to_parquet("plotina.parquet")
+
+def stats_plotina(update, context) -> None:
+    df = pd.read_parquet("plotina.parquet")
+    text = get_length(df, stats=True)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+
+
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
     if mode == "dev" or mode is None:
@@ -403,6 +447,12 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
     dispatcher.add_handler(delete_dice_handler)
+
+    build_handler = CommandHandler("build", build_plotina)
+    dispatcher.add_handler(build_handler)
+
+    stats_handler = CommandHandler("stats", stats_plotina)
+    dispatcher.add_handler(stats_handler)
 
     goblin_handler = CommandHandler("goblin", send_goblin)
     dispatcher.add_handler(goblin_handler)
