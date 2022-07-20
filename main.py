@@ -413,6 +413,7 @@ def build_plotina(update, context) -> None:
         df.update(record)
     df.to_parquet("plotina.parquet")
 
+
 def stats_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
     text = get_length(df, stats=True)
@@ -449,10 +450,10 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     dispatcher.add_handler(delete_dice_handler)
 
     build_handler = CommandHandler("build", build_plotina)
-    dispatcher.add_handler(build_handler)
+    #dispatcher.add_handler(build_handler)
 
     stats_handler = CommandHandler("stats", stats_plotina)
-    dispatcher.add_handler(stats_handler)
+    #dispatcher.add_handler(stats_handler)
 
     goblin_handler = CommandHandler("goblin", send_goblin)
     dispatcher.add_handler(goblin_handler)
