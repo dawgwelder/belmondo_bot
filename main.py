@@ -410,7 +410,7 @@ def build_plotina(update, context) -> None:
                                "overall_build": [random_number]})
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
         context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        df.update(record)
+        df.append(record)
     df.to_parquet("plotina.parquet")
 
 
@@ -450,10 +450,10 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     dispatcher.add_handler(delete_dice_handler)
 
     build_handler = CommandHandler("build", build_plotina)
-    #dispatcher.add_handler(build_handler)
+    dispatcher.add_handler(build_handler)
 
     stats_handler = CommandHandler("stats", stats_plotina)
-    #dispatcher.add_handler(stats_handler)
+    dispatcher.add_handler(stats_handler)
 
     goblin_handler = CommandHandler("goblin", send_goblin)
     dispatcher.add_handler(goblin_handler)
