@@ -379,7 +379,6 @@ def roll_dice(update, context) -> None:
 
 def build_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
-    print(df)
     _id = update.effective_user.id
     username = update.effective_user.username
     first_name = update.effective_user.first_name
@@ -402,17 +401,17 @@ def build_plotina(update, context) -> None:
             context.bot.send_message(chat_id=update.effective_chat.id, text=text)
         
     else:
+        int_dt = int(pd.Timestamp(dt).to_datetime64())
         record = pd.DataFrame({"id": [_id],
                                "username": [username],
                                "first_name": [first_name],
                                "last_name": [last_name],
-                               "dt": [dt.timestamp()],
+                               "dt": [int_dt],
                                "last_build": [random_number],
                                "overall_build": [random_number]})
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
         context.bot.send_message(chat_id=update.effective_chat.id, text=text)
         df.update(record)
-    print(df)
     df.to_parquet("plotina.parquet")
 
 
