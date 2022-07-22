@@ -393,7 +393,7 @@ def build_plotina(update, context) -> None:
         print(dt)
         print(pd.to_datetime(record.loc[0, "dt"]))
         if (dt - pd.to_datetime(record.loc[0, "dt"])).seconds // 3600 >= 1:
-            record["dt"] = dt
+            record["dt"] = pd.to_datetime(dt)
             record["last_build"] = random_number
             record["overall_build"] = record["overall_build"] + random_number
             df.update(record)
