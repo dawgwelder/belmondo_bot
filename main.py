@@ -385,8 +385,8 @@ def build_plotina(update, context) -> None:
     last_name = update.effective_user.last_name
     dt = datetime.datetime.now()
     random_number = choice(range(1, 10))
-    if choice(range(10)) > 7:
-        random_number = choice(range(1, 101))
+    if choice(range(10)) > 9:
+        random_number = choice(range(20, 101))
     if _id in df.id.values:
         record = df[df.id == _id]
         if (dt - pd.to_datetime(record.loc[0, "dt"])).seconds // 3600 >= 1:
@@ -411,7 +411,7 @@ def build_plotina(update, context) -> None:
                                "overall_build": [random_number]})
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
         context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        df.update(record)
+        df = df.append(record)
     df.to_parquet("plotina.parquet")
 
 
