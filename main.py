@@ -390,8 +390,6 @@ def build_plotina(update, context) -> None:
         random_number = choice(range(1, 101))
     if _id in df.id.values:
         record = df[df.id == _id]
-        print(dt)
-        print(pd.to_datetime(record.loc[0, "dt"]))
         if (dt - pd.to_datetime(record.loc[0, "dt"])).seconds // 3600 >= 1:
             record["dt"] = pd.to_datetime(dt)
             record["last_build"] = random_number
@@ -408,7 +406,7 @@ def build_plotina(update, context) -> None:
                                "username": [username],
                                "first_name": [first_name],
                                "last_name": [last_name],
-                               "dt": [dt],
+                               "dt": [dt.timestamp()],
                                "last_build": [random_number],
                                "overall_build": [random_number]})
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
