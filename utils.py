@@ -85,7 +85,7 @@ def get_length(df, stats=False):
                f"Общая высота плотины {plotina}"
     else:
         active_length = df["overall_build"].max()
-        active = df[df["overall_build"] == active_length]["first_name"][0]
+        active = df[df["overall_build"] == active_length].loc[0, "first_name"]
         active_length = parse_length(active_length)
         text = f"Общая высота плотины - {plotina}! \n" \
                f"Самый активный бобёр - {active}, он построил {active_length}."

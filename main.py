@@ -379,6 +379,7 @@ def roll_dice(update, context) -> None:
 
 def build_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
+    print(df)
     _id = update.effective_user.id
     username = update.effective_user.username
     first_name = update.effective_user.first_name
@@ -389,7 +390,9 @@ def build_plotina(update, context) -> None:
         random_number = choice(range(1, 101))
     if _id in df.id.values:
         record = df[df.id == _id]
-        if (dt - pd.to_datetime(record.dt))[0].seconds // 3600:
+        print(dt)
+        print(pd.to_datetime(record.loc[0, "dt"]))
+        if (dt - pd.to_datetime(record.loc[0, "dt"])).seconds // 3600 >= 1:
             record["dt"] = dt
             record["last_build"] = random_number
             record["overall_build"] = record["overall_build"] + random_number
@@ -410,7 +413,8 @@ def build_plotina(update, context) -> None:
                                "overall_build": [random_number]})
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
         context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        df.append(record)
+        df.update(record)
+    print(df)
     df.to_parquet("plotina.parquet")
 
 
@@ -422,14 +426,7 @@ def stats_plotina(update, context) -> None:
 
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
-    if mode == "dev" or mode is None:
-        bot = Bot(token)
-        updater = Updater(
-            token=token,
-            use_context=True,
-            request_kwargs={"read_timeout": 1000, "connect_timeout": 1000},
-        )
-    elif mode == "prod":
+    if mode in ["dev", "prod"]:
         bot = Bot(token)
         updater = Updater(
             token=token,
