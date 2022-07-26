@@ -377,6 +377,18 @@ def roll_dice(update, context) -> None:
     logger.info(f"roll_dice: success")
 
 
+def show_day(update, context) -> None:
+    weekday = datetime.datetime.now().weekday()
+    sticker = os.path.join('img/eva', f'{weekday}.webp')
+
+    with open(sticker, "rb") as f:
+        context.bot.send_sticker(
+            chat_id=update.effective_chat.id, sticker=f
+        ).sticker
+        logger.info(f"show_day: file {sticker} sent")
+
+
+
 def build_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
     _id = update.effective_user.id
@@ -443,14 +455,14 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
     dispatcher.add_handler(delete_dice_handler)
 
-    build_handler = CommandHandler("build", build_plotina)
-    dispatcher.add_handler(build_handler)
-
-    stats_handler = CommandHandler("stats", stats_plotina)
-    dispatcher.add_handler(stats_handler)
-
     goblin_handler = CommandHandler("goblin", send_goblin)
     dispatcher.add_handler(goblin_handler)
+
+    oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
+    dispatcher.add_handler(oxxxy_handler)
+
+    day_handler = CommandHandler("day", show_day)
+    dispatcher.add_handler(day_handler)
 
     oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
     dispatcher.add_handler(oxxxy_handler)
