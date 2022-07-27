@@ -2,6 +2,7 @@ import os
 import re
 import fire
 import datetime
+import pytz
 import telegram
 
 from telegram import Bot, Update
@@ -378,7 +379,8 @@ def roll_dice(update, context) -> None:
 
 
 def show_day(update, context) -> None:
-    weekday = pd.Timestamp(datetime.datetime.now(), tz="Europe/Moscow").weekday()
+    tz = pytz.timezone('Europe/Moscow')
+    weekday = pd.Timestamp(datetime.datetime.now(tz).weekday()
     sticker = os.path.join("img/eva", f"{weekday}.webp")
 
     with open(sticker, "rb") as f:
