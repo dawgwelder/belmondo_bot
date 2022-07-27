@@ -380,7 +380,7 @@ def roll_dice(update, context) -> None:
 
 def show_day(update, context) -> None:
     tz = pytz.timezone('Europe/Moscow')
-    weekday = pd.Timestamp(datetime.datetime.now(tz).weekday()
+    weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
     sticker = os.path.join("img/eva", f"{weekday}.webp")
 
     with open(sticker, "rb") as f:
