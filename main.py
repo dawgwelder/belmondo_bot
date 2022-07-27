@@ -378,15 +378,14 @@ def roll_dice(update, context) -> None:
 
 
 def show_day(update, context) -> None:
-    weekday = datetime.datetime.now().weekday()
-    sticker = os.path.join('img/eva', f'{weekday}.webp')
+    weekday = pd.Timestamp(dt.datetime.now(), tz="Europe/Moscow")
+    sticker = os.path.join("img/eva", f"{weekday}.webp")
 
     with open(sticker, "rb") as f:
         context.bot.send_sticker(
             chat_id=update.effective_chat.id, sticker=f
         ).sticker
         logger.info(f"show_day: file {sticker} sent")
-
 
 
 def build_plotina(update, context) -> None:
