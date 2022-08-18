@@ -219,6 +219,22 @@ def parse_message(update, context) -> None:
                     parse_mode="markdown",
                 )
                 logger.info("answer_message: good night crackheads sticker sent")
+
+        if "горшок не пьет" in msg:
+            not_drink = (datetime.datetime.now() - datetime.datetime.strptime('19072013', "%d%m%Y")).days
+            ending = int(str(not_drink)[-1])
+            if ending == 1:
+                ending = "день"
+            elif ending in [2, 3, 4]:
+                ending = "дня"
+            else:
+                ending = "дней"
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=f"Горшок не пьет уже {not_drink} {ending}",
+                parse_mode="markdown",
+            )
                 
         if "залуп" in msg:
             file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
@@ -226,12 +242,12 @@ def parse_message(update, context) -> None:
                 context.bot.send_sticker(
                     chat_id=update.effective_chat.id, sticker=f
                 ).sticker
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
-                    parse_mode="markdown",
-                )
+                # context.bot.send_message(
+                #     chat_id=update.effective_chat.id,
+                #     reply_to_message_id=update.message.message_id,
+                #     text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
+                #     parse_mode="markdown",
+                # )
                 logger.info("answer_message: zalupa sticker sent")
                 
         if "джекпот" in msg:
