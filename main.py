@@ -220,7 +220,7 @@ def parse_message(update, context) -> None:
                 )
                 logger.info("answer_message: good night crackheads sticker sent")
 
-        if "горшок не пьет" in msg:
+        if "горшок не пьет" or "горшок не пьёт" or "горшок держится" in msg:
             not_drink = (datetime.datetime.now() - datetime.datetime.strptime('19072013', "%d%m%Y")).days
             ending = int(str(not_drink)[-1])
             if ending == 1:
