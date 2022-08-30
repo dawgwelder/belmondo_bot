@@ -220,7 +220,8 @@ def parse_message(update, context) -> None:
                 )
                 logger.info("answer_message: good night crackheads sticker sent")
 
-        if "горшок не пьет" or "горшок не пьёт" or "горшок держится" in msg:
+        if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
+            not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
             not_drink = (datetime.datetime.now() - datetime.datetime.strptime('19072013', "%d%m%Y")).days
             ending = int(str(not_drink)[-1])
             if ending == 1:
@@ -232,7 +233,7 @@ def parse_message(update, context) -> None:
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
-                text=f"Горшок не пьет уже {not_drink} {ending}",
+                text=f"Горшок {not_drink_choice} уже {not_drink} {ending}",
                 parse_mode="markdown",
             )
                 
