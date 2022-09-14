@@ -126,6 +126,7 @@ def parse_message(update, context) -> None:
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
+        # print("!!!!!!!!", update.message.forward_from_chat.id, update.message.forward_from_chat.username, update.message.forward_from_message_id)
 
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
@@ -148,6 +149,11 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"answer_message: replied with {log_text}")
+        if "колокол" in msg and not update.message.forward_from_message_id:
+            # 63494 -1001060302681
+            context.bot.forward_message(chat_id=update.effective_chat.id,
+                                        from_chat_id="@oldlentach",
+                                        message_id=63494)
 
         if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
@@ -222,7 +228,8 @@ def parse_message(update, context) -> None:
 
         if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
             not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
-            not_drink = (datetime.datetime.now() - datetime.datetime.strptime('19072013', "%d%m%Y")).days
+            tz = pytz.timezone('Europe/Moscow')
+            not_drink = (datetime.datetime.now(tz) - datetime.datetime.strptime('19072013', "%d%m%Y")).days
             ending = int(str(not_drink)[-1])
             if ending == 1:
                 ending = "день"
