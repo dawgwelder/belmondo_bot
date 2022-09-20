@@ -47,7 +47,7 @@ def parse_message(update, context) -> None:
     if update.message.via_bot is not None:
         shit_bot = (
             update.message.via_bot.id == SHIT_BOT_ID
-        )  # or update.message.via_bot.username == "HowYourBot"
+        )
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
 
         if shit_bot:
@@ -60,21 +60,13 @@ def parse_message(update, context) -> None:
 
         elif godnoscop_bot:
             name = "godnoscop"
-            try:
-                context.bot.edit_message_media(
-                    update.effective_chat.id,
-                    update.message.message_id,
-                    media=InputMediaPhoto("img/pixel.jpeg"),
-                )
-                logger.info(f"delete_message from {name} bot: {update.message.text}")
-            except:
-                context.bot.send_message(
-                    update.effective_chat.id, update.message.text.replace("#NoWar", "")
-                )
-                context.bot.delete_message(
-                    update.effective_chat.id, update.message.message_id
-                )
-                logger.info(f"edited_message from {name} bot: {update.message.text}")
+            context.bot.send_message(
+                update.effective_chat.id, update.message.text.replace("#NoWar", "")
+            )
+            context.bot.delete_message(
+                update.effective_chat.id, update.message.message_id
+            )
+            logger.info(f"edited_message from {name} bot: {update.message.text}")
 
     if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
         regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
@@ -126,6 +118,7 @@ def parse_message(update, context) -> None:
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
+        # print("!!!!!!!!", update.message.forward_from_chat.id, update.message.forward_from_chat.username, update.message.forward_from_message_id)
 
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
@@ -148,6 +141,19 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"answer_message: replied with {log_text}")
+        if "колокол" in msg and not update.message.forward_from_message_id:
+            # 63494 -1001060302681
+            # context.bot.forward_message(chat_id=update.effective_chat.id,
+            #                             from_chat_id="@oldlentach",
+            #                             message_id=63494)
+            with open('img/colocola.jpg', 'rb') as f:
+                context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    caption=colocola,
+                    photo=f,
+                    parse_mode="markdown",
+                )
 
         if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
