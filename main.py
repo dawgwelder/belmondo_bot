@@ -154,6 +154,14 @@ def parse_message(update, context) -> None:
                     photo=f,
                     parse_mode="markdown",
                 )
+        if "нацист" in msg:
+            with open('img/nz.jpg', 'rb') as f:
+                context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    photo=f,
+                    parse_mode="markdown",
+                )
 
         if msg.startswith("понос ") and " на " in msg:
             user = msg.split("понос ")[-1].split(" на")[0]
