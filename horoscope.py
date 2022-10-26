@@ -31,7 +31,7 @@ def generate_post():
 
     for idx, (horo, ru_horo, emoji) in enumerate(zip(horo_list, horo_ru_list, horo_emojis)):
         horo_text = get_horoscope(horo)
-        if idx > 6:
+        if idx < 5:
             first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n"
         else: 
             second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n"
