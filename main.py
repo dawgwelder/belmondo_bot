@@ -19,6 +19,7 @@ from markov import get_model
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
+from horoscope import generate_post
 
 
 logger = get_logger("Belmondo Logger")
@@ -34,6 +35,13 @@ def quote(update, context) -> None:
     text = quote_choice()
     logger.info(f"quote: {text[:10]}...")
     context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+
+
+def get_horoscope(update, context) -> None:
+    first_post, second_post = generate_post()
+    logger.info(f"sending horoscopes")
+    context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
 
 
 # Вынести в отдельный файл? Написать класс?
@@ -484,6 +492,9 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     quote_handler = CommandHandler("quote", quote)
     dispatcher.add_handler(quote_handler)
+
+    horoscope_handler = CommandHandler("horoscope", get_horoscope)
+    dispatcher.add_handler(horoscope_handler)
 
     delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
     dispatcher.add_handler(delete_dice_handler)
