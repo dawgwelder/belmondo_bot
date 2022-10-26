@@ -26,13 +26,13 @@ def get_horoscope(horo):
 def generate_post():
     dt = datetime.now().date()
     dt = format_date(dt, locale="ru", format="full").capitalize()
-    first_post = f"{dt}\n"
+    first_post = f"{dt}\n\n"
     second_post = ""
 
     for idx, (horo, ru_horo, emoji) in enumerate(zip(horo_list, horo_ru_list, horo_emojis)):
         horo_text = get_horoscope(horo)
         if idx < 5:
-            first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n"
+            first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
         else: 
-            second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n"
-    return first_post, second_post
+            second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
+    return first_post.strip(), second_post.strip()
