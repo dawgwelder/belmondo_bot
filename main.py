@@ -5,8 +5,8 @@ import datetime
 import pytz
 import telegram
 
-from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
 from time import sleep
 from random import choice
@@ -19,7 +19,7 @@ from markov import get_model
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post
+from horoscope import generate_post, generate_horo_message
 
 
 logger = get_logger("Belmondo Logger")
@@ -42,6 +42,43 @@ def get_horoscope(update, context) -> None:
     logger.info(f"sending horoscopes")
     context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
     context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
+
+    
+def horoscope(update: Update, context) -> None:
+    keyboard = [
+        [
+            InlineKeyboardButton("Овен", callback_data="aries"),
+            InlineKeyboardButton("Телец", callback_data="taurus"),
+            InlineKeyboardButton("Близнецы", callback_data="gemini")
+        ],
+        [
+            InlineKeyboardButton("Рак", callback_data="cancer"),
+            InlineKeyboardButton("Лев", callback_data="leo"),
+            InlineKeyboardButton("Дева", callback_data="virgo")
+        ],
+        [
+            InlineKeyboardButton("Весы", callback_data="libra"),
+            InlineKeyboardButton("Скорпион", callback_data="scorpio"),
+            InlineKeyboardButton("Стрелец", callback_data="sagittarius")
+        ],
+        [
+            InlineKeyboardButton("Козерог", callback_data="capricorn"),
+            InlineKeyboardButton("Водолей", callback_data="aquarius"),
+            InlineKeyboardButton("Рыбы", callback_data="pisces")
+        ],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    update.message.reply_text("Please choose:", reply_markup=reply_markup)
+
+
+def button(update: Update, context) -> None:
+    query = update.callback_query
+    query.answer()
+
+    message = generate_horo_message(query.data)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
 # Вынести в отдельный файл? Написать класс?
@@ -493,8 +530,8 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     quote_handler = CommandHandler("quote", quote)
     dispatcher.add_handler(quote_handler)
 
-    horoscope_handler = CommandHandler("horoscope", get_horoscope)
-    dispatcher.add_handler(horoscope_handler)
+    # horoscope_handler = CommandHandler("horoscope", get_horoscope)
+    # dispatcher.add_handler(horoscope_handler)
 
     delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
     dispatcher.add_handler(delete_dice_handler)
@@ -519,6 +556,10 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     parse_handler = MessageHandler(Filters.text & ~Filters.command, parse_message)
     dispatcher.add_handler(parse_handler)
+    
+    test_handler = CommandHandler('horoscope', horoscope)
+    dispatcher.add_handler(test_handler)
+    dispatcher.add_handler(CallbackQueryHandler(button))
 
     updater.start_polling()
     updater.idle()
