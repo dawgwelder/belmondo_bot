@@ -70,7 +70,7 @@ def horoscope(update: Update, context) -> None:
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    update.message.reply_text("Please choose:", reply_markup=reply_markup)
+    update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
 
 
 def button(update: Update, context) -> None:
