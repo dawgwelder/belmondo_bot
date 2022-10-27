@@ -23,12 +23,23 @@ def get_horoscope(horo):
     return text
 
 
+def generate_horo_message(horo):
+    ru_horo = dict(zip(horo_list, horo_ru_list))[horo]
+    emoji = dict(zip(horo_list, horo_emojis))[horo]
+    dt = datetime.now().date()
+    dt = format_date(dt, locale="ru", format="full").capitalize()
+
+    horo_text = get_horoscope(horo)
+    message = f"{dt}\n\n{emoji}{ru_horo}:\n{horo_text}"
+    return message
+
+
 def generate_post():
     dt = datetime.now().date()
     dt = format_date(dt, locale="ru", format="full").capitalize()
     first_post = f"{dt}\n\n"
     second_post = ""
-
+    
     for idx, (horo, ru_horo, emoji) in enumerate(zip(horo_list, horo_ru_list, horo_emojis)):
         horo_text = get_horoscope(horo)
         if idx < 5:

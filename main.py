@@ -6,7 +6,9 @@ import pytz
 import telegram
 
 from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import (Application, CommandHandler, MessageHandler,
+                          filters, CallbackQueryHandler, ContextTypes)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from time import sleep
 from random import choice
@@ -19,7 +21,7 @@ from markov import get_model
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post
+from horoscope import generate_post, generate_horo_message
 
 
 logger = get_logger("Belmondo Logger")
@@ -36,6 +38,49 @@ def quote(update, context) -> None:
     logger.info(f"quote: {text[:10]}...")
     context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
+
+async def horoscope(update: Update, context) -> None:
+
+    keyboard = [
+        [
+            InlineKeyboardButton("Овен", callback_data="aries"),
+            InlineKeyboardButton("Телец", callback_data="taurus"),
+            InlineKeyboardButton("Близнецы", callback_data="gemini")
+        ],
+        [
+            InlineKeyboardButton("Рак", callback_data="cancer"),
+            InlineKeyboardButton("Лев", callback_data="leo"),
+            InlineKeyboardButton("Дева", callback_data="virgo")
+        ],
+        [
+            InlineKeyboardButton("Весы", callback_data="libra"),
+            InlineKeyboardButton("Скорпион", callback_data="scorpio"),
+            InlineKeyboardButton("Стрелец", callback_data="sagittarius")
+        ],
+        [
+            InlineKeyboardButton("Козерог", callback_data="capricorn"),
+            InlineKeyboardButton("Водолей", callback_data="aquarius"),
+            InlineKeyboardButton("Рыбы", callback_data="pisces")
+        ],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text("Please choose:", reply_markup=reply_markup)
+
+
+async def button(update: Update, context) -> None:
+    """Parses the CallbackQuery and updates the message text."""
+    query = update.callback_query
+
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+
+    message = generate_horo_message(query.data)
+
+    await query.edit_message_text(text=f"{message}")
+    
 
 def get_horoscope(update, context) -> None:
     first_post, second_post = generate_post()
@@ -477,51 +522,56 @@ def stats_plotina(update, context) -> None:
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
     if mode in ["dev", "prod"]:
-        bot = Bot(token)
-        updater = Updater(
-            token=token,
-            use_context=True,
-            request_kwargs={"read_timeout": 1000, "connect_timeout": 1000},
-        )
+        # bot = Bot(token)
+        # updater = Updater(
+        #     token=token,
+        #     use_context=True,
+        #     request_kwargs={"read_timeout": 1000, "connect_timeout": 1000},
+        # )
+        application = Application().token(token).build()
     else:
         logger.error(f"Bot start: FAIL!")
     logger.info(f"Bot start: success!")
-    dispatcher = updater.dispatcher
-    job = updater.job_queue
-    dispatcher.bot_data.update(vars_dict)
+    # dispatcher = updater.dispatcher
+    # job = updater.job_queue
+    # dispatcher.bot_data.update(vars_dict)
 
     quote_handler = CommandHandler("quote", quote)
-    dispatcher.add_handler(quote_handler)
+    application.add_handler(quote_handler)
 
     horoscope_handler = CommandHandler("horoscope", get_horoscope)
-    dispatcher.add_handler(horoscope_handler)
+    application.add_handler(horoscope_handler)
 
-    delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
-    dispatcher.add_handler(delete_dice_handler)
+    delete_dice_handler = MessageHandler(filters.Dice, delete_dice)
+    application.add_handler(delete_dice_handler)
 
     goblin_handler = CommandHandler("goblin", send_goblin)
-    dispatcher.add_handler(goblin_handler)
+    application.add_handler(goblin_handler)
 
     oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
-    dispatcher.add_handler(oxxxy_handler)
+    application.add_handler(oxxxy_handler)
 
     day_handler = CommandHandler("day", show_day)
-    dispatcher.add_handler(day_handler)
+    application.add_handler(day_handler)
 
     oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
-    dispatcher.add_handler(oxxxy_handler)
+    application.add_handler(oxxxy_handler)
 
     morning_handler = CommandHandler("zavod", send_morning)
-    dispatcher.add_handler(morning_handler)
+    application.add_handler(morning_handler)
 
     roll_handler = CommandHandler("roll", roll_dice)
-    dispatcher.add_handler(roll_handler)
+    application.add_handler(roll_handler)
 
-    parse_handler = MessageHandler(Filters.text & ~Filters.command, parse_message)
-    dispatcher.add_handler(parse_handler)
+    parse_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message)
+    application.add_handler(parse_handler)
 
-    updater.start_polling()
-    updater.idle()
+    application.add_handler(CommandHandler("test", horoscope))
+    application.add_handler(CallbackQueryHandler(button))
+
+    # updater.start_polling()
+    # updater.idle()
+    application.run_polling()
 
 
 if __name__ == "__main__":
