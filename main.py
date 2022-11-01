@@ -20,10 +20,13 @@ from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, generate_horo_message
+from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 
 logger = get_logger("Belmondo Logger")
 model = get_model()
+tracker = GodnoscopTracker()
+tracker.update_godnoscopes()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
 # TODO: дебажить завод
@@ -44,27 +47,64 @@ def get_horoscope(update, context) -> None:
     context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
 
     
-def horoscope(update: Update, context) -> None:
+# def horoscope(update: Update, context) -> None:
+#     keyboard = [
+#         [
+#             InlineKeyboardButton("Овен", callback_data="aries"),
+#             InlineKeyboardButton("Телец", callback_data="taurus"),
+#             InlineKeyboardButton("Близнецы", callback_data="gemini")
+#         ],
+#         [
+#             InlineKeyboardButton("Рак", callback_data="cancer"),
+#             InlineKeyboardButton("Лев", callback_data="leo"),
+#             InlineKeyboardButton("Дева", callback_data="virgo")
+#         ],
+#         [
+#             InlineKeyboardButton("Весы", callback_data="libra"),
+#             InlineKeyboardButton("Скорпион", callback_data="scorpio"),
+#             InlineKeyboardButton("Стрелец", callback_data="sagittarius")
+#         ],
+#         [
+#             InlineKeyboardButton("Козерог", callback_data="capricorn"),
+#             InlineKeyboardButton("Водолей", callback_data="aquarius"),
+#             InlineKeyboardButton("Рыбы", callback_data="pisces")
+#         ],
+#     ]
+# 
+#     reply_markup = InlineKeyboardMarkup(keyboard)
+# 
+#     update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
+# 
+# 
+# def button(update: Update, context) -> None:
+#     query = update.callback_query
+#     query.answer()
+# 
+#     message = generate_horo_message(query.data)
+#     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+
+
+def godnoscope(update: Update, context) -> None:
     keyboard = [
         [
-            InlineKeyboardButton("Овен", callback_data="aries"),
-            InlineKeyboardButton("Телец", callback_data="taurus"),
-            InlineKeyboardButton("Близнецы", callback_data="gemini")
+            InlineKeyboardButton("Овен", callback_data="ОВЕН"),
+            InlineKeyboardButton("Телец", callback_data="ТЕЛЕЦ"),
+            InlineKeyboardButton("Близнецы", callback_data="БЛИЗНЕЦЫ")
         ],
         [
-            InlineKeyboardButton("Рак", callback_data="cancer"),
-            InlineKeyboardButton("Лев", callback_data="leo"),
-            InlineKeyboardButton("Дева", callback_data="virgo")
+            InlineKeyboardButton("Рак", callback_data="РАК"),
+            InlineKeyboardButton("Лев", callback_data="ЛЕВ"),
+            InlineKeyboardButton("Дева", callback_data="ДЕВА")
         ],
         [
-            InlineKeyboardButton("Весы", callback_data="libra"),
-            InlineKeyboardButton("Скорпион", callback_data="scorpio"),
-            InlineKeyboardButton("Стрелец", callback_data="sagittarius")
+            InlineKeyboardButton("Весы", callback_data="ВЕСЫ"),
+            InlineKeyboardButton("Скорпион", callback_data="СКОРПИОН"),
+            InlineKeyboardButton("Стрелец", callback_data="СТРЕЛЕЦ")
         ],
         [
-            InlineKeyboardButton("Козерог", callback_data="capricorn"),
-            InlineKeyboardButton("Водолей", callback_data="aquarius"),
-            InlineKeyboardButton("Рыбы", callback_data="pisces")
+            InlineKeyboardButton("Козерог", callback_data="КОЗЕРОГ"),
+            InlineKeyboardButton("Водолей", callback_data="ВОДОЛЕЙ"),
+            InlineKeyboardButton("Рыбы", callback_data="РЫБЫ")
         ],
     ]
 
@@ -73,16 +113,15 @@ def horoscope(update: Update, context) -> None:
     update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
 
 
-def button(update: Update, context) -> None:
+def button_godnoscope(update: Update, context) -> None:
     query = update.callback_query
     query.answer()
 
-    message = generate_horo_message(query.data)
+    message = tracker.get_horoscope(query.data)
     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
 # Вынести в отдельный файл? Написать класс?
-# delete photo for godnobot
 def parse_message(update, context) -> None:
     bot_data = context.bot_data
     text = ""
@@ -557,9 +596,13 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     parse_handler = MessageHandler(Filters.text & ~Filters.command, parse_message)
     dispatcher.add_handler(parse_handler)
     
-    test_handler = CommandHandler('horoscope', horoscope)
-    dispatcher.add_handler(test_handler)
-    dispatcher.add_handler(CallbackQueryHandler(button))
+    # rambler_horoscope_handler = CommandHandler('horoscope', horoscope)
+    # dispatcher.add_handler(rambler_horoscope_handler)
+    # dispatcher.add_handler(CallbackQueryHandler(button))
+
+    godnoscope_handler = CommandHandler('horoscope', godnoscope)
+    dispatcher.add_handler(godnoscope_handler)
+    dispatcher.add_handler(CallbackQueryHandler(button_godnoscope))
 
     updater.start_polling()
     updater.idle()
