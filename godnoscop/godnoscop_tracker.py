@@ -59,7 +59,9 @@ class GodnoscopTracker:
             parsed = self.parse_post(message.text)
             if parsed is not None:
                 sign, post = parsed
-                self.godnoscopes["data"][sign] = post if post is not None else self.not_updated_text
+                if post is not None:
+                    self.godnoscopes["data"][sign] = post 
+        self.dump_data()
         return self.godnoscopes
 
     def load_data(self):
@@ -76,10 +78,9 @@ class GodnoscopTracker:
         if (not self.godnoscopes
                 or self.godnoscopes["last_date"] != str(self.get_last_date())
                 or not self.godnoscopes["data"]):
-            try:
-                self.godnoscopes = self.update_godnoscopes()
-            except:
-                pass
+
+            self.godnoscopes = self.update_godnoscopes()
+
         return self.godnoscopes["data"].get(sign, self.not_updated_text)
         
 
@@ -88,6 +89,5 @@ if __name__ == "__main__":
 
     for sign in horo_list:
         print(tracker.get_horoscope(sign))
-    tracker.dump_data()
-
         
+    tracker.dump_data()
