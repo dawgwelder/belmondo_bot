@@ -1,5 +1,6 @@
 import os 
 import json
+import asyncio
 from telethon import TelegramClient, events, sync
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.types import InputPeerEmpty
@@ -10,6 +11,9 @@ from configparser import ConfigParser
 
 config = ConfigParser()
 config.read("auth.conf")
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 horo_list = ['ОВЕН',
              'ТЕЛЕЦ',
@@ -29,9 +33,9 @@ class GodnoscopTracker:
     def __init__(self):
         self.client = TelegramClient(str(config["auth"]["phone"]), 
                                      config["auth"]["api_id"], 
-                                     config["auth"]["api_hash"])
+                                     config["auth"]["api_hash"], loop=loop)
         self.godonscopes_path = config["paths"]["gonoscopes_path"]
-        self.godnoscopes = {}
+        self.godnoscopes = self.load_data()
         self.not_updated_text = "Они еще не проапдейтили гороскопы!"
         self.client.start()
     
@@ -65,8 +69,11 @@ class GodnoscopTracker:
         return self.godnoscopes
 
     def load_data(self):
-        with open(self.godonscopes_path) as f:
-            data = json.load(f)
+        try:
+            with open(self.godonscopes_path) as f:
+                data = json.load(f)
+        except:
+            data = {}
         return data
 
     def dump_data(self):
@@ -79,7 +86,7 @@ class GodnoscopTracker:
                 or self.godnoscopes["last_date"] != str(self.get_last_date())
                 or not self.godnoscopes["data"]):
 
-            self.godnoscopes = self.update_godnoscopes()
+            self.update_godnoscopes()
 
         return self.godnoscopes["data"].get(sign, self.not_updated_text)
         

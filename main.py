@@ -26,7 +26,7 @@ from godnoscop.godnoscop_tracker import GodnoscopTracker
 logger = get_logger("Belmondo Logger")
 model = get_model()
 tracker = GodnoscopTracker()
-tracker.update_godnoscopes()
+# tracker.update_godnoscopes()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
 # TODO: дебажить завод
