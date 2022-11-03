@@ -12,8 +12,6 @@ from configparser import ConfigParser
 config = ConfigParser()
 config.read("auth.conf")
 
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 horo_list = ['ОВЕН',
              'ТЕЛЕЦ',
@@ -31,13 +29,19 @@ horo_list = ['ОВЕН',
                
 class GodnoscopTracker:
     def __init__(self):
-        self.client = TelegramClient(str(config["auth"]["phone"]), 
-                                     config["auth"]["api_id"], 
-                                     config["auth"]["api_hash"], loop=loop)
         self.godonscopes_path = config["paths"]["gonoscopes_path"]
         self.godnoscopes = self.load_data()
         self.not_updated_text = "Они еще не проапдейтили гороскопы!"
-        self.client.start()
+
+    @staticmethod
+    def create_client():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        client = TelegramClient(str(config["auth"]["phone"]),
+                                config["auth"]["api_id"],
+                                config["auth"]["api_hash"], loop=loop)
+        client.start()
+        return client
     
     @staticmethod
     def get_last_date():
@@ -57,15 +61,18 @@ class GodnoscopTracker:
     def update_godnoscopes(self):
         self.godnoscopes["last_date"] = str(self.get_last_date())
         self.godnoscopes["data"] = {}
-
-        for message in self.client.iter_messages("godnoscopp", reverse=True,
-                                                 limit=20, offset_date=self.get_last_date()):
+        client = self.create_client()
+        for message in client.iter_messages("godnoscopp",
+                                            reverse=True,
+                                            limit=20,
+                                            offset_date=self.get_last_date()):
             parsed = self.parse_post(message.text)
             if parsed is not None:
                 sign, post = parsed
                 if post is not None:
                     self.godnoscopes["data"][sign] = post 
         self.dump_data()
+        client.disconnect()
         return self.godnoscopes
 
     def load_data(self):
