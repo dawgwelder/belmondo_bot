@@ -88,10 +88,10 @@ class GodnoscopTracker:
             json.dump(self.godnoscopes, f)
         
     def get_horoscope(self, sign):
-
         if (not self.godnoscopes
                 or self.godnoscopes["last_date"] != str(self.get_last_date())
-                or not self.godnoscopes["data"]):
+                or not self.godnoscopes["data"]
+                or sign not in self.godnoscopes["data"]):
 
             self.update_godnoscopes()
 
