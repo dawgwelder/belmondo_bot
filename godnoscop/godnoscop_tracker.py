@@ -95,7 +95,7 @@ class GodnoscopTracker:
 
             self.update_godnoscopes()
 
-        return self.godnoscopes["data"].get(sign, self.not_updated_text)
+        return self.godnoscopes["data"].get(sign, f"{sign}: {self.not_updated_text}")
         
 
 if __name__ == "__main__":
