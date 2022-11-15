@@ -166,7 +166,7 @@ def parse_message(update, context) -> None:
             )
         else:
             count = int(number)
-            count = 100 if count > 999 else count
+            count = 10 if count > 999 else count
             for _ in range(count):
                 text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
                 context.bot.send_message(
@@ -225,15 +225,19 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"answer_message: replied with {log_text}")
-        if "колокол" in msg and not update.message.forward_from_message_id:
+        if "колокол" in msg and not update.message.forward_from_message_id and not msg == "колокол":
             # 63494 -1001060302681
             # context.bot.forward_message(chat_id=update.effective_chat.id,
             #                             from_chat_id="@oldlentach",
             #                             message_id=63494)
+            if update.message.reply_to_message is not None:
+                reply_to = update.message.reply_to_message.message_id
+            else:
+                reply_to = update.message.message_id
             with open('img/colocola.jpg', 'rb') as f:
                 context.bot.send_photo(
                     chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
+                    reply_to_message_id=reply_to,
                     caption=colocola,
                     photo=f,
                     parse_mode="markdown",
