@@ -50,12 +50,13 @@ class GodnoscopTracker:
 
     def parse_post(self, post):
         date = format_date(self.get_last_date(), locale="ru", format="d MMMM")
-        sign = post.split(".")[0]
-        if sign in horo_list:
+        if post is not None:
             if date in post:
-                return sign, post
-            else:
-                return sign, None
+                sign = post.split(".")[0]
+                if sign in horo_list:
+                    return sign, post
+                else:
+                    return sign, None
         return None
     
     def update_godnoscopes(self):
@@ -63,10 +64,9 @@ class GodnoscopTracker:
         self.godnoscopes["data"] = {}
         client = self.create_client()
         for message in client.iter_messages("godnoscopp",
-                                            reverse=True,
-                                            limit=20,
-                                            offset_date=self.get_last_date()):
+                                            limit=20):
             parsed = self.parse_post(message.text)
+            print(parsed)
             if parsed is not None:
                 sign, post = parsed
                 if post is not None:
