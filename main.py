@@ -20,6 +20,7 @@ from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, generate_horo_message
+from anecdote import get_anecdote
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 
@@ -225,6 +226,14 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"answer_message: replied with {log_text}")
+        if "анек" in msg:
+            text = get_anecdote()
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown")
+            
         if "колокол" not in msg.split() and "колокол" in msg and not update.message.forward_from_message_id:
             # 63494 -1001060302681
             # context.bot.forward_message(chat_id=update.effective_chat.id,
