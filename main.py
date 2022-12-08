@@ -207,10 +207,11 @@ def parse_message(update, context) -> None:
 
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
-            logger.info(f"triggered by: {msg}")
-            logger.info(
-                f"answer_message: {'EXISTS' if text else 'EMPTY'} and flag to show was {bool(prob)}"
-            )
+            if text:
+                logger.info(f"triggered by: {msg}")
+                logger.info(
+                    f"scripted answer_message: flag to show was {bool(prob)}"
+                )
             if text and prob:
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -225,7 +226,7 @@ def parse_message(update, context) -> None:
                         f"{' '.join([log_text.split()[idx] for idx in range(5)])}"
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
-                logger.info(f"answer_message: replied with {log_text}")
+                logger.info(f"scripted answer_message: replied with {log_text}")
         if "анек" in msg:
             text = get_anecdote()
             context.bot.send_message(
@@ -233,6 +234,20 @@ def parse_message(update, context) -> None:
                 reply_to_message_id=update.message.message_id,
                 text=text,
                 parse_mode="markdown")
+        if "кубик" in msg:
+            text = roll_custom_dice(msg)
+            if text is not None:
+                if text == "default":
+                    context.bot.send_dice(
+                        chat_id=update.effective_message.chat_id,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                else:
+                    context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        text=text,
+                        parse_mode="markdown")
             
         if "колокол" not in msg.split() and "колокол" in msg and not update.message.forward_from_message_id:
             # 63494 -1001060302681

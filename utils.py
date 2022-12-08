@@ -1,3 +1,4 @@
+import re
 from numpy.random import normal, uniform
 from time import sleep
 from random import choice
@@ -76,6 +77,7 @@ def parse_length(length):
 
     return text
 
+
 def get_length(df, stats=False):
     plotina_length = df["overall_build"].sum()
     plotina = parse_length(plotina_length)
@@ -90,3 +92,20 @@ def get_length(df, stats=False):
         text = f"Общая высота плотины - {plotina}! \n" \
                f"Самый активный бобёр - {active}, он построил {active_length}."
     return text
+
+
+from random import choice
+
+
+def roll_custom_dice(text):
+    regex_find = re.findall("кубик \d+", text)
+    if regex_find:
+        number = int(regex_find[0].split()[-1])
+        if 1 < number:
+            if number == 6:
+                return "default"
+            else:
+                chosen_number = choice(range(1, number + 1))
+                sentence = f"Я кинул {number}-гранный кубик.\nВыпало {chosen_number}"
+                return sentence
+    return None
