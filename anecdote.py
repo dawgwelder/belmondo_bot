@@ -7,5 +7,5 @@ anecdote_site = "https://baneks.ru/random"
 
 def get_anecdote():
     soup = BeautifulSoup(requests.get(anecdote_site).text, features="lxml")
-    text = soup.find("title").text.split(" |")[0]
+    text = soup.find(attrs={"property": "og:description"})["content"]
     return text
