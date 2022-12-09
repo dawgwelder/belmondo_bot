@@ -227,7 +227,7 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"scripted answer_message: replied with {log_text}")
-        if "анек" in msg and _id != 1276243648:
+        if "анек" in msg and not "манекен" in msg.split() and _id != 1276243648:
             text = get_anecdote()
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
