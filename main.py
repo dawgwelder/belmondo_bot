@@ -4,6 +4,8 @@ import fire
 import datetime
 import pytz
 import telegram
+import openai
+from configparser import ConfigParser
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
@@ -25,8 +27,14 @@ from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 
 logger = get_logger("Belmondo Logger")
-model = get_model()
-tracker = GodnoscopTracker()
+
+config = ConfigParser()
+config.read("auth.conf")
+api_key = config["auth"]["openai_api_key"]
+openai.api_key = api_key
+engine = "text-davinci-003"
+
+tracker = GodnoscopTracker(config)
 # tracker.update_godnoscopes()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
@@ -191,19 +199,22 @@ def parse_message(update, context) -> None:
                 )
             logger.info("parse_message: or sentence answered")
         else:
-            text = model.make_short_sentence(280)
+            completion = openai.Completion.create(engine=engine,
+                                                  prompt=update.message.text,
+                                                  temperature=0.5,
+                                                  max_tokens=1000)
+            text = completion.choices[0].text
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
                 text=text,
                 parse_mode="markdown",
             )
-            logger.info("markov model: generated text sent")
+            logger.info("chatGPT: generated text sent")
         
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
-        # print("!!!!!!!!", update.message.forward_from_chat.id, update.message.forward_from_chat.username, update.message.forward_from_message_id)
 
         if msg:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])

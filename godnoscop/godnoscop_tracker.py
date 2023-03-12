@@ -7,11 +7,6 @@ from telethon.tl.types import InputPeerEmpty
 
 from datetime import datetime
 from babel.dates import format_date
-from configparser import ConfigParser
-
-config = ConfigParser()
-config.read("auth.conf")
-
 
 horo_list = ['ОВЕН',
              'ТЕЛЕЦ',
@@ -28,18 +23,18 @@ horo_list = ['ОВЕН',
             
                
 class GodnoscopTracker:
-    def __init__(self):
-        self.godonscopes_path = config["paths"]["gonoscopes_path"]
+    def __init__(self, config):
+        self.config = config
+        self.config["paths"]["gonoscopes_path"] = config["paths"]["gonoscopes_path"]
         self.godnoscopes = self.load_data()
         self.not_updated_text = "Они еще не проапдейтили гороскопы!"
 
-    @staticmethod
-    def create_client():
+    def create_client(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        client = TelegramClient(str(config["auth"]["phone"]),
-                                config["auth"]["api_id"],
-                                config["auth"]["api_hash"], loop=loop)
+        client = TelegramClient(str(self.config["auth"]["phone"]),
+                                self.config["auth"]["api_id"],
+                                self.config["auth"]["api_hash"], loop=loop)
         client.start()
         return client
     
@@ -77,14 +72,14 @@ class GodnoscopTracker:
 
     def load_data(self):
         try:
-            with open(self.godonscopes_path) as f:
+            with open(self.config["paths"]["gonoscopes_path"]) as f:
                 data = json.load(f)
         except:
             data = {}
         return data
 
     def dump_data(self):
-        with open(self.godonscopes_path, "w") as f:
+        with open(self.config["paths"]["gonoscopes_path"], "w") as f:
             json.dump(self.godnoscopes, f)
         
     def get_horoscope(self, sign):

@@ -33,6 +33,7 @@ def generate_horo_message(horo):
     message = f"{dt}\n\n{emoji}{ru_horo}:\n{horo_text}"
     return message
 
+
 def generate_post():
     dt = datetime.now().date()
     dt = format_date(dt, locale="ru", format="full").capitalize()
