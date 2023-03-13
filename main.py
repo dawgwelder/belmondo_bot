@@ -186,31 +186,18 @@ def parse_message(update, context) -> None:
                 sleep(choice([.5, .25, 1, .75, .666]))
                 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
-        if "или" in update.message.text.lower():
-            msg = clean_string(update.message.text.lower())
-            words = msg.split()
-            if words[len(words) // 2] == "или":
-                text = clean_string(choice(update.message.text.split(" или ")))
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-            logger.info("parse_message: or sentence answered")
-        else:
-            completion = openai.Completion.create(engine=engine,
-                                                  prompt=update.message.text,
-                                                  temperature=0.5,
-                                                  max_tokens=1000)
-            text = completion.choices[0].text
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=text,
-                parse_mode="markdown",
-            )
-            logger.info("chatGPT: generated text sent")
+        completion = openai.Completion.create(engine=engine,
+                                              prompt=update.message.text,
+                                              temperature=0.5,
+                                              max_tokens=1000)
+        text = completion.choices[0].text
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info("chatGPT: generated text sent")
         
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
