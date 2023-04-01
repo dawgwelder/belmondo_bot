@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from numpy.random import normal, uniform
 from time import sleep
 from random import choice
@@ -94,7 +95,40 @@ def get_length(df, stats=False):
     return text
 
 
-from random import choice
+def td_convert(td):
+    def dummy_converter(number, first, interval, others):
+        formatted = ""
+        if number:
+            end = number % 10
+            if 5 <= number <= 20:
+                formatted = f"{number} {others} "
+            elif end == 1:
+                formatted = f"{number} {first} "
+            elif 1 < end < 5:
+                formatted = f"{number} {interval} "
+            else:
+                formatted = f"{number} {others} "
+        return formatted
+
+    def minutes_convert(minutes):
+        formatted = ""
+        if minutes:
+            if 5 <= minutes <= 20:
+                formatted = f"{minutes} минут"
+            elif minutes % 10 == 1:
+                formatted = f"{minutes} минута"
+            elif 2 <= minutes % 10 < 5:
+                formatted = f"{minutes} минуты"
+            else:
+                formatted = f"{minutes} минут"
+
+        return formatted
+
+    days = td.days
+    hours, minutes, seconds = [int(v) for v in str(timedelta(seconds=td.seconds)).split(":")]
+    microseconds = td.microseconds
+
+    return f"{dummy_converter(days, 'день', 'дня', 'дней')} {dummy_converter(hours, 'час', 'часа', 'часов')} {minutes_convert(minutes)} {dummy_converter(seconds, 'секунда', 'секунды', 'секунд')} {dummy_converter(microseconds, 'микросекунда', 'микросекунды', 'микросекунд')}"
 
 
 def roll_custom_dice(text):

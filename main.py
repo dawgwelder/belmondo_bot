@@ -35,6 +35,8 @@ openai.api_key = api_key
 engine = "text-davinci-003"
 
 tracker = GodnoscopTracker(config)
+
+tz = pytz.timezone('Europe/Moscow')
 # tracker.update_godnoscopes()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
@@ -232,6 +234,14 @@ def parse_message(update, context) -> None:
                 reply_to_message_id=update.message.message_id,
                 text=text,
                 parse_mode="markdown")
+        if "дембель" in msg:
+            td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
+            text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown")
         if "кубик" in msg:
             text = roll_custom_dice(msg)
             if text is not None:
@@ -346,19 +356,13 @@ def parse_message(update, context) -> None:
 
         if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
             not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
-            tz = pytz.timezone('Europe/Moscow')
+            
             not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date()).days
-            ending = int(str(not_drink)[-1])
-            if ending == 1:
-                ending = "день"
-            elif ending in [2, 3, 4]:
-                ending = "дня"
-            else:
-                ending = "дней"
+            not_drink_ending = time_ending(not_drink)
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
-                text=f"Горшок {not_drink_choice} уже {not_drink} {ending}",
+                text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
                 parse_mode="markdown",
             )
                 
