@@ -357,8 +357,8 @@ def parse_message(update, context) -> None:
         if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
             not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
             
-            not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date()).days
-            not_drink_ending = time_ending(not_drink)
+            not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date())
+            not_drink_ending = td_convert(not_drink)
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
