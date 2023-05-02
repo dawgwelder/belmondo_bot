@@ -243,7 +243,7 @@ def parse_message(update, context) -> None:
                 text=text,
                 parse_mode="markdown")
         if "кубик" in msg:
-            if  _id == 657852809:
+            if _id == 657852809:
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
