@@ -47,7 +47,9 @@ def roll_probability(percent: float = 0.5) -> bool:
     return value >= percent
 
 
-def answer_probability(spam_mode: str,) -> float:
+def answer_probability(
+    spam_mode: str,
+) -> float:
     if spam_mode == "chaos":
         return uniform(0, 1) > 0
     elif spam_mode == "soft":
@@ -84,14 +86,18 @@ def get_length(df, stats=False):
     plotina = parse_length(plotina_length)
 
     if not stats:
-        text = f"Бобер {first_name} сделал плотину выше на {random_number} см! " \
-               f"Общая высота плотины {plotina}"
+        text = (
+            f"Бобер {first_name} сделал плотину выше на {random_number} см! "
+            f"Общая высота плотины {plotina}"
+        )
     else:
         active_length = df["overall_build"].max()
         active = df[df["overall_build"] == active_length].loc[0, "first_name"]
         active_length = parse_length(active_length)
-        text = f"Общая высота плотины - {plotina}! \n" \
-               f"Самый активный бобёр - {active}, он построил {active_length}."
+        text = (
+            f"Общая высота плотины - {plotina}! \n"
+            f"Самый активный бобёр - {active}, он построил {active_length}."
+        )
     return text
 
 
@@ -125,10 +131,12 @@ def td_convert(td):
         return formatted
 
     days = td.days
-    hours, minutes, seconds = [int(v) for v in str(timedelta(seconds=td.seconds)).split(":")]
+    hours, minutes, seconds = [
+        int(v) for v in str(timedelta(seconds=td.seconds)).split(":")
+    ]
     microseconds = td.microseconds
 
-    return f"{dummy_converter(days, 'день', 'дня', 'дней')} {dummy_converter(hours, 'час', 'часа', 'часов')} {minutes_convert(minutes)} {dummy_converter(seconds, 'секунда', 'секунды', 'секунд')} {dummy_converter(microseconds, 'микросекунда', 'микросекунды', 'микросекунд')}"
+    return f"{dummy_converter(days, 'день', 'дня', 'дней')} {dummy_converter(hours, 'час', 'часа', 'часов')} {minutes_convert(minutes)} {dummy_converter(seconds, 'секунда', 'секунды', 'секунд')} {dummy_converter(microseconds, 'микросекунда', 'микросекунды', 'микросекунд')}".rstrip()
 
 
 def roll_custom_dice(text):
