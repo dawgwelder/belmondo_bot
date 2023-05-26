@@ -1,4 +1,5 @@
 import os
+import random
 import re
 import fire
 import datetime
@@ -603,8 +604,12 @@ def stats_plotina(update, context) -> None:
 def paused(update, context) -> None:
     if update.message.from_user.id == 113300226:
         context.bot_data["paused"] = not context.bot_data["paused"]
-    if context.bot_data["paused"]:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Бельмондо спит")
+        if context.bot_data["paused"]:
+            context.bot.send_message(chat_id=update.effective_chat.id, text="Бельмондо спит")
+    else:
+        if random.randint(0, 10) == 10:
+            context.bot.send_message(chat_id=update.effective_chat.id, text="Ты чёт ошибся, другалек, "
+                                                                            "я только по команде хозяина сплю")
 
 
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
