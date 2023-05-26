@@ -162,237 +162,236 @@ def parse_message(update, context) -> None:
                 update.effective_chat.id, update.message.message_id
             )
             logger.info(f"edited_message from {name} bot: {update.message.text}")
-    if (datetime.datetime.now(update.message.date.tzinfo) - update.message.date).seconds < 1:
-        if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
-            regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
-            number = re.findall(regex, update.message.text)[0]
+    if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
+        regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
+        number = re.findall(regex, update.message.text)[0]
 
-            if not number.isdigit():
-                text = "Ты неправильно накастовал, дебил"
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-            else:
-                count = int(number)
-                count = 10 if count > 999 else count
-                for _ in range(count):
-                    text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
-                    context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=text,
-                        parse_mode="markdown",
-                    )
-                    sleep(choice([.5, .25, 1, .75, .666]))
-
-        if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
-            completion = openai.Completion.create(engine=engine,
-                                                  prompt=update.message.text,
-                                                  temperature=0.5,
-                                                  max_tokens=1000)
-            text = completion.choices[0].text
+        if not number.isdigit():
+            text = "Ты неправильно накастовал, дебил"
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
                 text=text,
                 parse_mode="markdown",
             )
-            logger.info("chatGPT: generated text sent")
+        else:
+            count = int(number)
+            count = 10 if count > 999 else count
+            for _ in range(count):
+                text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+                sleep(choice([.5, .25, 1, .75, .666]))
 
-        if update.message.text is not None and not text:
-            msg = clean_string(update.message.text.lower())
-            _id = update.message.from_user.id
+    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
+        completion = openai.Completion.create(engine=engine,
+                                              prompt=update.message.text,
+                                              temperature=0.5,
+                                              max_tokens=1000)
+        text = completion.choices[0].text
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info("chatGPT: generated text sent")
 
-            if msg:
-                text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
-                if text:
-                    logger.info(f"triggered by: {msg}")
-                    logger.info(
-                        f"scripted answer_message: flag to show was {bool(prob)}"
+    if update.message.text is not None and not text:
+        msg = clean_string(update.message.text.lower())
+        _id = update.message.from_user.id
+
+        if msg:
+            text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
+            if text:
+                logger.info(f"triggered by: {msg}")
+                logger.info(
+                    f"scripted answer_message: flag to show was {bool(prob)}"
+                )
+            if text and prob:
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+                log_text = text
+
+                if len(log_text.split()) > 20:
+                    log_text = (
+                        f"{' '.join([log_text.split()[idx] for idx in range(5)])}"
+                        f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
-                if text and prob:
+                logger.info(f"scripted answer_message: replied with {log_text}")
+        # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
+        #     text = get_anecdote()
+        #     context.bot.send_message(
+        #         chat_id=update.effective_chat.id,
+        #         reply_to_message_id=update.message.message_id,
+        #         text=text,
+        #         parse_mode="markdown")
+        if "дембель" in msg:
+            td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
+            text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown")
+        if "кубик" in msg:
+            text = roll_custom_dice(msg)
+            if text is not None:
+                if text == "default":
+                    context.bot.send_dice(
+                        chat_id=update.effective_message.chat_id,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                else:
                     context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=update.message.message_id,
                         text=text,
-                        parse_mode="markdown",
-                    )
-                    log_text = text
+                        parse_mode="markdown")
 
-                    if len(log_text.split()) > 20:
-                        log_text = (
-                            f"{' '.join([log_text.split()[idx] for idx in range(5)])}"
-                            f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
-                        )
-                    logger.info(f"scripted answer_message: replied with {log_text}")
-            # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
-            #     text = get_anecdote()
-            #     context.bot.send_message(
-            #         chat_id=update.effective_chat.id,
-            #         reply_to_message_id=update.message.message_id,
-            #         text=text,
-            #         parse_mode="markdown")
-            if "дембель" in msg:
-                td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
-                text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
-                context.bot.send_message(
+        if "колокол" not in msg.split() and "колокольн" not in msg and "колокол" in msg and not update.message.forward_from_message_id:
+            if update.message.reply_to_message is not None:
+                reply_to = update.message.reply_to_message.message_id
+            else:
+                reply_to = update.message.message_id
+            with open('img/colocola.jpg', 'rb') as f:
+                context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=reply_to,
+                    caption=colocola,
+                    photo=f,
+                    parse_mode="markdown",
+                )
+        if "нацист" in msg:
+            with open('img/nz.jpg', 'rb') as f:
+                context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown")
-            if "кубик" in msg:
-                text = roll_custom_dice(msg)
-                if text is not None:
-                    if text == "default":
-                        context.bot.send_dice(
-                            chat_id=update.effective_message.chat_id,
-                            reply_to_message_id=update.message.message_id,
-                        )
+                    photo=f,
+                    parse_mode="markdown",
+                )
+
+        if msg.startswith("понос ") and " на " in msg:
+            user = msg.split("понос ")[-1].split(" на")[0]
+            reg_value = re.sub("[^0-9]", "", msg)
+            reg_value = int(reg_value) if reg_value else -999
+            value = msg[-1]
+            text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
+
+            if value.isdigit():
+                value = int(value)
+
+                if 1 <= value <= 6 and reg_value == value:
+                    roll = context.bot.send_dice(
+                        chat_id=update.effective_message.chat_id
+                    )
+                    sleep(2.7)
+
+                    if roll.dice.value == value:
+                        text = f"*Понос* {user} обеспечен"
                     else:
-                        context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            reply_to_message_id=update.message.message_id,
-                            text=text,
-                            parse_mode="markdown")
+                        text = f"_Каст поноса был провален!_"
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
 
-            if "колокол" not in msg.split() and "колокольн" not in msg and "колокол" in msg and not update.message.forward_from_message_id:
-                if update.message.reply_to_message is not None:
-                    reply_to = update.message.reply_to_message.message_id
-                else:
-                    reply_to = update.message.message_id
-                with open('img/colocola.jpg', 'rb') as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=reply_to,
-                        caption=colocola,
-                        photo=f,
-                        parse_mode="markdown",
-                    )
-            if "нацист" in msg:
-                with open('img/nz.jpg', 'rb') as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        photo=f,
-                        parse_mode="markdown",
-                    )
+        # send sticker
+        if "любителям синтетики" in msg:
+            with open("img/GM.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
+                logger.info("answer_message: sticker sent")
 
-            if msg.startswith("понос ") and " на " in msg:
-                user = msg.split("понос ")[-1].split(" на")[0]
-                reg_value = re.sub("[^0-9]", "", msg)
-                reg_value = int(reg_value) if reg_value else -999
-                value = msg[-1]
-                text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
+        if text == "О, морская!" and prob:
+            with open("img/snail.jpeg", "rb") as f:
+                context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
+            logger.info("answer_message: snail photo sent")
 
-                if value.isdigit():
-                    value = int(value)
+        if msg == "вот так вот":
+            with open("img/nevsky.jpeg", "rb") as f:
+                context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    photo=f,
+                )
+            logger.info("answer_message: nevsky photo sent")
 
-                    if 1 <= value <= 6 and reg_value == value:
-                        roll = context.bot.send_dice(
-                            chat_id=update.effective_message.chat_id
-                        )
-                        sleep(2.7)
-
-                        if roll.dice.value == value:
-                            text = f"*Понос* {user} обеспечен"
-                        else:
-                            text = f"_Каст поноса был провален!_"
+        if msg == "доброе утро":
+            with open("img/GM_SHUE.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
+                logger.info("answer_message: good morning crackheads sticker sent")
+        if "хуяндекс" in msg:
+            with open("img/yandex.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
+        if "ой ночи" in msg:
+            with open("img/GN.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
+                logger.info("answer_message: yandex sticker sent")
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
-                    text=text,
+                    text=choice(
+                        ["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]
+                    ),
                     parse_mode="markdown",
                 )
+                logger.info("answer_message: good night crackheads sticker sent")
 
-            # send sticker
-            if "любителям синтетики" in msg:
-                with open("img/GM.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: sticker sent")
+        if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
+            not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
 
-            if text == "О, морская!" and prob:
-                with open("img/snail.jpeg", "rb") as f:
-                    context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-                logger.info("answer_message: snail photo sent")
+            not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date())
+            not_drink_ending = td_convert(not_drink)
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
+                parse_mode="markdown",
+            )
 
-            if msg == "вот так вот":
-                with open("img/nevsky.jpeg", "rb") as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        photo=f,
-                    )
-                logger.info("answer_message: nevsky photo sent")
+        if "залуп" in msg:
+            file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
+            with open(file, "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
+                # context.bot.send_message(
+                #     chat_id=update.effective_chat.id,
+                #     reply_to_message_id=update.message.message_id,
+                #     text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
+                #     parse_mode="markdown",
+                # )
+                logger.info("answer_message: zalupa sticker sent")
 
-            if msg == "доброе утро":
-                with open("img/GM_SHUE.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: good morning crackheads sticker sent")
-            if "хуяндекс" in msg:
-                with open("img/yandex.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-            if "ой ночи" in msg:
-                with open("img/GN.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: yandex sticker sent")
-                    context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        text=choice(
-                            ["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]
-                        ),
-                        parse_mode="markdown",
-                    )
-                    logger.info("answer_message: good night crackheads sticker sent")
-
-            if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
-                not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
-
-                not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date())
-                not_drink_ending = td_convert(not_drink)
+        if "джекпот" in msg:
+            with open("img/jackpot.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
-                    text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
+                    text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
                     parse_mode="markdown",
                 )
-
-            if "залуп" in msg:
-                file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
-                with open(file, "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    # context.bot.send_message(
-                    #     chat_id=update.effective_chat.id,
-                    #     reply_to_message_id=update.message.message_id,
-                    #     text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
-                    #     parse_mode="markdown",
-                    # )
-                    logger.info("answer_message: zalupa sticker sent")
-
-            if "джекпот" in msg:
-                with open("img/jackpot.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
-                        parse_mode="markdown",
-                    )
-                    logger.info("answer_message: jackpot sticker sent")
+                logger.info("answer_message: jackpot sticker sent")
 
 
 def send_oxxxy(update, context) -> None:
@@ -634,7 +633,7 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     dispatcher.add_handler(godnoscope_handler)
     dispatcher.add_handler(CallbackQueryHandler(button_godnoscope))
 
-    updater.start_polling()
+    updater.start_polling(drop_pending_updates=True)
     updater.idle()
 
 
