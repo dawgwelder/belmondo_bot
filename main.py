@@ -257,7 +257,7 @@ def parse_message(update, context) -> None:
                         text=text,
                         parse_mode="markdown")
             
-        if ["колокол", "колокольн"] not in msg.split() and "колокол" in msg and not update.message.forward_from_message_id:
+        if "колокол" not in msg.split() and "колокольн" not in msg and "колокол" in msg and not update.message.forward_from_message_id:
             if update.message.reply_to_message is not None:
                 reply_to = update.message.reply_to_message.message_id
             else:
