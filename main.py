@@ -221,7 +221,7 @@ def parse_message(update, context) -> None:
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
         
-        if prev_ts is not None and (ts - prev_ts).seconds < 60:
+        if prev_ts is not None and (ts - prev_ts).seconds < 10:
             msg = False
         context.bot_data["spam_stopper"][_id] = ts
 
