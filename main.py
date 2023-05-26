@@ -227,13 +227,13 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"scripted answer_message: replied with {log_text}")
-        if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
-            text = get_anecdote()
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=text,
-                parse_mode="markdown")
+        # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
+        #     text = get_anecdote()
+        #     context.bot.send_message(
+        #         chat_id=update.effective_chat.id,
+        #         reply_to_message_id=update.message.message_id,
+        #         text=text,
+        #         parse_mode="markdown")
         if "дембель" in msg:
             td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
             text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
@@ -243,12 +243,6 @@ def parse_message(update, context) -> None:
                 text=text,
                 parse_mode="markdown")
         if "кубик" in msg:
-            if _id == 657852809:
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text="Тось, иди нахуй без уважения",
-                    parse_mode="markdown")
             text = roll_custom_dice(msg)
             if text is not None:
                 if text == "default":
@@ -263,11 +257,7 @@ def parse_message(update, context) -> None:
                         text=text,
                         parse_mode="markdown")
             
-        if "колокол" not in msg.split() and "колокол" in msg and not update.message.forward_from_message_id:
-            # 63494 -1001060302681
-            # context.bot.forward_message(chat_id=update.effective_chat.id,
-            #                             from_chat_id="@oldlentach",
-            #                             message_id=63494)
+        if ["колокол", "колокольн"] not in msg.split() and "колокол" in msg and not update.message.forward_from_message_id:
             if update.message.reply_to_message is not None:
                 reply_to = update.message.reply_to_message.message_id
             else:
@@ -344,12 +334,17 @@ def parse_message(update, context) -> None:
                     chat_id=update.effective_chat.id, sticker=f
                 ).sticker
                 logger.info("answer_message: good morning crackheads sticker sent")
-                
+        if "хуяндекс" in msg:
+            with open("img/yandex.webp", "rb") as f:
+                context.bot.send_sticker(
+                    chat_id=update.effective_chat.id, sticker=f
+                ).sticker
         if "ой ночи" in msg:
             with open("img/GN.webp", "rb") as f:
                 context.bot.send_sticker(
                     chat_id=update.effective_chat.id, sticker=f
                 ).sticker
+                logger.info("answer_message: yandex sticker sent")
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
