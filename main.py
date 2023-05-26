@@ -45,12 +45,23 @@ tz = pytz.timezone('Europe/Moscow')
 # TODO: упдайтить счетчик фемосрача
 
 
+def pause(func):
+    def wrapper(update, context):
+        if context.bot_data["paused"]:
+            pass
+        else:
+            func(update, context)
+    return wrapper
+
+
+@pause
 def quote(update, context) -> None:
     text = quote_choice()
     logger.info(f"quote: {text[:10]}...")
     context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 
+@pause
 def get_horoscope(update, context) -> None:
     first_post, second_post = generate_post()
     logger.info(f"sending horoscopes")
@@ -95,6 +106,7 @@ def get_horoscope(update, context) -> None:
 #     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
+@pause
 def godnoscope(update: Update, context) -> None:
     keyboard = [
         [
@@ -124,6 +136,7 @@ def godnoscope(update: Update, context) -> None:
     update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
 
 
+@pause
 def button_godnoscope(update: Update, context) -> None:
     query = update.callback_query
     query.answer()
@@ -133,6 +146,7 @@ def button_godnoscope(update: Update, context) -> None:
 
 
 # Вынести в отдельный файл? Написать класс?
+@pause
 def parse_message(update, context) -> None:
     bot_data = context.bot_data
     text = ""
@@ -394,6 +408,7 @@ def parse_message(update, context) -> None:
                 logger.info("answer_message: jackpot sticker sent")
 
 
+@pause
 def send_oxxxy(update, context) -> None:
     url = choice(oxxxy_playlist)
     context.bot.send_message(
@@ -405,6 +420,7 @@ def send_oxxxy(update, context) -> None:
     logger.info(f"send_oxxxy: oxxy mashup {url} sent")
 
 
+@pause
 def send_goblin(update, context) -> None:
     goblin_dir = "img/goblin/"
     mode = choice(["mp4", "img", "sticker", "text", "youtube"])
@@ -473,6 +489,7 @@ def delete_dice(update, context) -> None:
         logger.info(f"delete_dice: {update.message.text}")
 
 
+@pause
 def send_morning(update, context) -> None:
     bot_data = context.bot_data
 
@@ -516,6 +533,7 @@ def send_morning(update, context) -> None:
         logger.info(f"send_morning: zavod success but late!")
 
 
+@pause
 def roll_dice(update, context) -> None:
     context.bot.send_dice(
         chat_id=update.effective_message.chat_id,
@@ -524,6 +542,7 @@ def roll_dice(update, context) -> None:
     logger.info(f"roll_dice: success")
 
 
+@pause
 def show_day(update, context) -> None:
     weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
     sticker = os.path.join("img/eva", f"{weekday}.webp")
@@ -535,6 +554,7 @@ def show_day(update, context) -> None:
         logger.info(f"show_day: file {sticker} sent")
 
 
+@pause
 def build_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
     _id = update.effective_user.id
@@ -573,14 +593,23 @@ def build_plotina(update, context) -> None:
     df.to_parquet("plotina.parquet")
 
 
+@pause
 def stats_plotina(update, context) -> None:
     df = pd.read_parquet("plotina.parquet")
     text = get_length(df, stats=True)
     context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 
+def paused(update, context) -> None:
+    if update.message.from_user.id == 113300226:
+        context.bot_data["paused"] = not context.bot_data["paused"]
+    if context.bot_data["paused"]:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Бельмондо спит")
+
+
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
+    vars_dict["paused"] = False
     if mode in ["dev", "prod"]:
         bot = Bot(token)
         updater = Updater(
@@ -632,6 +661,9 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     godnoscope_handler = CommandHandler('horoscope', godnoscope)
     dispatcher.add_handler(godnoscope_handler)
     dispatcher.add_handler(CallbackQueryHandler(button_godnoscope))
+
+    pausing_handler = CommandHandler("pause", paused)
+    dispatcher.add_handler(pausing_handler)
 
     updater.start_polling(drop_pending_updates=True)
     updater.idle()
