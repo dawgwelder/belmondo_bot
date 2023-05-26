@@ -162,8 +162,7 @@ def parse_message(update, context) -> None:
                 update.effective_chat.id, update.message.message_id
             )
             logger.info(f"edited_message from {name} bot: {update.message.text}")
-
-    if update.message.date >= datetime.datetime.now(tz):
+    if (datetime.datetime.now(update.message.date.tzinfo) - update.message.date).seconds < 1:
         if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
             regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
             number = re.findall(regex, update.message.text)[0]
