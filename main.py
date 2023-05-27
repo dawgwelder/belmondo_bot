@@ -14,6 +14,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from time import sleep
 from random import choice
 from logger import get_logger
+from collections import deque
 
 import pandas as pd
 
@@ -203,11 +204,21 @@ def parse_message(update, context) -> None:
 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]:
 
+        content = update.message.text
+
+        if choice(range(5)) == 4:
+            content = f"{professional_prompt}\n{content}"
+            
+        context.bot_data["chat_deque"].append({"role": "user", "content": content})
+        
         response = openai.ChatCompletion.create(model=model,
-                                                messages=[{"role": "user", "content": update.message.text}],
+                                                messages=list(context.bot_data["chat_deque"]),
                                                 max_tokens=1000)
         
         text = response["choices"][0]["message"]["content"]
+        
+        context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+        print(context.bot_data["chat_deque"])
 
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -264,6 +275,14 @@ def parse_message(update, context) -> None:
                     reply_to_message_id=update.message.message_id,
                     text=text,
                     parse_mode="markdown")
+            if "страшно жить" in msg:
+                text = f"ВАЩЕ ПИЗДЕЦ"
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown")
+                
             if "кубик" in msg:
                 text = roll_custom_dice(msg)
                 if text is not None:
@@ -622,6 +641,7 @@ def paused(update, context) -> None:
 
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
+    vars_dict["chat_deque"] = deque(maxlen=10)
     if mode in ["dev", "prod"]:
         if mode == "dev":
             vars_dict["self_id"] = vars_dict["self_id_dev"]
