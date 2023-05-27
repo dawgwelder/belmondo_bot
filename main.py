@@ -33,7 +33,7 @@ config = ConfigParser()
 config.read("auth.conf")
 api_key = config["auth"]["openai_api_key"]
 openai.api_key = api_key
-engine = "text-davinci-003"
+model = "gpt-3.5-turbo"
 
 tracker = GodnoscopTracker(config)
 
@@ -202,14 +202,13 @@ def parse_message(update, context) -> None:
                 sleep(choice([.5, .25, 1, .75, .666]))
 
     if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]:
-        try:
-            completion = openai.Completion.create(engine=engine,
-                                                  prompt=update.message.text,
-                                                  temperature=0.5,
-                                                  max_tokens=1000)
-            text = completion.choices[0].text
-        except:
-            text = "Шекели кончились или чет еще, говорить не намерен"
+
+        response = openai.ChatCompletion.create(model=model,
+                                                messages=[{"role": "user", "content": update.message.text}],
+                                                max_tokens=1000)
+        
+        text = response["choices"][0]["message"]["content"]
+
         context.bot.send_message(
             chat_id=update.effective_chat.id,
             reply_to_message_id=update.message.message_id,
