@@ -10,7 +10,12 @@ vars_dict = {"ZAVOD_CHECK": False,
              "dt": None,
              "zavod_text": "",
              "spam_mode": "medium",
-             "username": None}
+             "username": None,
+             "paused": False,
+             "spam_stopper": {},
+             "self_id_dev": 2057615456,
+             "self_id": 5584506696,
+             "master": 113300226}
 
 CHOICES = tuple([3, 4, 5, 6])
 

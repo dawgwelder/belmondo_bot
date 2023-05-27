@@ -201,12 +201,15 @@ def parse_message(update, context) -> None:
                 )
                 sleep(choice([.5, .25, 1, .75, .666]))
 
-    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == SELF_ID:
-        completion = openai.Completion.create(engine=engine,
-                                              prompt=update.message.text,
-                                              temperature=0.5,
-                                              max_tokens=1000)
-        text = completion.choices[0].text
+    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]:
+        try:
+            completion = openai.Completion.create(engine=engine,
+                                                  prompt=update.message.text,
+                                                  temperature=0.5,
+                                                  max_tokens=1000)
+            text = completion.choices[0].text
+        except:
+            text = "Шекели кончились или чет еще, говорить не намерен"
         context.bot.send_message(
             chat_id=update.effective_chat.id,
             reply_to_message_id=update.message.message_id,
@@ -221,7 +224,7 @@ def parse_message(update, context) -> None:
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
         
-        if prev_ts is not None and (ts - prev_ts).seconds < 10:
+        if prev_ts is not None and (ts - prev_ts).seconds < 3 and _id != context.bot_data["master"]:
             msg = False
         context.bot_data["spam_stopper"][_id] = ts
 
@@ -608,7 +611,7 @@ def stats_plotina(update, context) -> None:
 
 
 def paused(update, context) -> None:
-    if update.message.from_user.id == 113300226:
+    if update.message.from_user.id == context.bot_data["master"]:
         context.bot_data["paused"] = not context.bot_data["paused"]
         if context.bot_data["paused"]:
             context.bot.send_message(chat_id=update.effective_chat.id, text="Бельмондо спит")
@@ -620,9 +623,9 @@ def paused(update, context) -> None:
 
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
-    vars_dict["paused"] = False
-    vars_dict["spam_stopper"] = {}
     if mode in ["dev", "prod"]:
+        if mode == "dev":
+            vars_dict["self_id"] = vars_dict["self_id_dev"]
         bot = Bot(token)
         updater = Updater(
             token=token,
