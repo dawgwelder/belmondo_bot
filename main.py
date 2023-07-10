@@ -446,19 +446,6 @@ def send_oxxxy(update, context) -> None:
         parse_mode="markdown",
     )
     logger.info(f"send_oxxxy: oxxy mashup {url} sent")
-    
-    
-@pause
-def send_holidays(update, context) -> None:
-    text = get_holidays()
-    print(type(text))
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        reply_to_message_id=update.message.message_id,
-        text=f"{text}",
-        parse_mode="markdown",
-    )
-    logger.info(f"sent holidays list")
 
 
 @pause
@@ -594,6 +581,16 @@ def show_day(update, context) -> None:
         ).sticker
         logger.info(f"show_day: file {sticker} sent")
 
+    text = get_holidays()
+    print(type(text))
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        reply_to_message_id=update.message.message_id,
+        text=f"{text}",
+        parse_mode="markdown",
+    )
+    logger.info(f"show_day: sent holidays list")
+
 
 @pause
 def build_plotina(update, context) -> None:
@@ -686,14 +683,8 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
     dispatcher.add_handler(oxxxy_handler)
 
-    holidays_handler = CommandHandler("holidays", send_holidays)
-    dispatcher.add_handler(holidays_handler)
-
     day_handler = CommandHandler("day", show_day)
     dispatcher.add_handler(day_handler)
-
-    oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
-    dispatcher.add_handler(oxxxy_handler)
 
     morning_handler = CommandHandler("zavod", send_morning)
     dispatcher.add_handler(morning_handler)
