@@ -22,9 +22,12 @@ def get_holidays():
 
     soup = BeautifulSoup(response.content.decode("utf8"), features="lxml")
     
-    header = soup.findAll("h2", attrs={"class": "mainpage"})[0].text
-
-    text = header + "\n\n"
+    print(soup)
+    try:
+        header = soup.findAll("h2", attrs={"class": "mainpage"})[0].text
+        text = header + "\n\n"
+    except:
+        text = ""
 
     for value in soup.findAll("span", attrs={"itemprop": "text"}):
         text = f"{text}\n{value.text}"

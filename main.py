@@ -582,7 +582,6 @@ def show_day(update, context) -> None:
         logger.info(f"show_day: file {sticker} sent")
 
     text = get_holidays()
-    print(type(text))
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         reply_to_message_id=update.message.message_id,
