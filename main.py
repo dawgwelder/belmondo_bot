@@ -24,7 +24,7 @@ from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, generate_horo_message
-from anecdote import get_anecdote
+from site_parser import get_anecdote, get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 
@@ -446,6 +446,19 @@ def send_oxxxy(update, context) -> None:
         parse_mode="markdown",
     )
     logger.info(f"send_oxxxy: oxxy mashup {url} sent")
+    
+    
+@pause
+def send_holidays(update, context) -> None:
+    text = get_holidays()
+    print(type(text))
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        reply_to_message_id=update.message.message_id,
+        text=f"{text}",
+        parse_mode="markdown",
+    )
+    logger.info(f"sent holidays list")
 
 
 @pause
@@ -672,6 +685,9 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
     dispatcher.add_handler(oxxxy_handler)
+
+    holidays_handler = CommandHandler("holidays", send_holidays)
+    dispatcher.add_handler(holidays_handler)
 
     day_handler = CommandHandler("day", show_day)
     dispatcher.add_handler(day_handler)
