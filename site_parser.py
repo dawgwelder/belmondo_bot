@@ -14,7 +14,7 @@ def get_anecdote():
 def get_holidays(dt):
     with open("holidays.json") as f:
         holidays = json.load(f)
-    site = "https://kakoysegodnyaprazdnik.ru"
+    site = holidays["site"]
     holiday = holidays.get(dt.strftime("%m-%d"), "Чёт нет ничего по праздникам... Скучнярский день")
 
     if isinstance(holiday, list):
