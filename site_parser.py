@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-
+import json
 
 anecdote_site = "https://baneks.ru/random"
 
@@ -11,25 +11,18 @@ def get_anecdote():
     return text
 
 
-def get_holidays():
+def get_holidays(dt):
+    with open("holidays.json") as f:
+        holidays = json.load(f)
     site = "https://kakoysegodnyaprazdnik.ru"
+    holiday = holidays.get(dt.strftime("%m-%d"), "Чёт нет ничего по праздникам... Скучнярский день")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-    }
-
-    response = requests.get(site, headers=headers)
-
-    soup = BeautifulSoup(response.content.decode("utf8"), features="lxml")
+    if isinstance(holiday, list):
+        holiday = "\n".join(holiday)
     
-    print(soup)
-    try:
-        header = soup.findAll("h2", attrs={"class": "mainpage"})[0].text
-        text = header + "\n\n"
-    except:
-        text = ""
-
-    for value in soup.findAll("span", attrs={"itemprop": "text"}):
-        text = f"{text}\n{value.text}"
-        
-    return text.replace("`", "'")
+    return f"""
+    Сегодня {dt.strftime('%d %B %Y')}\n
+Список праздников:\n{holiday}\n
+---\n
+Взято с пидорского сайта {site}, где исключительное авторское право и бла-бла-бла
+    """
