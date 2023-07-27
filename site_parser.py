@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import json
+from collections import OrderedDict
 
 anecdote_site = "https://baneks.ru/random"
 
@@ -18,7 +19,8 @@ def get_holidays(dt):
     holiday = holidays.get(dt.strftime("%m-%d"), "Чёт нет ничего по праздникам... Скучнярский день")
 
     if isinstance(holiday, list):
-        holiday = "\n".join(holiday)
+        holidays = list(OrderedDict.fromkeys(holiday))
+        holiday = "\n".join(holidays)
     
     return f"""
     Сегодня {dt.strftime('%d %B %Y')}\n
