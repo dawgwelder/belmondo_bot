@@ -34,7 +34,7 @@ config = ConfigParser()
 config.read("auth.conf")
 api_key = config["auth"]["openai_api_key"]
 openai.api_key = api_key
-model = "gpt-4"  # "gpt-3.5-turbo"
+model = "gpt-3.5-turbo"
 
 tracker = GodnoscopTracker(config)
 
