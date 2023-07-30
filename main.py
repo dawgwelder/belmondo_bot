@@ -34,7 +34,7 @@ config = ConfigParser()
 config.read("auth.conf")
 api_key = config["auth"]["openai_api_key"]
 openai.api_key = api_key
-model = "gpt-3.5-turbo"
+model = "gpt-4"  # "gpt-3.5-turbo"
 
 tracker = GodnoscopTracker(config)
 
@@ -583,7 +583,7 @@ def show_day(update, context) -> None:
 
     dt = datetime.datetime.now(tz)
     text = get_holidays(dt)
-    
+
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"{text}",
