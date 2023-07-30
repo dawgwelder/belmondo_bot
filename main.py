@@ -583,7 +583,7 @@ def show_day(update, context) -> None:
 
     dt = datetime.datetime.now(tz)
     text = get_holidays(dt)
-    
+
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"{text}",
