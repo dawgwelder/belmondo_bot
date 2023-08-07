@@ -147,6 +147,19 @@ def button_godnoscope(update: Update, context) -> None:
     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
+def spam_gif_detector(update, context) -> None:
+    if update.message.document.mime_type == "video/mp4":
+        last_msg = {"from": update.message.from_user.id, "date": update.message.date}
+        context.bot_data["msg_deque"].append(last_msg)
+        for idx in range(len(context.bot_data["msg_deque"]) - 1):
+            msg = context.bot_data["msg_deque"][idx]
+            if msg["from"] == last_msg["from"]:
+                if (last_msg["date"] - msg["date"]).seconds < 3:
+                    context.bot.delete_message(
+                        update.effective_chat.id, update.message.message_id
+                    )
+
+
 # Вынести в отдельный файл? Написать класс?
 @pause
 def parse_message(update, context) -> None:
@@ -652,6 +665,7 @@ def paused(update, context) -> None:
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     vars_dict["spam_mode"] = spam_mode
     vars_dict["chat_deque"] = deque(maxlen=10)
+    vars_dict["msg_deque"] = deque(maxlen=10)
     if mode in ["dev", "prod"]:
         if mode == "dev":
             vars_dict["self_id"] = vars_dict["self_id_dev"]
@@ -705,6 +719,8 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     pausing_handler = CommandHandler("pause", paused)
     dispatcher.add_handler(pausing_handler)
+
+    dispatcher.add_handler(MessageHandler(Filters.document, spam_gif_detector))
 
     updater.start_polling(drop_pending_updates=True)
     updater.idle()
