@@ -324,7 +324,7 @@ def parse_message(update, context) -> None:
                         photo=f,
                         parse_mode="markdown",
                     )
-            if "слон" in msg and not "слонн" in msg:
+            if "слон" in msg and not "слонн" in msg and not "прислон" in msg:
                 if update.message.reply_to_message is not None:
                     reply_to = update.message.reply_to_message.message_id
                 else:
