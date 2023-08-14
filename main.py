@@ -324,7 +324,7 @@ def parse_message(update, context) -> None:
                         photo=f,
                         parse_mode="markdown",
                     )
-            if "слон" in msg.split():
+            if "слон" in msg and not "слонн" in msg:
                 if update.message.reply_to_message is not None:
                     reply_to = update.message.reply_to_message.message_id
                 else:
@@ -333,7 +333,6 @@ def parse_message(update, context) -> None:
                     context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=reply_to,
-                        caption=colocola,
                         photo=f,
                         parse_mode="markdown",
                     )
