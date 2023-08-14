@@ -324,7 +324,7 @@ def parse_message(update, context) -> None:
                         photo=f,
                         parse_mode="markdown",
                     )
-            if "слон" not in msg.split():
+            if "слон" in msg.split():
                 if update.message.reply_to_message is not None:
                     reply_to = update.message.reply_to_message.message_id
                 else:
