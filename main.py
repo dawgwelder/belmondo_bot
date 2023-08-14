@@ -324,6 +324,19 @@ def parse_message(update, context) -> None:
                         photo=f,
                         parse_mode="markdown",
                     )
+            if "слон" not in msg.split():
+                if update.message.reply_to_message is not None:
+                    reply_to = update.message.reply_to_message.message_id
+                else:
+                    reply_to = update.message.message_id
+                with open('img/slon.jpg', 'rb') as f:
+                    context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=reply_to,
+                        caption=colocola,
+                        photo=f,
+                        parse_mode="markdown",
+                    )
             if "нацист" in msg:
                 with open('img/nz.jpg', 'rb') as f:
                     context.bot.send_photo(
