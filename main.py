@@ -27,7 +27,6 @@ from horoscope import generate_post, generate_horo_message
 from site_parser import get_anecdote, get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
-
 logger = get_logger("Belmondo Logger")
 
 config = ConfigParser()
@@ -39,6 +38,8 @@ model = "gpt-3.5-turbo-16k"
 tracker = GodnoscopTracker(config)
 
 tz = pytz.timezone('Europe/Moscow')
+
+
 # tracker.update_godnoscopes()
 
 # TODO: команда квас - прокидывает картинку бомжа в ответ
@@ -53,6 +54,7 @@ def pause(func):
             pass
         else:
             func(update, context)
+
     return wrapper
 
 
@@ -70,7 +72,7 @@ def get_horoscope(update, context) -> None:
     context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
     context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
 
-    
+
 # def horoscope(update: Update, context) -> None:
 #     keyboard = [
 #         [
@@ -170,7 +172,7 @@ def parse_message(update, context) -> None:
     # delete shit
     if update.message.via_bot is not None:
         shit_bot = (
-            update.message.via_bot.id == SHIT_BOT_ID
+                update.message.via_bot.id == SHIT_BOT_ID
         )
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
 
@@ -215,21 +217,22 @@ def parse_message(update, context) -> None:
                 )
                 sleep(choice([.5, .25, 1, .75, .666]))
 
-    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]:
+    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data[
+        "self_id"]:
 
         content = update.message.text
 
         if choice(range(5)) == 4:
             content = f"{professional_prompt}\n{content}"
-            
+
         context.bot_data["chat_deque"].append({"role": "user", "content": content})
-        
+
         response = openai.ChatCompletion.create(model=model,
                                                 messages=list(context.bot_data["chat_deque"]),
                                                 max_tokens=1000)
-        
+
         text = response["choices"][0]["message"]["content"]
-        
+
         context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
         print(context.bot_data["chat_deque"])
 
@@ -246,7 +249,7 @@ def parse_message(update, context) -> None:
         _id = update.message.from_user.id
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
-        
+
         if prev_ts is not None and (ts - prev_ts).seconds < 3 and _id != context.bot_data["master"]:
             msg = False
         context.bot_data["spam_stopper"][_id] = ts
@@ -273,13 +276,13 @@ def parse_message(update, context) -> None:
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"scripted answer_message: replied with {log_text}")
-        # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
-        #     text = get_anecdote()
-        #     context.bot.send_message(
-        #         chat_id=update.effective_chat.id,
-        #         reply_to_message_id=update.message.message_id,
-        #         text=text,
-        #         parse_mode="markdown")
+            # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
+            #     text = get_anecdote()
+            #     context.bot.send_message(
+            #         chat_id=update.effective_chat.id,
+            #         reply_to_message_id=update.message.message_id,
+            #         text=text,
+            #         parse_mode="markdown")
             if "дембель" in msg:
                 td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
                 text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
@@ -295,7 +298,7 @@ def parse_message(update, context) -> None:
                     reply_to_message_id=update.message.message_id,
                     text=text,
                     parse_mode="markdown")
-                
+
             if "кубик" in msg:
                 text = roll_custom_dice(msg)
                 if text is not None:
@@ -310,7 +313,7 @@ def parse_message(update, context) -> None:
                             reply_to_message_id=update.message.message_id,
                             text=text,
                             parse_mode="markdown")
-    
+
             if "колокол" not in msg.split() and "колокольн" not in msg and "колокол" in msg and not update.message.forward_from_message_id:
                 if update.message.reply_to_message is not None:
                     reply_to = update.message.reply_to_message.message_id
@@ -344,23 +347,23 @@ def parse_message(update, context) -> None:
                         photo=f,
                         parse_mode="markdown",
                     )
-    
+
             if msg.startswith("понос ") and " на " in msg:
                 user = msg.split("понос ")[-1].split(" на")[0]
                 reg_value = re.sub("[^0-9]", "", msg)
                 reg_value = int(reg_value) if reg_value else -999
                 value = msg[-1]
                 text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
-    
+
                 if value.isdigit():
                     value = int(value)
-    
+
                     if 1 <= value <= 6 and reg_value == value:
                         roll = context.bot.send_dice(
                             chat_id=update.effective_message.chat_id
                         )
                         sleep(2.7)
-    
+
                         if roll.dice.value == value:
                             text = f"*Понос* {user} обеспечен"
                         else:
@@ -371,7 +374,7 @@ def parse_message(update, context) -> None:
                     text=text,
                     parse_mode="markdown",
                 )
-    
+
             # send sticker
             if "любителям синтетики" in msg:
                 with open("img/GM.webp", "rb") as f:
@@ -379,12 +382,12 @@ def parse_message(update, context) -> None:
                         chat_id=update.effective_chat.id, sticker=f
                     ).sticker
                     logger.info("answer_message: sticker sent")
-    
+
             if text == "О, морская!" and prob:
                 with open("img/snail.jpeg", "rb") as f:
                     context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
                 logger.info("answer_message: snail photo sent")
-    
+
             if msg == "вот так вот":
                 with open("img/nevsky.jpeg", "rb") as f:
                     context.bot.send_photo(
@@ -393,7 +396,7 @@ def parse_message(update, context) -> None:
                         photo=f,
                     )
                 logger.info("answer_message: nevsky photo sent")
-    
+
             if msg == "доброе утро":
                 with open("img/GM_SHUE.webp", "rb") as f:
                     context.bot.send_sticker(
@@ -420,10 +423,10 @@ def parse_message(update, context) -> None:
                         parse_mode="markdown",
                     )
                     logger.info("answer_message: good night crackheads sticker sent")
-    
+
             if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
                 not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
-    
+
                 not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date())
                 not_drink_ending = td_convert(not_drink)
                 context.bot.send_message(
@@ -432,7 +435,7 @@ def parse_message(update, context) -> None:
                     text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
                     parse_mode="markdown",
                 )
-    
+
             if "залуп" in msg:
                 file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
                 with open(file, "rb") as f:
@@ -446,7 +449,7 @@ def parse_message(update, context) -> None:
                     #     parse_mode="markdown",
                     # )
                     logger.info("answer_message: zalupa sticker sent")
-    
+
             if "джекпот" in msg:
                 with open("img/jackpot.webp", "rb") as f:
                     context.bot.send_sticker(
@@ -561,8 +564,8 @@ def send_morning(update, context) -> None:
         bot_data["username"] = username
     else:
         bot_data["ZAVOD_CHECK"] = (
-            datetime.datetime.now() - bot_data["dt"]
-        ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
+                                          datetime.datetime.now() - bot_data["dt"]
+                                  ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
         if bot_data["ZAVOD_CHECK"]:
             bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
@@ -606,6 +609,11 @@ def show_day(update, context) -> None:
         ).sticker
         logger.info(f"show_day: file {sticker} sent")
 
+    logger.info(f"show_day: sent day sticker")
+    
+    
+@pause
+def show_holidays(update, context) -> None:
     dt = datetime.datetime.now(tz)
     text = get_holidays(dt)
 
@@ -614,8 +622,8 @@ def show_day(update, context) -> None:
         text=f"{text}",
         parse_mode="markdown",
     )
-    logger.info(f"show_day: sent holidays list")
 
+    logger.info(f"show_day: sent holidays list")
 
 @pause
 def build_plotina(update, context) -> None:
@@ -640,7 +648,7 @@ def build_plotina(update, context) -> None:
         else:
             text = f"Бобер {first_name} все еще спит!"
             context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        
+
     else:
         int_dt = int(pd.Timestamp(dt).to_datetime64())
         record = pd.DataFrame({"id": [_id],
@@ -712,6 +720,9 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     day_handler = CommandHandler("day", show_day)
     dispatcher.add_handler(day_handler)
 
+    holiday_handler = CommandHandler("holiday", show_holidays)
+    dispatcher.add_handler(holiday_handler)
+
     morning_handler = CommandHandler("zavod", send_morning)
     dispatcher.add_handler(morning_handler)
 
@@ -720,7 +731,7 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
 
     parse_handler = MessageHandler(Filters.text & ~Filters.command, parse_message)
     dispatcher.add_handler(parse_handler)
-    
+
     # rambler_horoscope_handler = CommandHandler('horoscope', horoscope)
     # dispatcher.add_handler(rambler_horoscope_handler)
     # dispatcher.add_handler(CallbackQueryHandler(button))
