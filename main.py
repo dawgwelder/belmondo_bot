@@ -5,7 +5,7 @@ import fire
 import datetime
 import pytz
 import telegram
-import openai
+import g4f
 from configparser import ConfigParser
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,9 +31,9 @@ logger = get_logger("Belmondo Logger")
 
 config = ConfigParser()
 config.read("auth.conf")
-api_key = config["auth"]["openai_api_key"]
-openai.api_key = api_key
-model = "gpt-3.5-turbo-16k"
+# api_key = config["auth"]["openai_api_key"]
+# openai.api_key = api_key
+# model = "gpt-3.5-turbo-16k"
 
 tracker = GodnoscopTracker(config)
 
@@ -227,14 +227,13 @@ def parse_message(update, context) -> None:
 
         context.bot_data["chat_deque"].append({"role": "user", "content": content})
 
-        response = openai.ChatCompletion.create(model=model,
-                                                messages=list(context.bot_data["chat_deque"]),
-                                                max_tokens=1000)
+        response = g4f.ChatCompletion.create(model=g4f.models.gpt_4,
+                                             messages=list(context.bot_data["chat_deque"]),
+                                             stream=True)
 
-        text = response["choices"][0]["message"]["content"]
+        text = "".join(response)
 
         context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
-        print(context.bot_data["chat_deque"])
 
         context.bot.send_message(
             chat_id=update.effective_chat.id,
