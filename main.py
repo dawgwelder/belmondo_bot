@@ -228,13 +228,14 @@ def parse_message(update, context) -> None:
         # context.bot_data["chat_deque"].append({"role": "user", "content": content})
         content = [{"role": "user", "content": content}]
         
-        response = g4f.ChatCompletion.create(model=g4f.models.gpt_4,
+        response = g4f.ChatCompletion.create(model="gpt-3.5-turbo",
                                              messages=content,
                                              stream=True)
 
         text = "".join(response)
 
         # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+        print(text)
 
         context.bot.send_message(
             chat_id=update.effective_chat.id,
