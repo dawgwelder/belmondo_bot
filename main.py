@@ -225,15 +225,16 @@ def parse_message(update, context) -> None:
         if choice(range(5)) == 4:
             content = f"{professional_prompt}\n{content}"
 
-        context.bot_data["chat_deque"].append({"role": "user", "content": content})
-
+        # context.bot_data["chat_deque"].append({"role": "user", "content": content})
+        content = [{"role": "user", "content": content}]
+        
         response = g4f.ChatCompletion.create(model=g4f.models.gpt_4,
-                                             messages=list(context.bot_data["chat_deque"]),
+                                             messages=content,
                                              stream=True)
 
         text = "".join(response)
 
-        context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+        # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
 
         context.bot.send_message(
             chat_id=update.effective_chat.id,
