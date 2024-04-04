@@ -233,7 +233,7 @@ def parse_message(update, context) -> None:
             prompt = content.split("создай картинку ")[-1]
             response = client.images.generate(
                 prompt=prompt,
-                model="bing"
+                model="gemini"
             )
             image_url = response.data[0].url
             context.bot.send_message(
@@ -254,7 +254,6 @@ def parse_message(update, context) -> None:
             text = response.choices[0].message.content
 
             # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
-            print(text)
 
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -262,7 +261,7 @@ def parse_message(update, context) -> None:
                 text=text,
                 parse_mode="markdown",
             )
-            logger.info("chatGPT: generated text sent")
+            logger.info(f"chatGPT: generated text sent text:{text}")
 
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
