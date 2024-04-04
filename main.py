@@ -5,7 +5,9 @@ import fire
 import datetime
 import pytz
 import telegram
-import g4f
+from g4f.client import Client
+from g4f.Provider import Bing, Gemini
+from g4f.cookies import set_cookies
 from configparser import ConfigParser
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,6 +33,11 @@ logger = get_logger("Belmondo Logger")
 
 config = ConfigParser()
 config.read("auth.conf")
+
+set_cookies(".bing.com", config["cookies"]["_U"])
+set_cookies(".google.com", config["cookies"]["__Secure-1PSID"])
+
+client = Client()
 # api_key = config["auth"]["openai_api_key"]
 # openai.api_key = api_key
 # model = "gpt-3.5-turbo-16k"
@@ -222,28 +229,40 @@ def parse_message(update, context) -> None:
 
         content = update.message.text
 
-        if choice(range(5)) == 4:
-            content = f"{professional_prompt}\n{content}"
+        if content.startswith("создай картинку"):
+            prompt = content.split("создай картинку ")[-1]
+            response = client.images.generate(
+                prompt=prompt,
+                model="bing"
+            )
+            image_url = response.data[0].url
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=image_url,
+                parse_mode="markdown",
+            )
+        else:
+            if choice(range(5)) == 4:
+                content = f"{professional_prompt}\n{content}"
 
-        # context.bot_data["chat_deque"].append({"role": "user", "content": content})
-        content = [{"role": "user", "content": content}]
-        
-        response = g4f.ChatCompletion.create(model="gpt-3.5-turbo",
-                                             messages=content,
-                                             stream=True)
+            # context.bot_data["chat_deque"].append({"role": "user", "content": content})
+            content = [{"role": "user", "content": content}]
 
-        text = "".join(response)
+            response = client.chat.completions.create(model="gpt-4", messages=content)
 
-        # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
-        print(text)
+            text = response.choices[0].message.content
 
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info("chatGPT: generated text sent")
+            # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+            print(text)
+
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
+            logger.info("chatGPT: generated text sent")
 
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
