@@ -4,29 +4,33 @@ import re
 import fire
 import datetime
 import pytz
-import telegram
-from g4f.client import Client
-from g4f.Provider import Bing, Gemini
-from g4f.cookies import set_cookies
+
 from configparser import ConfigParser
 
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackQueryHandler,
+)
 
 from time import sleep
 from random import choice
 from logger import get_logger
 from collections import deque
+from openai import OpenAI
 
 import pandas as pd
 
 from if_rules import ifs
-from markov import get_model
+
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post, generate_horo_message
-from site_parser import get_anecdote, get_holidays
+from horoscope import generate_post
+from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 logger = get_logger("Belmondo Logger")
@@ -34,17 +38,14 @@ logger = get_logger("Belmondo Logger")
 config = ConfigParser()
 config.read("auth.conf")
 
-set_cookies(".bing.com", config["cookies"]["_U"])
-set_cookies(".google.com", config["cookies"]["__Secure-1PSID"])
+client = OpenAI(
+    api_key=config["auth"]["openai_api_key"], base_url="https://api.deepseek.com"
+)
 
-client = Client()
-# api_key = config["auth"]["openai_api_key"]
-# openai.api_key = api_key
-# model = "gpt-3.5-turbo-16k"
 
 tracker = GodnoscopTracker(config)
 
-tz = pytz.timezone('Europe/Moscow')
+tz = pytz.timezone("Europe/Moscow")
 
 
 # tracker.update_godnoscopes()
@@ -103,16 +104,16 @@ def get_horoscope(update, context) -> None:
 #             InlineKeyboardButton("Рыбы", callback_data="pisces")
 #         ],
 #     ]
-# 
+#
 #     reply_markup = InlineKeyboardMarkup(keyboard)
-# 
+#
 #     update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
-# 
-# 
+#
+#
 # def button(update: Update, context) -> None:
 #     query = update.callback_query
 #     query.answer()
-# 
+#
 #     message = generate_horo_message(query.data)
 #     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
@@ -123,22 +124,22 @@ def godnoscope(update: Update, context) -> None:
         [
             InlineKeyboardButton("Овен", callback_data="ОВЕН"),
             InlineKeyboardButton("Телец", callback_data="ТЕЛЕЦ"),
-            InlineKeyboardButton("Близнецы", callback_data="БЛИЗНЕЦЫ")
+            InlineKeyboardButton("Близнецы", callback_data="БЛИЗНЕЦЫ"),
         ],
         [
             InlineKeyboardButton("Рак", callback_data="РАК"),
             InlineKeyboardButton("Лев", callback_data="ЛЕВ"),
-            InlineKeyboardButton("Дева", callback_data="ДЕВА")
+            InlineKeyboardButton("Дева", callback_data="ДЕВА"),
         ],
         [
             InlineKeyboardButton("Весы", callback_data="ВЕСЫ"),
             InlineKeyboardButton("Скорпион", callback_data="СКОРПИОН"),
-            InlineKeyboardButton("Стрелец", callback_data="СТРЕЛЕЦ")
+            InlineKeyboardButton("Стрелец", callback_data="СТРЕЛЕЦ"),
         ],
         [
             InlineKeyboardButton("Козерог", callback_data="КОЗЕРОГ"),
             InlineKeyboardButton("Водолей", callback_data="ВОДОЛЕЙ"),
-            InlineKeyboardButton("Рыбы", callback_data="РЫБЫ")
+            InlineKeyboardButton("Рыбы", callback_data="РЫБЫ"),
         ],
     ]
 
@@ -178,9 +179,7 @@ def parse_message(update, context) -> None:
 
     # delete shit
     if update.message.via_bot is not None:
-        shit_bot = (
-                update.message.via_bot.id == SHIT_BOT_ID
-        )
+        shit_bot = update.message.via_bot.id == SHIT_BOT_ID
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
 
         if shit_bot:
@@ -200,7 +199,10 @@ def parse_message(update, context) -> None:
                 update.effective_chat.id, update.message.message_id
             )
             logger.info(f"edited_message from {name} bot: {update.message.text}")
-    if update.message.from_user.id in men_squad and "нахуй баб" in update.message.text.lower():
+    if (
+        update.message.from_user.id in men_squad
+        and "нахуй баб" in update.message.text.lower()
+    ):
         regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
         number = re.findall(regex, update.message.text)[0]
 
@@ -222,46 +224,49 @@ def parse_message(update, context) -> None:
                     text=text,
                     parse_mode="markdown",
                 )
-                sleep(choice([.5, .25, 1, .75, .666]))
+                sleep(choice([0.5, 0.25, 1, 0.75, 0.666]))
 
-    if update.message.reply_to_message is not None and update.message.reply_to_message.from_user.id == context.bot_data[
-        "self_id"]:
+    if (
+        update.message.reply_to_message is not None
+        and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]
+    ):
 
         content = update.message.text
 
-        if content.startswith("создай картинку"):
-            prompt = content.split("создай картинку ")[-1]
-            response = client.images.generate(
-                prompt=prompt,
-                model="gemini"
-            )
-            image_url = response.data[0].url
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=image_url,
-                parse_mode="markdown",
-            )
-        else:
-            if choice(range(5)) == 4:
-                content = f"{professional_prompt}\n{content}"
+        # if content.startswith("создай картинку"):
+        #     prompt = content.split("создай картинку ")[-1]
+        #     response = client.images.generate(
+        #         prompt=prompt,
+        #         model="gemini"
+        #     )
+        #     image_url = response.data[0].url
+        #     context.bot.send_message(
+        #         chat_id=update.effective_chat.id,
+        #         reply_to_message_id=update.message.message_id,
+        #         text=image_url,
+        #         parse_mode="markdown",
+        #     )
+        if choice(range(5)) == 4:
+            content = f"{professional_prompt}\n{content}"
 
-            # context.bot_data["chat_deque"].append({"role": "user", "content": content})
-            content = [{"role": "user", "content": content}]
+        context.bot_data["chat_deque"].append({"role": "user", "content": content})
+        # content = [{"role": "user", "content": content}]
 
-            response = client.chat.completions.create(model="gpt-4", messages=content)
+        response = client.chat.completions.create(
+            model="deepseek-chat", messages=context.bot_data["chat_deque"], stream=False
+        )
 
-            text = response.choices[0].message.content
+        text = response.choices[0].message.content
 
-            # context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+        context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
 
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=text,
-                parse_mode="markdown",
-            )
-            logger.info(f"chatGPT: generated text sent text:{text}")
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info(f"chatGPT: generated text sent text:{text}")
 
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
@@ -269,7 +274,11 @@ def parse_message(update, context) -> None:
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
 
-        if prev_ts is not None and (ts - prev_ts).seconds < 3 and _id != context.bot_data["master"]:
+        if (
+            prev_ts is not None
+            and (ts - prev_ts).seconds < 3
+            and _id != context.bot_data["master"]
+        ):
             msg = False
         context.bot_data["spam_stopper"][_id] = ts
 
@@ -277,9 +286,7 @@ def parse_message(update, context) -> None:
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             if text:
                 logger.info(f"triggered by: {msg}")
-                logger.info(
-                    f"scripted answer_message: flag to show was {bool(prob)}"
-                )
+                logger.info(f"scripted answer_message: flag to show was {bool(prob)}")
             if text and prob:
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -303,20 +310,24 @@ def parse_message(update, context) -> None:
             #         text=text,
             #         parse_mode="markdown")
             if "дембель" in msg:
-                td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
+                td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(
+                    tz
+                )
                 text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
                     text=text,
-                    parse_mode="markdown")
+                    parse_mode="markdown",
+                )
             if "страшно жить" in msg:
                 text = f"ВАЩЕ ПИЗДЕЦ"
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
                     text=text,
-                    parse_mode="markdown")
+                    parse_mode="markdown",
+                )
 
             if "кубик" in msg:
                 text = roll_custom_dice(msg)
@@ -331,14 +342,20 @@ def parse_message(update, context) -> None:
                             chat_id=update.effective_chat.id,
                             reply_to_message_id=update.message.message_id,
                             text=text,
-                            parse_mode="markdown")
+                            parse_mode="markdown",
+                        )
 
-            if "колокол" not in msg.split() and "колокольн" not in msg and "колокол" in msg and not update.message.forward_from_message_id:
+            if (
+                "колокол" not in msg.split()
+                and "колокольн" not in msg
+                and "колокол" in msg
+                and not update.message.forward_from_message_id
+            ):
                 if update.message.reply_to_message is not None:
                     reply_to = update.message.reply_to_message.message_id
                 else:
                     reply_to = update.message.message_id
-                with open('img/colocola.jpg', 'rb') as f:
+                with open("img/colocola.jpg", "rb") as f:
                     context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=reply_to,
@@ -351,7 +368,7 @@ def parse_message(update, context) -> None:
                     reply_to = update.message.reply_to_message.message_id
                 else:
                     reply_to = update.message.message_id
-                with open('img/slon.jpg', 'rb') as f:
+                with open("img/slon.jpg", "rb") as f:
                     context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=reply_to,
@@ -359,7 +376,7 @@ def parse_message(update, context) -> None:
                         parse_mode="markdown",
                     )
             if "нацист" in msg:
-                with open('img/nz.jpg', 'rb') as f:
+                with open("img/nz.jpg", "rb") as f:
                     context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=update.message.message_id,
@@ -437,16 +454,36 @@ def parse_message(update, context) -> None:
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=update.message.message_id,
                         text=choice(
-                            ["Good night!", "Спокойной ночи", "Сладких снов", "Покасики!"]
+                            [
+                                "Good night!",
+                                "Спокойной ночи",
+                                "Сладких снов",
+                                "Покасики!",
+                            ]
                         ),
                         parse_mode="markdown",
                     )
                     logger.info("answer_message: good night crackheads sticker sent")
 
-            if "горшок не пьет" in msg or "горшок не пьёт" in msg or "горшок держится" in msg:
-                not_drink_choice = choice(["не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"])
+            if (
+                "горшок не пьет" in msg
+                or "горшок не пьёт" in msg
+                or "горшок держится" in msg
+            ):
+                not_drink_choice = choice(
+                    [
+                        "не пьет",
+                        "держится",
+                        "в завязке",
+                        "не бухает",
+                        "проявляет силу воли",
+                    ]
+                )
 
-                not_drink = (datetime.datetime.now(tz).date() - datetime.datetime.strptime('19072013', "%d%m%Y").date())
+                not_drink = (
+                    datetime.datetime.now(tz).date()
+                    - datetime.datetime.strptime("19072013", "%d%m%Y").date()
+                )
                 not_drink_ending = td_convert(not_drink)
                 context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -583,8 +620,8 @@ def send_morning(update, context) -> None:
         bot_data["username"] = username
     else:
         bot_data["ZAVOD_CHECK"] = (
-                                          datetime.datetime.now() - bot_data["dt"]
-                                  ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
+            datetime.datetime.now() - bot_data["dt"]
+        ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
         if bot_data["ZAVOD_CHECK"]:
             bot_data["username"] = username
     if bot_data["ZAVOD_CHECK"]:
@@ -623,14 +660,12 @@ def show_day(update, context) -> None:
     sticker = os.path.join("img/eva", f"{weekday}.webp")
 
     with open(sticker, "rb") as f:
-        context.bot.send_sticker(
-            chat_id=update.effective_chat.id, sticker=f
-        ).sticker
+        context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
         logger.info(f"show_day: file {sticker} sent")
 
     logger.info(f"show_day: sent day sticker")
-    
-    
+
+
 @pause
 def show_holidays(update, context) -> None:
     dt = datetime.datetime.now(tz)
@@ -643,6 +678,7 @@ def show_holidays(update, context) -> None:
     )
 
     logger.info(f"show_day: sent holidays list")
+
 
 @pause
 def build_plotina(update, context) -> None:
@@ -670,13 +706,17 @@ def build_plotina(update, context) -> None:
 
     else:
         int_dt = int(pd.Timestamp(dt).to_datetime64())
-        record = pd.DataFrame({"id": [_id],
-                               "username": [username],
-                               "first_name": [first_name],
-                               "last_name": [last_name],
-                               "dt": [int_dt],
-                               "last_build": [random_number],
-                               "overall_build": [random_number]})
+        record = pd.DataFrame(
+            {
+                "id": [_id],
+                "username": [username],
+                "first_name": [first_name],
+                "last_name": [last_name],
+                "dt": [int_dt],
+                "last_build": [random_number],
+                "overall_build": [random_number],
+            }
+        )
         text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
         context.bot.send_message(chat_id=update.effective_chat.id, text=text)
         df = df.append(record)
@@ -694,11 +734,15 @@ def paused(update, context) -> None:
     if update.message.from_user.id == context.bot_data["master"]:
         context.bot_data["paused"] = not context.bot_data["paused"]
         if context.bot_data["paused"]:
-            context.bot.send_message(chat_id=update.effective_chat.id, text="Бельмондо спит")
+            context.bot.send_message(
+                chat_id=update.effective_chat.id, text="Бельмондо спит"
+            )
     else:
         if random.randint(0, 10) == 10:
-            context.bot.send_message(chat_id=update.effective_chat.id, text="Ты чёт ошибся, другалек, "
-                                                                            "я только по команде хозяина сплю")
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Ты чёт ошибся, другалек, " "я только по команде хозяина сплю",
+            )
 
 
 def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
@@ -755,7 +799,7 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     # dispatcher.add_handler(rambler_horoscope_handler)
     # dispatcher.add_handler(CallbackQueryHandler(button))
 
-    godnoscope_handler = CommandHandler('horoscope', godnoscope)
+    godnoscope_handler = CommandHandler("horoscope", godnoscope)
     dispatcher.add_handler(godnoscope_handler)
     dispatcher.add_handler(CallbackQueryHandler(button_godnoscope))
 

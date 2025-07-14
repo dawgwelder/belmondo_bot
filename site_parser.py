@@ -16,12 +16,14 @@ def get_holidays(dt):
     with open("holidays.json") as f:
         holidays = json.load(f)
     site = holidays["site"]
-    holiday = holidays.get(dt.strftime("%m-%d"), "Чёт нет ничего по праздникам... Скучнярский день")
+    holiday = holidays.get(
+        dt.strftime("%m-%d"), "Чёт нет ничего по праздникам... Скучнярский день"
+    )
 
     if isinstance(holiday, list):
         holidays = list(OrderedDict.fromkeys(holiday))
         holiday = "\n".join(holidays)
-    
+
     return f"""
     Сегодня {dt.strftime('%d %B %Y')}\n
 Список праздников:\n{holiday}\n

@@ -6,13 +6,35 @@ from datetime import date, datetime
 
 site = Template("https://horoscopes.rambler.ru/$horo/")
 
-horo_list = ["aries", "taurus", "gemini",
-             "cancer", "leo", "virgo",
-             "libra", "scorpio", "sagittarius",
-             "capricorn", "aquarius", "pisces"]
+horo_list = [
+    "aries",
+    "taurus",
+    "gemini",
+    "cancer",
+    "leo",
+    "virgo",
+    "libra",
+    "scorpio",
+    "sagittarius",
+    "capricorn",
+    "aquarius",
+    "pisces",
+]
 
-horo_ru_list = ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева", "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей",
-                "Рыбы"]
+horo_ru_list = [
+    "Овен",
+    "Телец",
+    "Близнецы",
+    "Рак",
+    "Лев",
+    "Дева",
+    "Весы",
+    "Скорпион",
+    "Стрелец",
+    "Козерог",
+    "Водолей",
+    "Рыбы",
+]
 
 horo_emojis = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓", "⛎"]
 
@@ -40,10 +62,12 @@ def generate_post():
     first_post = f"{dt}\n\n"
     second_post = ""
 
-    for idx, (horo, ru_horo, emoji) in enumerate(zip(horo_list, horo_ru_list, horo_emojis)):
+    for idx, (horo, ru_horo, emoji) in enumerate(
+        zip(horo_list, horo_ru_list, horo_emojis)
+    ):
         horo_text = get_horoscope(horo)
         if idx < 5:
             first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
-        else: 
+        else:
             second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
     return first_post.strip(), second_post.strip()

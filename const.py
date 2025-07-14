@@ -6,16 +6,18 @@ TEST_CHAT_ID = -1001513214389
 
 PENGUIN_ID = 396043132
 
-vars_dict = {"ZAVOD_CHECK": False,
-             "dt": None,
-             "zavod_text": "",
-             "spam_mode": "medium",
-             "username": None,
-             "paused": False,
-             "spam_stopper": {},
-             "self_id_dev": 2057615456,
-             "self_id": 5584506696,
-             "master": 113300226}
+vars_dict = {
+    "ZAVOD_CHECK": False,
+    "dt": None,
+    "zavod_text": "",
+    "spam_mode": "medium",
+    "username": None,
+    "paused": False,
+    "spam_stopper": {},
+    "self_id_dev": 2057615456,
+    "self_id": 5584506696,
+    "master": 113300226,
+}
 
 CHOICES = tuple([3, 4, 5, 6])
 
@@ -23,7 +25,8 @@ emojis = ["🎯", "🏀", "⚽", "🎰", "🎳"]
 
 men_squad = [113300226, 1276243648, 72196947, 129453193, 113222251]
 
-goblin_pasta = ["""
+goblin_pasta = [
+    """
 Третьего дня, по совету проверенных камрадов, приобрёл новый мегадевайс — Анальную пробку «*Сталин-3000*». 
 Сразу же, задыхаясь от жадности, вскрыл коробку цепкими лапами и заюзал мегадевайс. 
 Размер, *моё почтение*. Настоящей глыбой был Иосиф Виссарионович. 
@@ -35,25 +38,28 @@ goblin_pasta = ["""
 Девайс отличный, всем рекомендую к приобретению.
 _Всё это, как водится, реклама._
 """,
-                """- Дим Юрич! \n
+    """- Дим Юрич! \n
                 - Клим Саныч! \n
-                - Всем привет!""", 
-                "Я вас категорически приветствую", 
-                "Тупое говно тупого говна", 
-                "Малолетние дебилы"]
+                - Всем привет!""",
+    "Я вас категорически приветствую",
+    "Тупое говно тупого говна",
+    "Малолетние дебилы",
+]
 
-goblin_urls = [r"https://www.youtube.com/watch?v=79IghS6mlac",
-               r"https://www.youtube.com/watch?v=O9pcdJLK5Gs",
-               r"https://www.youtube.com/watch?v=MD1eU7NNFZc",
-               r"https://www.youtube.com/watch?v=s09KvBYvEts",
-               r"https://www.youtube.com/watch?v=kMqqbwNkkAY",
-               r"https://www.youtube.com/watch?v=OJcgMaRGLGg",
-               r"https://www.youtube.com/watch?v=ia3ze-PgcNA",
-               r"https://www.youtube.com/watch?v=ICy6hnxAo_Y",
-               r"https://www.youtube.com/watch?v=4RrBSA1AVFY",
-               r"https://www.youtube.com/watch?v=PKpaxs4fN3w",
-               r"https://www.youtube.com/watch?v=mVYpG6Df72g",
-               r"https://www.youtube.com/watch?v=oB9_J9JFUjo"]
+goblin_urls = [
+    r"https://www.youtube.com/watch?v=79IghS6mlac",
+    r"https://www.youtube.com/watch?v=O9pcdJLK5Gs",
+    r"https://www.youtube.com/watch?v=MD1eU7NNFZc",
+    r"https://www.youtube.com/watch?v=s09KvBYvEts",
+    r"https://www.youtube.com/watch?v=kMqqbwNkkAY",
+    r"https://www.youtube.com/watch?v=OJcgMaRGLGg",
+    r"https://www.youtube.com/watch?v=ia3ze-PgcNA",
+    r"https://www.youtube.com/watch?v=ICy6hnxAo_Y",
+    r"https://www.youtube.com/watch?v=4RrBSA1AVFY",
+    r"https://www.youtube.com/watch?v=PKpaxs4fN3w",
+    r"https://www.youtube.com/watch?v=mVYpG6Df72g",
+    r"https://www.youtube.com/watch?v=oB9_J9JFUjo",
+]
 
 colocola = """_UPD: Пресс-офис бренда Funky Monkey опровергает эту новость — говорят, что бренд не планировал выпускать такой напиток. А всё интервью для «Говорит Москва» дал Вячеслав Гавриленков — директор компании Funky Monkey, которая занимается разработкой сайтов_
 
