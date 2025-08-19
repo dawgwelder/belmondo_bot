@@ -1,8 +1,16 @@
 from utils import *
 from const import *
+from datetime import datetime
+from typing import Tuple
 import json
-import os
 from random import choice
+from time import sleep
+import re
+import pytz
+from logger import get_logger
+
+logger = get_logger("if_rules")
+
 
 with open("speaking/triggers.json") as f:
     speaking = json.load(f)
@@ -144,8 +152,7 @@ def get_trigger_type(answer: str) -> str:
 def process_special_triggers(update, context, msg: str) -> None:
     """Process special triggers that require custom logic."""
     # Demobilization countdown
-    if "дембель" in msg:
-        from datetime import datetime
+    if "дембель" in msg:        
         td = datetime(2028, 11, 14, tzinfo=pytz.timezone("Europe/Moscow")) - datetime.now(pytz.timezone("Europe/Moscow"))
         text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
         context.bot.send_message(
@@ -205,7 +212,6 @@ def process_special_triggers(update, context, msg: str) -> None:
             "не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"
         ])
         
-        from datetime import datetime
         not_drink = (
             datetime.now(pytz.timezone("Europe/Moscow")).date() - 
             datetime.strptime("19072013", "%d%m%Y").date()
