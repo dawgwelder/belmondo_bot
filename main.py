@@ -3,9 +3,10 @@ import random
 import re
 import datetime
 import pytz
+
 from collections import deque
 from time import sleep
-from typing import Optional, Tuple
+
 
 import fire
 import pandas as pd
@@ -55,18 +56,21 @@ class MessageProcessor:
     def __init__(self, bot_data: dict):
         self.bot_data = bot_data
     
-    def process_bot_messages(self, update, context) -> None:
+    async def process_bot_messages(self, update, context) -> None:
         """Process messages from other bots."""
         if update.message.via_bot is None:
             return
             
-        shit_bot = update.message.via_bot.id == SHIT_BOT_ID
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
         
-        if shit_bot:
-            sleep_choice(CHOICES)
-            context.bot.delete_message(
-                update.effective_chat.id, update.message.message_id
+        if update.message.via_bot.id != GODNOSCOP_ID and update.message.via_bot.id != SELF_ID:
+            # Асинхронная задержка с автоматическим удалением сообщения
+            await sleep_choice_asyncio(
+                DELAY_CHOICES, 
+                context.bot, 
+                update.effective_chat.id, 
+                update.message.message_id, 
+                logger
             )
             logger.info(f"delete_message from shit bot: {update.message.text}")
             
@@ -105,7 +109,8 @@ class MessageProcessor:
                         text=text,
                         parse_mode="markdown",
                     )
-                    sleep(choice([0.5, 0.25, 1, 0.75, 0.666]))
+                    # Асинхронная задержка без блокировки
+                    sleep_choice_async([0.5, 0.25, 1, 0.75, 0.666])
     
     def process_ai_response(self, update, context) -> None:
         """Process AI chat responses."""
@@ -114,9 +119,8 @@ class MessageProcessor:
             
             content = update.message.text
             
-            # Add professional prompt occasionally
-            if choice(range(5)) == 4:
-                content = f"{professional_prompt}\n{content}"
+
+            content = f"{professional_prompt}\n{content}"
             
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
@@ -290,15 +294,6 @@ class MessageProcessor:
             except FileNotFoundError:
                 logger.error("GM sticker not found")
         
-        # Snail photo for "О, морская!"
-        if msg == "О, морская!" and self.bot_data.get("prob"):
-            try:
-                with open("img/snail.jpeg", "rb") as f:
-                    context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-                    logger.info("answer_message: snail photo sent")
-            except FileNotFoundError:
-                logger.error("Snail image not found")
-        
         # Nevsky photo
         if msg == "вот так вот":
             try:
@@ -330,7 +325,7 @@ class MessageProcessor:
                 logger.error("Yandex sticker not found")
         
         # Good night
-        if "ой ночи" in msg:
+        if re.search(r'\b(?:спокойной?|доброй?|сладкой?|ой)\s+(?:ночи|ночки|ночью)\b', msg, re.IGNORECASE):
             try:
                 with open("img/GN.webp", "rb") as f:
                     context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f)
@@ -364,7 +359,7 @@ class MessageProcessor:
         
         not_drink = (
             datetime.datetime.now(tz).date() - 
-            datetime.datetime.strptime("19072013", "%d%m%Y").date()
+            POT_DATE
         )
         not_drink_ending = td_convert(not_drink)
         
@@ -717,9 +712,8 @@ def spam_gif_detector(update, context) -> None:
                 )
 
 
-@pause
-def parse_message(update, context) -> None:
-    """Main message parsing function."""
+async def _parse_message_async(update, context) -> None:
+    """Async version of main message parsing function."""
     bot_data = context.bot_data
     text = ""
     prob = 0
@@ -728,7 +722,7 @@ def parse_message(update, context) -> None:
     processor = MessageProcessor(bot_data)
     
     # Process bot messages
-    processor.process_bot_messages(update, context)
+    await processor.process_bot_messages(update, context)
     
     # Process men squad messages
     processor.process_men_squad_message(update, context)
@@ -788,6 +782,25 @@ def parse_message(update, context) -> None:
 
 
 @pause
+def parse_message(update, context) -> None:
+    """Main message parsing function - sync wrapper for async function."""
+    # Create event loop and run async function
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(_parse_message_async(update, context))
+    except Exception as e:
+        logger.error(f"Error in parse_message: {e}")
+    finally:
+        if loop.is_running():
+            loop.close()
+
+
+@pause
 def send_oxxxy(update, context) -> None:
     """Send random Oxxxy content."""
     ContentSender.send_oxxxy(update, context)
@@ -802,7 +815,7 @@ def send_goblin(update, context) -> None:
 def delete_dice(update, context) -> None:
     """Delete dice messages."""
     if update.message.dice.emoji in emojis:
-        sleep_choice(CHOICES)
+        sleep_choice_async(CHOICES)
         context.bot.delete_message(update.effective_chat.id, update.message.message_id)
         logger.info(f"delete_dice: {update.message.text}")
 
@@ -869,8 +882,8 @@ def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> Non
     """Main bot initialization and setup."""
     # Initialize bot data
     vars_dict["spam_mode"] = spam_mode
-    vars_dict["chat_deque"] = deque(maxlen=10)
-    vars_dict["msg_deque"] = deque(maxlen=10)
+    vars_dict["chat_deque"] = deque(maxlen=100)
+    vars_dict["msg_deque"] = deque(maxlen=100)
     
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")

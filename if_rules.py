@@ -226,7 +226,7 @@ def process_special_triggers(update, context, msg: str) -> None:
         )
     
     # Good night with text
-    if "ой ночи" in msg:
+    if re.search(r'\b(?:спокойной?|доброй?|сладкой?|ой)\s+(?:ночи|ночки|ночью)\b', msg, re.IGNORECASE):
         try:
             with open("img/GN.webp", "rb") as f:
                 context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f)

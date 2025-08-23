@@ -6,13 +6,51 @@ from random import choice
 from quotes import quotes
 import string
 from const import *
-from typing import Tuple
-from pprint import pprint
 import pandas as pd
+import asyncio
+import threading
 
 
 def sleep_choice(choices):
     sleep(choice(choices))
+
+
+def sleep_choice_async(choices):
+    """Асинхронная версия sleep_choice, которая не блокирует основной поток"""
+    def delayed_action():
+        sleep(choice(choices))
+    
+    thread = threading.Thread(target=delayed_action)
+    thread.daemon = True
+    thread.start()
+
+
+async def sleep_choice_asyncio(choices, bot=None, chat_id=None, message_id=None, logger=None):
+    """
+    Асинхронная версия sleep_choice с автоматическим удалением сообщения
+    
+    Args:
+        choices: список/кортеж значений для случайного выбора задержки
+        bot: объект бота для удаления сообщения
+        chat_id: ID чата
+        message_id: ID сообщения для удаления
+        logger: объект логгера для записи
+    """
+    delay = choice(choices)
+    
+    if bot and chat_id and message_id:
+        # Если переданы параметры для удаления, ждем и удаляем
+        await asyncio.sleep(delay)
+        try:
+            await bot.delete_message(chat_id, message_id)
+            if logger:
+                logger.info(f"Сообщение удалено после задержки {delay} секунд")
+        except Exception as e:
+            if logger:
+                logger.error(f"Ошибка при удалении сообщения: {e}")
+    else:
+        # Если параметры не переданы, просто ждем
+        await asyncio.sleep(delay)
 
 
 def quote_choice() -> str:
@@ -81,7 +119,7 @@ def parse_length(length):
     return text
 
 
-def get_length(df, stats=False):
+def get_length(df, first_name, random_number, stats=False):
     plotina_length = df["overall_build"].sum()
     plotina = parse_length(plotina_length)
 
