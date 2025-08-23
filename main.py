@@ -119,9 +119,7 @@ class MessageProcessor:
             
             content = update.message.text
             
-
-            content = f"{professional_prompt}\n{content}"
-            
+            context.bot_data["chat_deque"].append({"role": "system", "content": professional_prompt})
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
             try:
