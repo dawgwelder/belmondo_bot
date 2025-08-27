@@ -930,33 +930,25 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     application.add_handler(CallbackQueryHandler(button_godnoscope))
     
     # Start the application with polling
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
-    
     logger.info("Bot is running... Press Ctrl+C to stop")
+    
+    try:
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except KeyboardInterrupt:
+        logger.info("Shutting down bot...")
+        await application.stop()
+        await application.shutdown()
+        logger.info("Bot shutdown complete")
         
 
 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper function to run the async main function."""
-    # Check if there's already an event loop running
     try:
-        loop = asyncio.get_running_loop()
-        logger.warning("Event loop is already running. Cannot start bot.")
-        return
-    except RuntimeError:
-        # No event loop running, which is what we want
-        pass
-    
-    try:
-        # Ensure we have a clean event loop
+        # Use asyncio.run() which properly manages the event loop
         asyncio.run(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
-    except RuntimeError as e:
-        if "This event loop is already running" in str(e):
-            logger.error("Cannot start bot: Event loop already running. Please stop the current instance first.")
-        else:
-            logger.error(f"Runtime error: {e}")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         import traceback
