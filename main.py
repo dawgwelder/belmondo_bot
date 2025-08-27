@@ -937,8 +937,8 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     except KeyboardInterrupt:
         logger.info("Shutting down bot...")
         try:
-            await application.stop()
-            await application.shutdown()
+            application.stop()
+            application.shutdown()
         except Exception as e:
             logger.warning(f"Error during shutdown: {e}")
         logger.info("Bot shutdown complete")
