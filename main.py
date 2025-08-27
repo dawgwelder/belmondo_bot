@@ -65,7 +65,7 @@ class MessageProcessor:
             
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
         
-        if update.message.via_bot.id != GODNOSCOP_ID and update.message.via_bot.id != SELF_ID:
+        if update.message.via_bot.id not in [GODNOSCOP_ID, SELF_ID, PREDSKAZ_ID]:
             # Асинхронная задержка с автоматическим удалением сообщения
             await sleep_choice_asyncio(
                 DELAY_CHOICES,
