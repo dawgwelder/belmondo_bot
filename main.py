@@ -12,7 +12,7 @@ import aiohttp
 import fire
 import pandas as pd
 from configparser import ConfigParser
-from openai import AsyncOpenAI
+from openai import OpenAI
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -40,7 +40,7 @@ config = ConfigParser()
 config.read("auth.conf")
 
 # Initialize OpenAI client (async)
-client = AsyncOpenAI(
+client = OpenAI(
     api_key=config["auth"]["openai_api_key"],
     base_url="https://api.deepseek.com"
 )
