@@ -936,8 +936,11 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         await application.run_polling(allowed_updates=Update.ALL_TYPES)
     except KeyboardInterrupt:
         logger.info("Shutting down bot...")
-        await application.stop()
-        await application.shutdown()
+        try:
+            await application.stop()
+            await application.shutdown()
+        except Exception as e:
+            logger.warning(f"Error during shutdown: {e}")
         logger.info("Bot shutdown complete")
         
 
@@ -945,14 +948,27 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper function to run the async main function."""
     try:
-        # Use asyncio.run() which properly manages the event loop
-        asyncio.run(main(mode, spam_mode, token))
+        # Get or create event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run the main function
+        loop.run_until_complete(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Clean up the event loop
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
