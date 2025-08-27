@@ -878,99 +878,67 @@ async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Main bot initialization and setup - now fully async."""
     application = None
+    vars_dict = {}
+    vars_dict["spam_mode"] = spam_mode
+    vars_dict["chat_deque"] = deque(maxlen=100)
+    vars_dict["msg_deque"] = deque(maxlen=100)   
+    if mode not in ["dev", "prod"]:
+        logger.error("Bot start: FAIL! Invalid mode")
+        return
+
+    if mode == "dev":
+        vars_dict["self_id"] = vars_dict["self_id_dev"]
+
+    # Create Application instead of Updater
+    application = (
+        Application.builder()
+        .token(token)
+        .read_timeout(1000)
+        .connect_timeout(1000)
+        .build()
+    )
+        
+    logger.info("Bot start: success!")
     
-    try:
-        # Initialize bot data
-        vars_dict["spam_mode"] = spam_mode
-        vars_dict["chat_deque"] = deque(maxlen=100)
-        vars_dict["msg_deque"] = deque(maxlen=100)
+    # Update bot_data
+    application.bot_data.update(vars_dict)
         
-        if mode not in ["dev", "prod"]:
-            logger.error("Bot start: FAIL! Invalid mode")
-            return
+    # Register command handlers
+    handlers = [
+        CommandHandler("quote", quote),
+        CommandHandler("goblin", send_goblin),
+        CommandHandler("oxxxy", send_oxxxy),
+        CommandHandler("day", show_day),
+        CommandHandler("holiday", show_holidays),
+        CommandHandler("zavod", send_morning),
+        CommandHandler("roll", roll_dice),
+        CommandHandler("horoscope", godnoscope),
+        CommandHandler("pause", paused),
+        CommandHandler("plotina", build_plotina),
+        CommandHandler("stats", stats_plotina),
+    ]
         
-        if mode == "dev":
-            vars_dict["self_id"] = vars_dict["self_id_dev"]
-        
-        # Create Application instead of Updater
-        application = (
-            Application.builder()
-            .token(token)
-            .read_timeout(1000)
-            .connect_timeout(1000)
-            .build()
-        )
-        
-        logger.info("Bot start: success!")
-        
-        # Update bot_data
-        application.bot_data.update(vars_dict)
-        
-        # Register command handlers
-        handlers = [
-            CommandHandler("quote", quote),
-            CommandHandler("goblin", send_goblin),
-            CommandHandler("oxxxy", send_oxxxy),
-            CommandHandler("day", show_day),
-            CommandHandler("holiday", show_holidays),
-            CommandHandler("zavod", send_morning),
-            CommandHandler("roll", roll_dice),
-            CommandHandler("horoscope", godnoscope),
-            CommandHandler("pause", paused),
-            CommandHandler("plotina", build_plotina),
-            CommandHandler("stats", stats_plotina),
-        ]
-        
-        for handler in handlers:
-            application.add_handler(handler)
-        
-        # Register message handlers (note: filters instead of Filters)
-        application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
-        application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
+    for handler in handlers:
+        application.add_handler(handler)
+    
+    # Register message handlers (note: filters instead of Filters)
+    application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
+    application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
         
         # Register callback handlers
-        application.add_handler(CallbackQueryHandler(button_godnoscope))
+    application.add_handler(CallbackQueryHandler(button_godnoscope))
+    
+    # # Initialize the application
+    # await application.initialize()
+    
+    # # Start the application
+    # await application.start()
+    
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    logger.info("Bot is running... Press Ctrl+C to stop")
         
-        # Initialize the application
-        await application.initialize()
-        
-        # Start the application
-        await application.start()
-        
-        # Start polling with proper error handling
-        await application.updater.start_polling(drop_pending_updates=True)
-        
-        logger.info("Bot is running... Press Ctrl+C to stop")
-        
-        # Keep the bot running
-        # await application.updater.idle()
-        
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Bot error: {e}")
-        raise
-    finally:
-        # Proper cleanup sequence
-        if application:
-            try:
-                # Stop polling first
-                if application.updater.running:
-                    await application.updater.stop()
-                    logger.info("Updater stopped")
-                
-                # Then stop the application
-                if application.running:
-                    await application.stop()
-                    logger.info("Application stopped")
-                
-                # Finally shutdown
-                await application.shutdown()
-                logger.info("Application shutdown complete")
-                
-            except Exception as e:
-                logger.error(f"Error during cleanup: {e}")
 
 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
