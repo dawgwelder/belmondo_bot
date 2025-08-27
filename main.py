@@ -929,11 +929,11 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         # Register callback handlers
     application.add_handler(CallbackQueryHandler(button_godnoscope))
     
-    # # Initialize the application
-    # await application.initialize()
+    # Initialize the application
+    await application.initialize()
     
-    # # Start the application
-    # await application.start()
+    # Start the application
+    await application.start()
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
     
