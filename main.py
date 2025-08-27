@@ -926,7 +926,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
     application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
         
-        # Register callback handlers
+    # Register callback handlers
     application.add_handler(CallbackQueryHandler(button_godnoscope))
     
     # Start the application with polling
@@ -948,8 +948,15 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper function to run the async main function."""
     try:
-        # Use asyncio.run() which properly manages the event loop
-        asyncio.run(main(mode, spam_mode, token))
+        # Get the current event loop or create a new one
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're already in an event loop, use create_task
+            task = loop.create_task(main(mode, spam_mode, token))
+            loop.run_until_complete(task)
+        except RuntimeError:
+            # No event loop running, create a new one
+            asyncio.run(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
     except Exception as e:
