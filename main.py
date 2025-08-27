@@ -933,30 +933,36 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     logger.info("Bot is running... Press Ctrl+C to stop")
     
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        # Initialize and start the application
+        await application.initialize()
+        await application.start()
+        
+        # Run polling in the current event loop
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running
+        try:
+            # Wait indefinitely
+            await asyncio.Event().wait()
+        except KeyboardInterrupt:
+            pass
+            
     except KeyboardInterrupt:
         logger.info("Shutting down bot...")
+    finally:
         try:
-            application.stop()
-            application.shutdown()
+            await application.stop()
+            await application.shutdown()
+            logger.info("Bot shutdown complete")
         except Exception as e:
             logger.warning(f"Error during shutdown: {e}")
-        logger.info("Bot shutdown complete")
         
 
 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper function to run the async main function."""
     try:
-        # Get the current event loop or create a new one
-        try:
-            loop = asyncio.get_running_loop()
-            # If we're already in an event loop, use create_task
-            task = loop.create_task(main(mode, spam_mode, token))
-            loop.run_until_complete(task)
-        except RuntimeError:
-            # No event loop running, create a new one
-            asyncio.run(main(mode, spam_mode, token))
+        asyncio.run(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
     except Exception as e:
