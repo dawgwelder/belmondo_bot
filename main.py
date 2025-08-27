@@ -877,19 +877,21 @@ async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Main bot initialization and setup - now fully async."""
-    # Initialize bot data
-    vars_dict["spam_mode"] = spam_mode
-    vars_dict["chat_deque"] = deque(maxlen=100)
-    vars_dict["msg_deque"] = deque(maxlen=100)
-    
-    if mode not in ["dev", "prod"]:
-        logger.error("Bot start: FAIL! Invalid mode")
-        return
-    
-    if mode == "dev":
-        vars_dict["self_id"] = vars_dict["self_id_dev"]
+    application = None
     
     try:
+        # Initialize bot data
+        vars_dict["spam_mode"] = spam_mode
+        vars_dict["chat_deque"] = deque(maxlen=100)
+        vars_dict["msg_deque"] = deque(maxlen=100)
+        
+        if mode not in ["dev", "prod"]:
+            logger.error("Bot start: FAIL! Invalid mode")
+            return
+        
+        if mode == "dev":
+            vars_dict["self_id"] = vars_dict["self_id_dev"]
+        
         # Create Application instead of Updater
         application = (
             Application.builder()
@@ -898,66 +900,104 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
             .connect_timeout(1000)
             .build()
         )
-    except Exception as e:
-        logger.error(f"Bot start: FAIL! {e}")
-        return
-    
-    logger.info("Bot start: success!")
-    
-    # Update bot_data
-    application.bot_data.update(vars_dict)
-    
-    # Register command handlers
-    handlers = [
-        CommandHandler("quote", quote),
-        CommandHandler("goblin", send_goblin),
-        CommandHandler("oxxxy", send_oxxxy),
-        CommandHandler("day", show_day),
-        CommandHandler("holiday", show_holidays),
-        CommandHandler("zavod", send_morning),
-        CommandHandler("roll", roll_dice),
-        CommandHandler("horoscope", godnoscope),
-        CommandHandler("pause", paused),
-        CommandHandler("plotina", build_plotina),
-        CommandHandler("stats", stats_plotina),
-    ]
-    
-    for handler in handlers:
-        application.add_handler(handler)
-    
-    # Register message handlers (note: filters instead of Filters)
-    application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
-    application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
-    
-    # Register callback handlers
-    application.add_handler(CallbackQueryHandler(button_godnoscope))
-    
-    # Start bot with async run_polling
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling(drop_pending_updates=True)
-    
-    logger.info("Bot is running... Press Ctrl+C to stop")
-    
-    try:
+        
+        logger.info("Bot start: success!")
+        
+        # Update bot_data
+        application.bot_data.update(vars_dict)
+        
+        # Register command handlers
+        handlers = [
+            CommandHandler("quote", quote),
+            CommandHandler("goblin", send_goblin),
+            CommandHandler("oxxxy", send_oxxxy),
+            CommandHandler("day", show_day),
+            CommandHandler("holiday", show_holidays),
+            CommandHandler("zavod", send_morning),
+            CommandHandler("roll", roll_dice),
+            CommandHandler("horoscope", godnoscope),
+            CommandHandler("pause", paused),
+            CommandHandler("plotina", build_plotina),
+            CommandHandler("stats", stats_plotina),
+        ]
+        
+        for handler in handlers:
+            application.add_handler(handler)
+        
+        # Register message handlers (note: filters instead of Filters)
+        application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
+        application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
+        
+        # Register callback handlers
+        application.add_handler(CallbackQueryHandler(button_godnoscope))
+        
+        # Initialize the application
+        await application.initialize()
+        
+        # Start the application
+        await application.start()
+        
+        # Start polling with proper error handling
+        await application.updater.start_polling(drop_pending_updates=True)
+        
+        logger.info("Bot is running... Press Ctrl+C to stop")
+        
         # Keep the bot running
         await application.updater.idle()
+        
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot error: {e}")
+        raise
     finally:
-        await application.stop()
-        await application.shutdown()
+        # Proper cleanup sequence
+        if application:
+            try:
+                # Stop polling first
+                if application.updater.running:
+                    await application.updater.stop()
+                    logger.info("Updater stopped")
+                
+                # Then stop the application
+                if application.running:
+                    await application.stop()
+                    logger.info("Application stopped")
+                
+                # Finally shutdown
+                await application.shutdown()
+                logger.info("Application shutdown complete")
+                
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
 
 
 def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper function to run the async main function."""
+    # Check if there's already an event loop running
     try:
+        loop = asyncio.get_running_loop()
+        logger.warning("Event loop is already running. Cannot start bot.")
+        return
+    except RuntimeError:
+        # No event loop running, which is what we want
+        pass
+    
+    try:
+        # Ensure we have a clean event loop
         asyncio.run(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
+    except RuntimeError as e:
+        if "This event loop is already running" in str(e):
+            logger.error("Cannot start bot: Event loop already running. Please stop the current instance first.")
+        else:
+            logger.error(f"Runtime error: {e}")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
