@@ -7,13 +7,12 @@ import asyncio
 
 from collections import deque
 import aiofiles
-import aiohttp
 
 import fire
 import pandas as pd
 from configparser import ConfigParser
 from openai import OpenAI
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -646,9 +645,10 @@ class PlotinaManager:
 
 def pause(func):
     """Decorator to pause bot functionality."""
-    def wrapper(update, context):
+    async def wrapper(update, context):
         if not context.bot_data.get("paused", False):
-            func(update, context)
+            return await func(update, context)
+        return None
     return wrapper
 
 
