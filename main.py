@@ -11,7 +11,7 @@ import aiofiles
 import fire
 import pandas as pd
 from configparser import ConfigParser
-from openai import OpenAI
+from openai import AsyncOpenAI as OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
