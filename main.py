@@ -933,7 +933,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     logger.info("Bot is running... Press Ctrl+C to stop")
     
     try:
-        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
     except KeyboardInterrupt:
         logger.info("Shutting down bot...")
         try:
@@ -972,4 +972,4 @@ def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> 
 
 
 if __name__ == "__main__":
-    fire.Fire(run_bot)
+    fire.Fire(main)
