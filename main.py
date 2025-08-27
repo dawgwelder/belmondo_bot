@@ -944,7 +944,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         logger.info("Bot is running... Press Ctrl+C to stop")
         
         # Keep the bot running
-        await application.updater.idle()
+        # await application.updater.idle()
         
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
