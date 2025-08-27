@@ -878,10 +878,10 @@ async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Main bot initialization and setup - now fully async."""
     application = None
-    vars_dict = {}
     vars_dict["spam_mode"] = spam_mode
     vars_dict["chat_deque"] = deque(maxlen=100)
-    vars_dict["msg_deque"] = deque(maxlen=100)   
+    vars_dict["msg_deque"] = deque(maxlen=100)
+
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
         return

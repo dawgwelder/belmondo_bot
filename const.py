@@ -5,6 +5,7 @@ POT_DATE = datetime.datetime.strptime("19072013", "%d%m%Y").date()
 SHIT_BOT_ID = 1341194997
 GODNOSCOP_ID = 1030651845
 SELF_ID = 5584506696
+SELF_ID_DEV = 2057615456
 PREDSKAZ_ID = 1093817058
 
 TEST_CHAT_ID = -1001513214389
@@ -19,8 +20,8 @@ vars_dict = {
     "username": None,
     "paused": False,
     "spam_stopper": {},
-    "self_id_dev": 2057615456,
-    "self_id": 5584506696,
+    "self_id_dev": SELF_ID_DEV,
+    "self_id": SELF_ID,
     "master": 113300226,
 }
 
