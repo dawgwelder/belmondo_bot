@@ -696,7 +696,7 @@ async def godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
+    await update.message.reply_text("Выбирай:", reply_markup=reply_markup)
 
 
 @pause
@@ -705,7 +705,7 @@ async def button_godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     
-    message = tracker.get_horoscope(query.data)
+    message = await tracker.get_horoscope(query.data)
     await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
