@@ -119,13 +119,14 @@ class MessageProcessor:
             update.message.reply_to_message.from_user.id == context.bot_data["self_id"]):
             
             content = update.message.text
+            model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
             
             context.bot_data["chat_deque"].append({"role": "system", "content": professional_prompt})
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
             try:
                 response = await client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=model_type,
                     messages=list(context.bot_data["chat_deque"]),
                     stream=False
                 )
