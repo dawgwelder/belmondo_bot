@@ -135,7 +135,8 @@ class MessageProcessor:
                 else:
                     response = await client.chat.completions.create(
                         model=model_type,
-                        messages=list(context.bot_data["chat_deque"][-2:]),
+                        messages=list([{"role": "system", "content": professional_prompt},
+                                       {"role": "user", "content": content}]),
                         stream=False
                     )
                 
@@ -593,8 +594,8 @@ class ContentSender:
             stream=False
         )
         text = response.choices[0].message.content
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        logger.info(f"ai_horoscope: sent {text} with prompt {prompt}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
+        logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
 class PlotinaManager:
     """Manages the plotina (dam) building game."""
