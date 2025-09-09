@@ -29,6 +29,7 @@ from const import *
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post
 from site_parser import get_holidays
+from horoscope import get_ai_horoscope_prompt
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 # Initialize logger
@@ -125,11 +126,18 @@ class MessageProcessor:
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
             try:
-                response = await client.chat.completions.create(
-                    model=model_type,
-                    messages=list(context.bot_data["chat_deque"]),
-                    stream=False
-                )
+                if not "гороскоп" in content:
+                    response = await client.chat.completions.create(
+                        model=model_type,
+                        messages=list(context.bot_data["chat_deque"]),
+                        stream=False
+                    )
+                else:
+                    response = await client.chat.completions.create(
+                        model=model_type,
+                        messages=list(context.bot_data["chat_deque"][-2:]),
+                        stream=False
+                    )
                 
                 text = response.choices[0].message.content
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
@@ -574,6 +582,18 @@ class ContentSender:
         )
         logger.info("show_day: sent holidays list")
 
+    @staticmethod
+    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str) -> None:
+        """Send AI horoscope."""
+        response = await client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "system", "content": professional_prompt},
+                      {"role": "user", "content": get_ai_horoscope_prompt()}],
+            stream=False
+        )
+        text = response.choices[0].message.content
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        logger.info(f"ai_horoscope: sent {text}")
 
 class PlotinaManager:
     """Manages the plotina (dam) building game."""
@@ -858,6 +878,17 @@ async def stats_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Show plotina statistics."""
     plotina_manager = PlotinaManager()
     await plotina_manager.show_stats(update, context)
+    
+@pause
+async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send AI horoscope."""
+    await ContentSender.ai_horoscope(update, context)
+    
+@pause
+async def clear_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear AI context."""
+    context.bot_data["chat_deque"] = deque(maxlen=100)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Контекст очищен")
 
 
 async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -917,6 +948,8 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("pause", paused),
         CommandHandler("plotina", build_plotina),
         CommandHandler("stats", stats_plotina),
+        CommandHandler("ai_horoscope", ai_horoscope),
+        CommandHandler("clear_context", clear_context),
     ]
         
     for handler in handlers:

@@ -39,6 +39,12 @@ horo_ru_list = [
 horo_emojis = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓", "⛎"]
 
 
+def get_ai_horoscope_prompt(horo):
+    dt = datetime.now().date().strftime("%d.%m.%Y")
+    prompt = f"Построй гороскоп для всех знаков зодиака на {dt}"
+    return prompt
+
+
 def get_horoscope(horo):
     soup = BeautifulSoup(requests.get(site.substitute(horo=horo)).text, features="lxml")
     text = soup.find_all("p")[0].text
