@@ -583,17 +583,18 @@ class ContentSender:
         logger.info("show_day: sent holidays list")
 
     @staticmethod
-    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str) -> None:
+    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
+        prompt = get_ai_horoscope_prompt()
         response = await client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": professional_prompt},
-                      {"role": "user", "content": get_ai_horoscope_prompt()}],
+                      {"role": "user", "content": prompt}],
             stream=False
         )
         text = response.choices[0].message.content
         await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        logger.info(f"ai_horoscope: sent {text}")
+        logger.info(f"ai_horoscope: sent {text} with prompt {prompt}")
 
 class PlotinaManager:
     """Manages the plotina (dam) building game."""

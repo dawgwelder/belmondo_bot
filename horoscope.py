@@ -39,7 +39,7 @@ horo_ru_list = [
 horo_emojis = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓", "⛎"]
 
 
-def get_ai_horoscope_prompt(horo):
+def get_ai_horoscope_prompt():
     dt = datetime.now().date().strftime("%d.%m.%Y")
     prompt = f"Построй гороскоп для всех знаков зодиака на {dt}"
     return prompt
