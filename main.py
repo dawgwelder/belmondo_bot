@@ -592,7 +592,9 @@ class ContentSender:
             model="deepseek-chat",
             messages=[{"role": "system", "content": professional_prompt},
                       {"role": "user", "content": prompt}],
-            stream=False
+            stream=False,
+            temperature=1.5,
+            top_p=1.3
         )
         text = response.choices[0].message.content
         context.bot_data["horoscope_history"].append(text)
