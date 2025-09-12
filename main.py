@@ -587,6 +587,13 @@ class ContentSender:
     async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
         prompt = get_ai_horoscope_prompt()
+        if context.bot_data["horoscope_history"]:
+            prompt = (prompt +
+                      "\n" +
+                      "Не повторяй одни и те же гороскопы, предыдущие гороскопы: " +
+                      "\n".join(context.bot_data["horoscope_history"])
+            )
+            
         response = await client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": professional_prompt},
@@ -594,6 +601,7 @@ class ContentSender:
             stream=False
         )
         text = response.choices[0].message.content
+        context.bot_data["horoscope_history"].append(text)
         await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
         logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
@@ -915,6 +923,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     vars_dict["spam_mode"] = spam_mode
     vars_dict["chat_deque"] = deque(maxlen=100)
     vars_dict["msg_deque"] = deque(maxlen=100)
+    vars_dict["horoscope_history"] = deque(maxlen=2)
 
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
