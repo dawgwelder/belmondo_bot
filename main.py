@@ -593,7 +593,7 @@ class ContentSender:
             messages=[{"role": "system", "content": professional_prompt},
                       {"role": "user", "content": prompt}],
             stream=False,
-            temperature=1.5,
+            temperature=2.0,
             top_p=1.0
         )
         text = response.choices[0].message.content
