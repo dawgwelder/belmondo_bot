@@ -594,7 +594,7 @@ class ContentSender:
                       {"role": "user", "content": prompt}],
             stream=False,
             temperature=1.5,
-            top_p=1.3
+            top_p=1.0
         )
         text = response.choices[0].message.content
         context.bot_data["horoscope_history"].append(text)
