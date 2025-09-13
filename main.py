@@ -586,10 +586,13 @@ class ContentSender:
     @staticmethod
     async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
-        prompt = get_ai_horoscope_prompt()
+        # Передаем историю гороскопов в функцию промпта
+        history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
+        prompt = get_ai_horoscope_prompt(history)
         messages = [{"role": "system", "content": professional_prompt},
                       {"role": "user", "content": prompt}] 
         
+        # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
         if context.bot_data["horoscope_history"]:
             previous_messages = []
             for message in context.bot_data["horoscope_history"]:
