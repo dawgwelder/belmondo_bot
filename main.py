@@ -597,7 +597,7 @@ class ContentSender:
             messages = previous_messages + messages
             
         response = await client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-reasoner",
             messages=messages,
             stream=False,
             temperature=2.0,
