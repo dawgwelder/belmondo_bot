@@ -39,15 +39,13 @@ horo_ru_list = [
 horo_emojis = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓", "⛎"]
 
 
-def get_ai_horoscope_prompt(horoscope_history):
+def get_ai_horoscope_prompt():
     dt = datetime.now().date().strftime("%d.%m.%Y")
     prompt = f"Построй гороскоп для всех знаков зодиака на {dt}"
-    if len(horoscope_history) > 0:
-        prompt = (prompt +
-                  "\n" +
-                  "Не повторяй одни и те же гороскопы, предыдущие гороскопы, которые были уже отправлены и их нельзя повторять: " +
-                  "\n".join(horoscope_history)
-        )
+    prompt = (prompt +
+                "\n" +
+                "Не повторяй одни и те же предыдущие гороскопы, которые были уже отправлены, их нельзя повторять!"
+    )
     return prompt
 
 

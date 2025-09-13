@@ -586,12 +586,19 @@ class ContentSender:
     @staticmethod
     async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
-        prompt = get_ai_horoscope_prompt(context.bot_data["horoscope_history"])
+        prompt = get_ai_horoscope_prompt()
+        messages = [{"role": "system", "content": professional_prompt},
+                      {"role": "user", "content": prompt}] 
+        
+        if context.bot_data["horoscope_history"]:
+            previous_messages = []
+            for message in context.bot_data["horoscope_history"]:
+                previous_messages.append({"role": "assistant", "content": message})
+            messages = previous_messages + messages
             
         response = await client.chat.completions.create(
             model="deepseek-chat",
-            messages=[{"role": "system", "content": professional_prompt},
-                      {"role": "user", "content": prompt}],
+            messages=messages,
             stream=False,
             temperature=2.0,
             top_p=1.0
