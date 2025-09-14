@@ -604,7 +604,7 @@ class ContentSender:
             response = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
-                stream=True,
+                stream=False,
                 temperature=2.0,
                 top_p=1.0
             )
