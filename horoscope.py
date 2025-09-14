@@ -2,9 +2,10 @@ import requests
 from bs4 import BeautifulSoup
 from string import Template
 from babel.dates import format_date
-from datetime import date, datetime
+from datetime import datetime
 
-site = Template("https://horoscopes.rambler.ru/$horo/")
+mail = Template("https://horo.mail.ru/prediction/$horo/today/")
+rambler = Template("https://horoscopes.rambler.ru/$horo/")
 
 horo_list = [
     "aries",
@@ -51,6 +52,7 @@ def get_ai_horoscope_prompt(history=None):
     """
     dt = datetime.now().date().strftime("%d.%m.%Y")
     prompt = f"Построй гороскоп для всех знаков зодиака на {dt}"
+    horo_text = get_horoscopes()
     
     # Добавляем инструкции по предотвращению повторений
     prompt += "\n\nВАЖНЫЕ ТРЕБОВАНИЯ:"
@@ -58,6 +60,8 @@ def get_ai_horoscope_prompt(history=None):
     prompt += "\n- Используй разные формулировки и подходы"
     prompt += "\n- Создавай уникальный контент для каждого знака зодиака"
     prompt += "\n- Избегай шаблонных фраз и клише"
+    prompt += "\n- Гороскопы на сегодня с других сайтов:"
+    prompt += "\n" + horo_text
     
     # Если есть история, добавляем конкретные инструкции
     if history and len(history) > 0:
@@ -97,35 +101,21 @@ def _extract_keywords(text, max_keywords=5):
     return ', '.join(unique_keywords) if unique_keywords else "общие темы"
 
 
-def get_horoscope(horo):
-    soup = BeautifulSoup(requests.get(site.substitute(horo=horo)).text, features="lxml")
-    text = soup.find_all("p")[0].text
+def get_horoscope_mail(horo):
+    soup = BeautifulSoup(requests.get(mail.substitute(horo=horo)).text, features="lxml")
+    text = "\n".join(p.text for p in soup.find_all("p"))
     return text
 
+def get_horoscope_rambler(horo):
+    soup = BeautifulSoup(requests.get(rambler.substitute(horo=horo)).text, features="lxml")
+    text = "\n".join(p.text for p in soup.find_all("p"))
+    return text
 
-def generate_horo_message(horo):
-    ru_horo = dict(zip(horo_list, horo_ru_list))[horo]
-    emoji = dict(zip(horo_list, horo_emojis))[horo]
-    dt = datetime.now().date()
-    dt = format_date(dt, locale="ru", format="full").capitalize()
+def get_horoscopes():
+    horo_text = ""
+    for horo in horo_list:
+        horo_text += horo + "\n"
+        horo_text += get_horoscope_mail(horo)
+        horo_text += "\n\n" + get_horoscope_rambler(horo) + "\n\n"
+    return horo_text
 
-    horo_text = get_horoscope(horo)
-    message = f"{dt}\n\n{emoji}{ru_horo}:\n{horo_text}"
-    return message
-
-
-def generate_post():
-    dt = datetime.now().date()
-    dt = format_date(dt, locale="ru", format="full").capitalize()
-    first_post = f"{dt}\n\n"
-    second_post = ""
-
-    for idx, (horo, ru_horo, emoji) in enumerate(
-        zip(horo_list, horo_ru_list, horo_emojis)
-    ):
-        horo_text = get_horoscope(horo)
-        if idx < 5:
-            first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
-        else:
-            second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
-    return first_post.strip(), second_post.strip()
