@@ -117,7 +117,8 @@ class MessageProcessor:
     async def process_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process AI chat responses."""
         if (update.message.reply_to_message is not None and
-            update.message.reply_to_message.from_user.id == context.bot_data["self_id"]):
+            update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
+            update.message.reply_to_message.from_user.id not in excluded_uids):
             
             content = update.message.text
             model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
@@ -587,29 +588,30 @@ class ContentSender:
     async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
         # Передаем историю гороскопов в функцию промпта
-        history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
-        prompt = get_ai_horoscope_prompt(history)
-        messages = [{"role": "system", "content": professional_prompt},
-                      {"role": "user", "content": prompt}] 
-        
-        # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
-        if context.bot_data["horoscope_history"]:
-            previous_messages = []
-            for message in context.bot_data["horoscope_history"]:
-                previous_messages.append({"role": "assistant", "content": message})
-            messages = previous_messages + messages
+        if update.effective_user.id not in excluded_uids:
+            history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
+            prompt = get_ai_horoscope_prompt(history)
+            messages = [{"role": "system", "content": professional_prompt},
+                        {"role": "user", "content": prompt}] 
             
-        response = await client.chat.completions.create(
-            model="deepseek-reasoner",
-            messages=messages,
-            stream=False,
-            temperature=2.0,
-            top_p=1.0
-        )
-        text = response.choices[0].message.content
-        context.bot_data["horoscope_history"].append(text)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
-        logger.info(f"ai_horoscope: sent with prompt {prompt}")
+            # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
+            if context.bot_data["horoscope_history"]:
+                previous_messages = []
+                for message in context.bot_data["horoscope_history"]:
+                    previous_messages.append({"role": "assistant", "content": message})
+                messages = previous_messages + messages
+                
+            response = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                stream=True,
+                temperature=2.0,
+                top_p=1.0
+            )
+            text = response.choices[0].message.content
+            context.bot_data["horoscope_history"].append(text)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
+            logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
 class PlotinaManager:
     """Manages the plotina (dam) building game."""
