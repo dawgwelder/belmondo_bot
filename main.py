@@ -243,7 +243,8 @@ class MessageProcessor:
         # Nazi response
         if "нацист" in msg:
             try:
-                async with aiofiles.open("img/nz.jpg", "rb") as f:
+                file = choice(["img/nz.jpg", "img/nz_1.jpg"])
+                async with aiofiles.open(file, "rb") as f:
                     photo_data = await f.read()
                     await context.bot.send_photo(
                         chat_id=update.effective_chat.id,
