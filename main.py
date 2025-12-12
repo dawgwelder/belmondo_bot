@@ -204,8 +204,7 @@ class MessageProcessor:
     async def process_media_responses(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
         """Process media responses based on message content."""
         # Cola response
-        if (self._should_send_cola(msg) and
-            not update.message.forward_from_message_id):
+        if (self._should_send_cola(msg)):
             
             reply_to = (update.message.reply_to_message.message_id
                        if update.message.reply_to_message else update.message.message_id)
