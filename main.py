@@ -11,7 +11,7 @@ import aiofiles
 import fire
 import pandas as pd
 from configparser import ConfigParser
-from openai import AsyncOpenAI as OpenAI
+from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -604,9 +604,7 @@ class ContentSender:
             response = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
-                stream=False,
-                temperature=2.0,
-                top_p=1.0
+                stream=False
             )
             text = response.choices[0].message.content
             context.bot_data["horoscope_history"].append(text)
