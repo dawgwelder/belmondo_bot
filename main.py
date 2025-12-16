@@ -601,7 +601,7 @@ class ContentSender:
                     previous_messages.append({"role": "assistant", "content": message})
                 messages = previous_messages + messages
                 
-            response = client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 stream=False
