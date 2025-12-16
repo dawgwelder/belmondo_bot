@@ -608,7 +608,7 @@ class ContentSender:
             )
             text = response.choices[0].message.content
             context.bot_data["horoscope_history"].append(text)
-            context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
             logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
 class PlotinaManager:
