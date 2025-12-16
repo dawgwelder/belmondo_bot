@@ -73,24 +73,6 @@
     "exclude_uids" : [],
     "exact": false
   },
-  "snail_emoji":
-  {
-    "triggers": ["🐌"],
-    "answers": ["О, улиточка", "О, хулиточка", "О, морская!"],
-    "exclude_words": [],
-    "prob": 1,
-    "exclude_uids" : [],
-    "exact": true
-  },
-  "snail":
-  {
-    "triggers": ["улит"],
-    "answers": ["О, улиточка", "О, хулиточка", "О, морская!"],
-    "exclude_words": [],
-    "prob": -1,
-    "exclude_uids" : [],
-    "exact": false
-  },
   "balabama":
   {
     "triggers": ["чела реально зовут", "одного чела", "балабама"],
