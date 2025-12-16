@@ -585,7 +585,7 @@ class ContentSender:
         logger.info("show_day: sent holidays list")
 
     @staticmethod
-    def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
         # Передаем историю гороскопов в функцию промпта
         if update.effective_user.id not in excluded_uids:
