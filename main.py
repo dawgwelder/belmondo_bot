@@ -51,6 +51,103 @@ tracker = GodnoscopTracker(config)
 # Set timezone
 tz = pytz.timezone("Europe/Moscow")
 
+# Telegram message length limit
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+
+
+async def send_long_message(
+    bot,
+    chat_id: int,
+    text: str,
+    parse_mode: str = None,
+    reply_to_message_id: int = None,
+    max_length: int = TELEGRAM_MAX_MESSAGE_LENGTH
+) -> None:
+    """
+    Send a message, splitting it into multiple messages if it exceeds Telegram's limit.
+    
+    Args:
+        bot: Telegram bot instance
+        chat_id: Chat ID to send message to
+        text: Text to send
+        parse_mode: Optional parse mode (e.g., "markdown")
+        reply_to_message_id: Optional message ID to reply to
+        max_length: Maximum message length (default: 4096)
+    """
+    if len(text) <= max_length:
+        # Message is short enough, send as-is
+        kwargs = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        if reply_to_message_id:
+            kwargs["reply_to_message_id"] = reply_to_message_id
+        await bot.send_message(**kwargs)
+        return
+    
+    # Split message into chunks
+    chunks = []
+    current_chunk = ""
+    
+    # Try to split at newlines first, then at sentence boundaries
+    lines = text.split('\n')
+    
+    for line in lines:
+        # If adding this line would exceed the limit, save current chunk and start new one
+        if len(current_chunk) + len(line) + 1 > max_length:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            
+            # If a single line is too long, split it further
+            if len(line) > max_length:
+                # Split long line at word boundaries
+                words = line.split(' ')
+                for word in words:
+                    # Handle extremely long words (longer than max_length)
+                    if len(word) > max_length:
+                        # Split word itself if needed
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                            current_chunk = ""
+                        # Split word into chunks
+                        for char_idx in range(0, len(word), max_length):
+                            chunks.append(word[char_idx:char_idx + max_length])
+                    elif len(current_chunk) + len(word) + 1 > max_length:
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                            current_chunk = word
+                        else:
+                            current_chunk = word
+                    else:
+                        if current_chunk:
+                            current_chunk += " " + word
+                        else:
+                            current_chunk = word
+            else:
+                current_chunk = line
+        else:
+            if current_chunk:
+                current_chunk += "\n" + line
+            else:
+                current_chunk = line
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    # Send all chunks
+    for i, chunk in enumerate(chunks):
+        kwargs = {"chat_id": chat_id, "text": chunk}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        # Only reply to the original message with the first chunk
+        if reply_to_message_id and i == 0:
+            kwargs["reply_to_message_id"] = reply_to_message_id
+        await bot.send_message(**kwargs)
+        # Small delay between messages to avoid rate limiting
+        if i < len(chunks) - 1:
+            await asyncio.sleep(0.1)
+
 
 class MessageProcessor:
     """Handles message processing and bot responses."""
@@ -148,11 +245,12 @@ class MessageProcessor:
                 
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
                 
-                await context.bot.send_message(
+                await send_long_message(
+                    bot=context.bot,
                     chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
                     text=text,
                     parse_mode="markdown",
+                    reply_to_message_id=update.message.message_id
                 )
                 logger.info(f"chatGPT: generated text sent text:{text}")
                 
@@ -617,7 +715,12 @@ class ContentSender:
                     text += chunk.choices[0].delta.content
             
             context.bot_data["horoscope_history"].append(text)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
+            await send_long_message(
+                bot=context.bot,
+                chat_id=update.effective_chat.id,
+                text=text,
+                parse_mode="markdown"
+            )
             logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
 class PlotinaManager:
