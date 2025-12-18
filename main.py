@@ -141,7 +141,7 @@ class MessageProcessor:
                         stream=True
                     )
                 
-                text = response.choices[0].message.content
+                text = response.output_text
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
                 
                 await context.bot.send_message(
@@ -606,7 +606,7 @@ class ContentSender:
                 messages=messages,
                 stream=True
             )
-            text = response.choices[0].message.content
+            text = response.output_text
             context.bot_data["horoscope_history"].append(text)
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
             logger.info(f"ai_horoscope: sent with prompt {prompt}")
