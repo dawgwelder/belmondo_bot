@@ -128,20 +128,24 @@ class MessageProcessor:
             
             try:
                 if not "гороскоп" in content:
-                    response = await client.chat.completions.create(
+                    stream = await client.chat.completions.create(
                         model=model_type,
                         messages=list(context.bot_data["chat_deque"]),
                         stream=True
                     )
                 else:
-                    response = await client.chat.completions.create(
+                    stream = await client.chat.completions.create(
                         model=model_type,
                         messages=list([{"role": "system", "content": professional_prompt},
                                        {"role": "user", "content": content}]),
                         stream=True
                     )
                 
-                text = response.output_text
+                text = ""
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        text += chunk.choices[0].delta.content
+                
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
                 
                 await context.bot.send_message(
@@ -601,13 +605,17 @@ class ContentSender:
                     previous_messages.append({"role": "assistant", "content": message})
                 messages = previous_messages + messages
                 
-            response = await client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 stream=True
             )
-            print(response)
-            text = response.output_text
+            
+            text = ""
+            async for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    text += chunk.choices[0].delta.content
+            
             context.bot_data["horoscope_history"].append(text)
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
             logger.info(f"ai_horoscope: sent with prompt {prompt}")
