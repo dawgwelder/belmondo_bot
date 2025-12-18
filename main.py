@@ -606,6 +606,7 @@ class ContentSender:
                 messages=messages,
                 stream=True
             )
+            print(response)
             text = response.output_text
             context.bot_data["horoscope_history"].append(text)
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="markdown")
