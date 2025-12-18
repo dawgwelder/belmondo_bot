@@ -131,14 +131,14 @@ class MessageProcessor:
                     response = await client.chat.completions.create(
                         model=model_type,
                         messages=list(context.bot_data["chat_deque"]),
-                        stream=False
+                        stream=True
                     )
                 else:
                     response = await client.chat.completions.create(
                         model=model_type,
                         messages=list([{"role": "system", "content": professional_prompt},
                                        {"role": "user", "content": content}]),
-                        stream=False
+                        stream=True
                     )
                 
                 text = response.choices[0].message.content
@@ -604,7 +604,7 @@ class ContentSender:
             response = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
-                stream=False
+                stream=True
             )
             text = response.choices[0].message.content
             context.bot_data["horoscope_history"].append(text)
