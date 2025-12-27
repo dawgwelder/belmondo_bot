@@ -696,19 +696,20 @@ class ContentSender:
             messages = [{"role": "system", "content": professional_prompt},
                         {"role": "user", "content": prompt}] 
             
+            
             # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
             if context.bot_data["horoscope_history"]:
                 previous_messages = []
                 for message in context.bot_data["horoscope_history"]:
                     previous_messages.append({"role": "assistant", "content": message})
                 messages = previous_messages + messages
-                
+            print(messages)    
             stream = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 stream=True
             )
-            
+            print(stream)
             text = ""
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
