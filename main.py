@@ -711,7 +711,7 @@ class ContentSender:
             )
             print(stream)
             text = ""
-            async for chunk in stream:
+            for chunk in stream:
                 if chunk.choices[0].delta.content:
                     text += chunk.choices[0].delta.content
             print(text)
