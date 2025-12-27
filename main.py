@@ -707,12 +707,12 @@ class ContentSender:
             stream = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
-                stream=False
+                stream=True
             )
             print("Stream: ", stream)
-            print("Stream choices: ", stream.choices[0].message)
+            print("Stream choices: ", stream.choices[0].delta.content)
             text = ""
-            for chunk in stream:
+            async for chunk in stream:
                 if chunk.choices[0].delta.content:
                     text += chunk.choices[0].delta.content
             print("Text: ", text)
