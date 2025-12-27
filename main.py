@@ -224,24 +224,26 @@ class MessageProcessor:
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
             try:
+                text = ""
                 if not "гороскоп" in content:
-                    stream = await client.chat.completions.create(
+                    async with client.chat.completions.create(
                         model=model_type,
                         messages=list(context.bot_data["chat_deque"]),
                         stream=True
-                    )
+                    ) as stream:
+                        async for chunk in stream:
+                            if chunk.choices[0].delta.content:
+                                text += chunk.choices[0].delta.content
                 else:
-                    stream = await client.chat.completions.create(
+                    async with client.chat.completions.create(
                         model=model_type,
                         messages=list([{"role": "system", "content": professional_prompt},
                                        {"role": "user", "content": content}]),
                         stream=True
-                    )
-                
-                text = ""
-                async for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        text += chunk.choices[0].delta.content
+                    ) as stream:
+                        async for chunk in stream:
+                            if chunk.choices[0].delta.content:
+                                text += chunk.choices[0].delta.content
                 
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
                 
@@ -704,17 +706,16 @@ class ContentSender:
                     previous_messages.append({"role": "assistant", "content": message})
                 messages = previous_messages + messages
                   
-            stream = await client.chat.completions.create(
+            text = ""
+            async with client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 stream=True
-            )
-            
-            text = ""
-            async for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    print("Chunk: ", chunk.choices[0].delta.content)
-                    text += chunk.choices[0].delta.content
+            ) as stream:
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        print("Chunk: ", chunk.choices[0].delta.content)
+                        text += chunk.choices[0].delta.content
             print("Text: ", text)
             if text:
                 context.bot_data["horoscope_history"].append(text)
