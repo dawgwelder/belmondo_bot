@@ -713,11 +713,12 @@ class ContentSender:
                 stream=True
             )
             async for chunk in stream:
+                print(chunk.type)
                 if chunk.type == 'error':
-                    print(chunk.error.type)
-                    print(chunk.error.code)
-                    print(chunk.error.event_id)
-                    print(chunk.error.message)
+                    print("Error: ", chunk.error.type)
+                    print("Error: ", chunk.error.code)
+                    print("Error: ", chunk.error.event_id)
+                    print("Error: ", chunk.error.message)
                 if chunk.choices[0].delta.content:
                     print("Chunk: ", chunk.choices[0].delta.content)
                     text += chunk.choices[0].delta.content
