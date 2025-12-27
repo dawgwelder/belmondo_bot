@@ -74,8 +74,8 @@ def get_ai_horoscope_prompt(history=None):
         # Добавляем краткое описание предыдущих гороскопов для контекста
         if len(history) >= 1:
             prompt += f"\n\nПоследний гороскоп содержал информацию о: {_extract_keywords(history[-1])}"
-        if len(history) >= 2:
-            prompt += f"\nПредыдущий гороскоп содержал информацию о: {_extract_keywords(history[-2])}"
+        # if len(history) >= 2:
+        #     prompt += f"\nПредыдущий гороскоп содержал информацию о: {_extract_keywords(history[-2])}"
             
         prompt += "\n\nСоздай совершенно новый гороскоп с другими темами и подходами!"
     
@@ -121,7 +121,7 @@ def get_horoscopes():
     for horo in horo_list:
         horo_text += horo + "\n"
         horo_text += get_horoscope_mail(horo)
-        horo_text += "\n\n" + get_horoscope_rambler(horo) + "\n\n"
+        # horo_text += "\n\n" + get_horoscope_rambler(horo) + "\n\n"
     return horo_text
 
 

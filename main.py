@@ -1041,7 +1041,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     vars_dict["spam_mode"] = spam_mode
     vars_dict["chat_deque"] = deque(maxlen=100)
     vars_dict["msg_deque"] = deque(maxlen=100)
-    vars_dict["horoscope_history"] = deque(maxlen=2)
+    vars_dict["horoscope_history"] = deque(maxlen=1)
 
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
