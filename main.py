@@ -707,14 +707,14 @@ class ContentSender:
             stream = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
-                stream=True
+                stream=False
             )
             print(stream)
             text = ""
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
                     text += chunk.choices[0].delta.content
-            
+            print(text)
             context.bot_data["horoscope_history"].append(text)
             await send_long_message(
                 bot=context.bot,
