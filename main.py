@@ -703,19 +703,21 @@ class ContentSender:
                 for message in context.bot_data["horoscope_history"]:
                     previous_messages.append({"role": "assistant", "content": message})
                 messages = previous_messages + messages
-            print("Messages: ", messages)    
+                  
             stream = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 stream=True
             )
-            print("Stream: ", stream)
             
             text = ""
             async for chunk in stream:
-                print("Chunk: ", chunk)
-                if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content:
-                    text += chunk.choices[0].delta.content
+                try:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        text += content
+                except (AttributeError, IndexError):
+                    continue
             print("Text: ", text)
             if text:
                 context.bot_data["horoscope_history"].append(text)
