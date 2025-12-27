@@ -714,15 +714,17 @@ class ContentSender:
             text = ""
             async for chunk in stream:
                 print("Chunk: ", chunk)
-                text += chunk.choices[0].delta.content
+                if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content:
+                    text += chunk.choices[0].delta.content
             print("Text: ", text)
-            context.bot_data["horoscope_history"].append(text)
-            await send_long_message(
-                bot=context.bot,
-                chat_id=update.effective_chat.id,
-                text=text,
-                parse_mode="markdown"
-            )
+            if text:
+                context.bot_data["horoscope_history"].append(text)
+                await send_long_message(
+                    bot=context.bot,
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown"
+                )
             logger.info(f"ai_horoscope: sent with prompt {prompt}")
 
 class PlotinaManager:
