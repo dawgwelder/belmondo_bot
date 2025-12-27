@@ -710,10 +710,11 @@ class ContentSender:
                 stream=True
             )
             print("Stream: ", stream)
-            print("Stream choices: ", stream.choices[0].delta.content)
+            
             text = ""
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
+                    print("Chunk choices: ", chunk.choices[0].delta.content)
                     text += chunk.choices[0].delta.content
             print("Text: ", text)
             context.bot_data["horoscope_history"].append(text)
