@@ -54,6 +54,18 @@ tz = pytz.timezone("Europe/Moscow")
 # Telegram message length limit
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
+async def parse_stream(stream):
+    text = ""
+    async for chunk in stream:
+        if chunk.choices[0].delta.content:
+            text += chunk.choices[0].delta.content
+        if chunk.type == 'error':
+            print("Error: ", chunk.error.type)
+            print("Error: ", chunk.error.code)
+            print("Error: ", chunk.error.event_id)
+            print("Error: ", chunk.error.message)
+    return text
+
 
 async def send_long_message(
     bot,
@@ -231,9 +243,7 @@ class MessageProcessor:
                         messages=list(context.bot_data["chat_deque"]),
                         stream=True
                     )
-                    async for chunk in stream:
-                        if chunk.choices[0].delta.content:
-                            text += chunk.choices[0].delta.content
+                    text = await parse_stream(stream)
                 else:
                     stream = await client.chat.completions.create(
                         model=model_type,
@@ -241,9 +251,7 @@ class MessageProcessor:
                                        {"role": "user", "content": content}]),
                         stream=True
                     )
-                    async for chunk in stream:
-                        if chunk.choices[0].delta.content:
-                            text += chunk.choices[0].delta.content
+                    text = await parse_stream(stream)
                 
                 context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
                 
@@ -712,16 +720,7 @@ class ContentSender:
                 messages=messages,
                 stream=True
             )
-            async for chunk in stream:
-                print(chunk.type)
-                if chunk.type == 'error':
-                    print("Error: ", chunk.error.type)
-                    print("Error: ", chunk.error.code)
-                    print("Error: ", chunk.error.event_id)
-                    print("Error: ", chunk.error.message)
-                if chunk.choices[0].delta.content:
-                    print("Chunk: ", chunk.choices[0].delta.content)
-                    text += chunk.choices[0].delta.content
+            text = await parse_stream(stream)
             print("Text: ", text)
             if text:
                 context.bot_data["horoscope_history"].append(text)
