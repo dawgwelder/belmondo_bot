@@ -59,11 +59,6 @@ async def parse_stream(stream):
     async for chunk in stream:
         if chunk.choices[0].delta.content:
             text += chunk.choices[0].delta.content
-        if chunk.type == 'error':
-            print("Error: ", chunk.error.type)
-            print("Error: ", chunk.error.code)
-            print("Error: ", chunk.error.event_id)
-            print("Error: ", chunk.error.message)
     return text
 
 
