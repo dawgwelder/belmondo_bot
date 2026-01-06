@@ -925,6 +925,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         
         if msg:
             # Process triggers from triggers.json
+            
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             if text:
                 logger.info(f"triggered by: {msg}")
@@ -957,6 +958,8 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             
             # Process jackpot
             await processor.process_jackpot(update, context, msg)
+            
+            await processor.process_special_commands(update, context, msg)
 
 
 @pause
