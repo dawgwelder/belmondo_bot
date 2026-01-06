@@ -280,6 +280,15 @@ class MessageProcessor:
                 text=text,
                 parse_mode="markdown",
             )
+        if "амир" in msg:
+            td = datetime.datetime(2026, 10, 14, tzinfo=tz) - datetime.datetime.now(tz)
+            text = f"Амиру до свободы осталось {td_convert(td)}"
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            ) 
         
         # Scary life response
         if "страшно жить" in msg:
