@@ -817,7 +817,7 @@ def pause(func):
 async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     result = []
     with open("tarot_cards.json") as f:
-        deck = random.sample(json.read(f)["cards"])
+        deck = random.sample(json.load(f)["cards"])
     for card, time in zip(deck, ["прощлое", "настоящее", "будущее"]):
         reversed_flag = random.choice([True, False])
         result.append({
