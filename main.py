@@ -1131,6 +1131,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("stats", stats_plotina),
         CommandHandler("ai_horoscope", ai_horoscope),
         CommandHandler("clear_context", clear_context),
+        CommandHandler("tarot", tarot),
     ]
         
     for handler in handlers:
