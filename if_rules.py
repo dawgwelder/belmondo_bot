@@ -157,17 +157,6 @@ def get_trigger_type(answer: str) -> str:
 
 async def process_special_triggers(update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
     """Process special triggers that require custom logic."""
-    # Demobilization countdown
-    if "дембель" in msg:
-        td = datetime(2028, 11, 14, tzinfo=pytz.timezone("Europe/Moscow")) - datetime.now(pytz.timezone("Europe/Moscow"))
-        text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-    
     # Dice rolling
     if "кубик" in msg:
         text = roll_custom_dice(msg)

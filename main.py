@@ -9,6 +9,7 @@ from collections import deque
 import aiofiles
 
 import fire
+import json
 import pandas as pd
 from configparser import ConfigParser
 from openai import AsyncOpenAI as OpenAI
@@ -27,9 +28,8 @@ from if_rules import ifs, process_special_triggers, process_trigger_response, ge
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post
+from horoscope import generate_post, get_ai_horoscope_prompt, generate_tarot_prompt
 from site_parser import get_holidays
-from horoscope import get_ai_horoscope_prompt
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 # Initialize logger
@@ -812,6 +812,42 @@ def pause(func):
             return await func(update, context)
         return None
     return wrapper
+
+@pause
+async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    result = []
+    with open("tarot_cards.json") as f:
+        deck = random.sample(json.read(f)["cards"])
+    for card, time in zip(deck, ["прощлое", "настоящее", "будущее"]):
+        reversed_flag = random.choice([True, False])
+        result.append({
+            "card": card["name"],
+            "orientation": "перевернутая" if reversed_flag else "прямая",
+            "meaning": card["reversed_meaning"] if reversed_flag else card["upright_meaning"],
+            "time": time
+        })
+    tarot_prompt = generate_tarot_prompt(result)
+    
+    request = []
+    request.append({"role": "system", "content": professional_prompt})
+    request.append({"role": "user", "content": tarot_prompt})
+    
+    stream = await client.chat.completions.create(
+                        model="deepseek-reasoner",
+                        messages=request,
+                        stream=True
+                    )
+    text = await parse_stream(stream)
+    
+    await send_long_message(
+                    bot=context.bot,
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown",
+                    reply_to_message_id=update.message.message_id
+                )
+    
+    
 
 
 @pause
