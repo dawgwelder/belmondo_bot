@@ -220,27 +220,6 @@ async def process_special_triggers(update: Update, context: ContextTypes.DEFAULT
             parse_mode="markdown",
         )
     
-    # Good night with text
-    if re.search(r'\b(?:спокойной?|доброй?|сладкой?|ой)\s+(?:ночи|ночки|ночью)\b', msg, re.IGNORECASE):
-        try:
-            async with aiofiles.open("img/GN.webp", "rb") as f:
-                sticker_data = await f.read()
-                await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
-                
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=choice([
-                        "Good night!",
-                        "Спокойной ночи",
-                        "Сладких снов",
-                        "Покасики!",
-                    ]),
-                    parse_mode="markdown",
-                )
-        except FileNotFoundError:
-            logger.error("GN sticker not found")
-    
     # Jackpot with text
     if "джекпот" in msg:
         try:
