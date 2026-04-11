@@ -164,7 +164,7 @@ class MessageProcessor:
     
     async def process_bot_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process messages from other bots."""
-        if update.message.via_bot is None:
+        if update is None or update.message.via_bot is None:
             return
             
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
@@ -378,9 +378,11 @@ class MessageProcessor:
     
     def _should_send_elephant(self, msg: str) -> bool:
         """Check if elephant response should be sent."""
-        return ("слон" in msg and 
-                "слонн" not in msg and 
-                "прислон" not in msg)
+        return ("слон" in msg and
+                msg.startswith("слон") and
+                not msg.startswith("слонн") and
+                not msg.startswith("прислон")
+                )
     
     async def process_diarrhea_spell(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
         """Process the diarrhea spell command."""
