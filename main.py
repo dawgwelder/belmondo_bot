@@ -164,7 +164,7 @@ class MessageProcessor:
     
     async def process_bot_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process messages from other bots."""
-        if update is None or update.message.via_bot is None:
+        if update.message is None or update.message.via_bot is None:
             return
             
         godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
