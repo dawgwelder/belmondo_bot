@@ -34,7 +34,7 @@
     "triggers": ["сцену из одного фильма", "сцена из одного фильма", "сцены из одного фильма",
              "я помню фильм", "да так фильм один"],
     "answers": ["Называется *'Профессионал'* с Бельмондо", "_Профессионал?_", "*Жоский профессионал!*",
-      "Говорят, что это фильм 'Професионал'", "Ну 'Профессионал' же, ну?", "Это фильм 'Профессионал!",
+      "Говорят, что это фильм 'Профессионал'", "Ну 'Профессионал' же, ну?", "Это фильм 'Профессионал!",
       "Фильм 'Профессинал' - выбор настоящего МЧС!", "Прыфсовнал", "_Про - фе - сс - анал_ блеять",
       "Это с Бельмондо который? Слышал о таком."],
     "exclude_words": [],
@@ -73,24 +73,6 @@
     "exclude_uids" : [],
     "exact": false
   },
-  "snail_emoji":
-  {
-    "triggers": ["🐌"],
-    "answers": ["О, улиточка", "О, хулиточка", "О, морская!"],
-    "exclude_words": [],
-    "prob": 1,
-    "exclude_uids" : [],
-    "exact": true
-  },
-  "snail":
-  {
-    "triggers": ["улит"],
-    "answers": ["О, улиточка", "О, хулиточка", "О, морская!"],
-    "exclude_words": [],
-    "prob": -1,
-    "exclude_uids" : [],
-    "exact": false
-  },
   "balabama":
   {
     "triggers": ["чела реально зовут", "одного чела", "балабама"],
@@ -119,7 +101,6 @@
       "_Мох! Стать похожим меньше на цветок, больше на \nМох! Японский сад промок, воду пьёт зелёный мох \nНеприметным ковром стелется в тени цветов, репней и пестиков, шипов \nМы все исчезнем, но не мох…_",
       "_Где нас нет, услышь меня и вытащи из омута.\nПусти в мой вымышленный город, вымощенный золотом.\nВо тьме я вижу дали иноземные.\nГде милосердие правит, где берега кисельные._",
       "_Можете величать меня исчадием ада,\nМожете линчевать меня, мыча, как стадо,\nНо на мне нет печати зла, сгущать не надо\nКраски, я счастлив, что я не раб мещанских взглядов!_",
-      "_Любовью чужой горят города,\nИзвилистый путь затянулся петлёй;\nКогда все дороги ведут в никуда -\nНастала пора возвращаться домой._",
       "_Я вернулся, держись, мир,\nВы заказали мою голову, я подаю вам признаки жизни._",
       "_Можете обличать меня, крича с экрана,\nМожете исключать меня из ваших кланов,\nНо вы ж сами не без греха,\nПризнай, что я был, к несчастью, таким же, как ты, ша.\nМолчать и на пол._",
       "_Это всё правда, я те зуб даю, бля буду\nВыведи на чистую воду, как обряд вуду\nПравду, не вымысел\nТолько факты, без примесей\nВывезешь?Детектор лжи\nЭто всё правда, я те зуб даю, бля буду\nВыведи на чистую воду, как обряд вуду\nПравду, не вымысел (нет)\nТолько факты, без примесей\nВывезешь?\nДетектор лжи_",
@@ -131,9 +112,9 @@
 
 
              ],
-    "exclude_words": ["токси"],
+    "exclude_words": ["токси", "окси", "покси"],
     "prob": -1,
-    "exclude_uids" : [113300226],
+    "exclude_uids" : [],
     "exact": false
   },
   "davai":
@@ -208,13 +189,157 @@
     "exclude_uids" : [],
     "exact": true
   },
-    "bitch":
+  "demobilization":
   {
-    "triggers": ["кто моя сучка"],
-    "answers": ["Я твоя сучка!"],
+    "triggers": ["дембель"],
+    "answers": ["Арбузу до пенсии осталось ровно {td_convert(td)}"],
     "exclude_words": [],
-    "prob": 0,
-    "exclude_uids" : [113300226, 1276243648],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "scary_life":
+  {
+    "triggers": ["страшно жить"],
+    "answers": ["ВАЩЕ ПИЗДЕЦ"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "dice":
+  {
+    "triggers": ["кубик"],
+    "answers": ["default"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "nazi":
+  {
+    "triggers": ["нацист"],
+    "answers": ["img:img/nz.jpg"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "diarrhea_spell":
+  {
+    "triggers": ["понос"],
+    "answers": ["Вы допустили ошибку в заклинании - теперь ждите кару самопоноса", "*Понос* {user} обеспечен", "_Каст поноса был провален!_"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "synthetic_lovers":
+  {
+    "triggers": ["любителям синтетики"],
+    "answers": ["img:img/GM.webp"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "snail_photo":
+  {
+    "triggers": ["О, морская!"],
+    "answers": ["img:img/snail.jpeg"],
+    "exclude_words": [],
+    "prob": 1,
+    "exclude_uids" : [],
+    "exact": true
+  },
+  "nevsky":
+  {
+    "triggers": ["вот так вот"],
+    "answers": ["img:img/nevsky.jpeg"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": true
+  },
+  "good_morning":
+  {
+    "triggers": ["доброе утро"],
+    "answers": ["img:img/GM_SHUE.webp"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": true
+  },
+  "yandex":
+  {
+    "triggers": ["хуяндекс"],
+    "answers": ["img:img/yandex.webp"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "good_night":
+  {
+    "triggers": ["спокойной ночи", "спокойной ночки", "спокойной ночью", "доброй ночи", "доброй ночки", "доброй ночью", "сладкой ночи", "сладкой ночки", "сладкой ночью", "ой ночи"],
+    "answers": ["img:img/GN.webp|Good night!|Спокойной ночи|Сладких снов|Покасики!"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "pot_drinking":
+  {
+    "triggers": ["горшок не пьет", "горшок не пьёт", "горшок держится"],
+    "answers": ["Горшок {not_drink_choice} уже {not_drink_ending}"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "zalupa":
+  {
+    "triggers": ["залуп"],
+    "answers": ["img:img/zalupa.webp", "img:img/zalupa_1.webp"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "jackpot":
+  {
+    "triggers": ["джекпот"],
+    "answers": ["img:img/jackpot.webp|*ДЖЕКПОТ!*|Джекпот! Хуй те в рот!"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "men_squad":
+  {
+    "triggers": ["нахуй баб"],
+    "answers": ["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"],
+    "exclude_words": [],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "cola":
+  {
+    "triggers": ["колокол"],
+    "answers": ["img:img/colocola.jpg"],
+    "exclude_words": ["колокольн"],
+    "prob": -1,
+    "exclude_uids" : [],
+    "exact": false
+  },
+  "elephant":
+  {
+    "triggers": ["слон"],
+    "answers": ["img:img/slon.jpg"],
+    "exclude_words": ["слонн", "прислон"],
+    "prob": 1,
+    "exclude_uids" : [],
     "exact": false
   }
 }

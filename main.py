@@ -1,125 +1,877 @@
 import os
 import random
 import re
-import fire
 import datetime
 import pytz
+import asyncio
 
+from collections import deque
+import aiofiles
+
+import fire
+import json
+import pandas as pd
 from configparser import ConfigParser
-
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from openai import AsyncOpenAI as OpenAI
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater,
+    Application,
     CommandHandler,
     MessageHandler,
-    Filters,
+    filters,
     CallbackQueryHandler,
+    ContextTypes,
 )
 
-from time import sleep
-from random import choice
 from logger import get_logger
-from collections import deque
-from openai import OpenAI
-
-import pandas as pd
-
-from if_rules import ifs
-
+from if_rules import ifs, process_special_triggers, process_trigger_response, get_trigger_type
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post
+from horoscope import generate_post, get_ai_horoscope_prompt, generate_tarot_prompt
 from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
+# Initialize logger
 logger = get_logger("Belmondo Logger")
 
+# Load configuration
 config = ConfigParser()
 config.read("auth.conf")
 
+# Initialize OpenAI client (async)
 client = OpenAI(
-    api_key=config["auth"]["openai_api_key"], base_url="https://api.deepseek.com"
+    api_key=config["auth"]["openai_api_key"],
+    base_url="https://api.deepseek.com"
 )
 
-
+# Initialize Godnoscop tracker
 tracker = GodnoscopTracker(config)
 
+# Set timezone
 tz = pytz.timezone("Europe/Moscow")
 
+# Telegram message length limit
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
-# tracker.update_godnoscopes()
+async def parse_stream(stream):
+    text = ""
+    async for chunk in stream:
+        if chunk.choices[0].delta.content:
+            text += chunk.choices[0].delta.content
+    return text
 
-# TODO: команда квас - прокидывает картинку бомжа в ответ
-# TODO: дебажить завод
-# TODO: блочить спам стикерами от одного человека
-# TODO: упдайтить счетчик фемосрача
+
+async def send_long_message(
+    bot,
+    chat_id: int,
+    text: str,
+    parse_mode: str = None,
+    reply_to_message_id: int = None,
+    max_length: int = TELEGRAM_MAX_MESSAGE_LENGTH
+) -> None:
+    """
+    Send a message, splitting it into multiple messages if it exceeds Telegram's limit.
+    
+    Args:
+        bot: Telegram bot instance
+        chat_id: Chat ID to send message to
+        text: Text to send
+        parse_mode: Optional parse mode (e.g., "markdown")
+        reply_to_message_id: Optional message ID to reply to
+        max_length: Maximum message length (default: 4096)
+    """
+    if len(text) <= max_length:
+        # Message is short enough, send as-is
+        kwargs = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        if reply_to_message_id:
+            kwargs["reply_to_message_id"] = reply_to_message_id
+        await bot.send_message(**kwargs)
+        return
+    
+    # Split message into chunks
+    chunks = []
+    current_chunk = ""
+    
+    # Try to split at newlines first, then at sentence boundaries
+    lines = text.split('\n')
+    
+    for line in lines:
+        # If adding this line would exceed the limit, save current chunk and start new one
+        if len(current_chunk) + len(line) + 1 > max_length:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            
+            # If a single line is too long, split it further
+            if len(line) > max_length:
+                # Split long line at word boundaries
+                words = line.split(' ')
+                for word in words:
+                    # Handle extremely long words (longer than max_length)
+                    if len(word) > max_length:
+                        # Split word itself if needed
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                            current_chunk = ""
+                        # Split word into chunks
+                        for char_idx in range(0, len(word), max_length):
+                            chunks.append(word[char_idx:char_idx + max_length])
+                    elif len(current_chunk) + len(word) + 1 > max_length:
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                            current_chunk = word
+                        else:
+                            current_chunk = word
+                    else:
+                        if current_chunk:
+                            current_chunk += " " + word
+                        else:
+                            current_chunk = word
+            else:
+                current_chunk = line
+        else:
+            if current_chunk:
+                current_chunk += "\n" + line
+            else:
+                current_chunk = line
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    # Send all chunks
+    for i, chunk in enumerate(chunks):
+        kwargs = {"chat_id": chat_id, "text": chunk}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        # Only reply to the original message with the first chunk
+        if reply_to_message_id and i == 0:
+            kwargs["reply_to_message_id"] = reply_to_message_id
+        await bot.send_message(**kwargs)
+        # Small delay between messages to avoid rate limiting
+        if i < len(chunks) - 1:
+            await asyncio.sleep(0.1)
+
+
+class MessageProcessor:
+    """Handles message processing and bot responses."""
+    
+    def __init__(self, bot_data: dict):
+        self.bot_data = bot_data
+    
+    async def process_bot_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Process messages from other bots."""
+        if update is None or update.message.via_bot is None:
+            return
+            
+        godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
+        
+        if update.message.via_bot.id not in [GODNOSCOP_ID, SELF_ID, PREDSKAZ_ID]:
+            # Асинхронная задержка с автоматическим удалением сообщения
+            await sleep_choice_asyncio(
+                DELAY_CHOICES,
+                context.bot,
+                update.effective_chat.id,
+                update.message.message_id,
+                logger
+            )
+            logger.info(f"delete_message from shit bot: {update.message.text}")
+            
+        elif godnoscop_bot:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                update.message.text.replace("#NoWar", "")
+            )
+            await context.bot.delete_message(
+                update.effective_chat.id, update.message.message_id
+            )
+            logger.info(f"edited_message from godnoscop bot: {update.message.text}")
+    
+    async def process_men_squad_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Process special messages from men squad."""
+        if (update.message.from_user.id in men_squad and
+            "нахуй баб" in update.message.text.lower()):
+            
+            regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
+            numbers = re.findall(regex, update.message.text)
+            
+            if not numbers or not numbers[0].isdigit():
+                text = "Ты неправильно накастовал, дебил"
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+            else:
+                count = min(int(numbers[0]), 10)
+                for _ in range(count):
+                    text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=text,
+                        parse_mode="markdown",
+                    )
+                    # Асинхронная задержка без блокировки
+                    await asyncio.sleep(choice([0.5, 0.25, 1, 0.75, 0.666]))
+    
+    async def process_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Process AI chat responses."""
+        if (update.message.reply_to_message is not None and
+            update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
+            update.message.reply_to_message.from_user.id not in excluded_uids):
+            
+            content = update.message.text
+            model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
+            
+            context.bot_data["chat_deque"].append({"role": "system", "content": professional_prompt})
+            context.bot_data["chat_deque"].append({"role": "user", "content": content})
+            
+            try:
+                text = ""
+                if not "гороскоп" in content:
+                    stream = await client.chat.completions.create(
+                        model=model_type,
+                        messages=list(context.bot_data["chat_deque"]),
+                        stream=True
+                    )
+                    text = await parse_stream(stream)
+                else:
+                    stream = await client.chat.completions.create(
+                        model=model_type,
+                        messages=list([{"role": "system", "content": professional_prompt},
+                                       {"role": "user", "content": content}]),
+                        stream=True
+                    )
+                    text = await parse_stream(stream)
+                
+                context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
+                
+                await send_long_message(
+                    bot=context.bot,
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown",
+                    reply_to_message_id=update.message.message_id
+                )
+                logger.info(f"chatGPT: generated text sent text:{text}")
+                
+            except Exception as e:
+                logger.error(f"Error generating AI response: {e}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text="Извините, произошла ошибка при генерации ответа.",
+                    parse_mode="markdown",
+                )
+    
+    async def process_special_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process special command patterns in messages."""
+        # Demobilization countdown
+        if "дембель" in msg:
+            td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
+            text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
+        if "амир" in msg:
+            td = datetime.datetime(2026, 10, 14, tzinfo=tz) - datetime.datetime.now(tz)
+            text = f"Амиру до свободы осталось {td_convert(td)}"
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            ) 
+        
+        # Scary life response
+        if "страшно жить" in msg:
+            text = "ВАЩЕ ПИЗДЕЦ"
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                reply_to_message_id=update.message.message_id,
+                text=text,
+                parse_mode="markdown",
+            )
+        
+        # Dice rolling
+        if "кубик" in msg:
+            text = roll_custom_dice(msg)
+            if text is not None:
+                if text == "default":
+                    await context.bot.send_dice(
+                        chat_id=update.effective_message.chat_id,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        text=text,
+                        parse_mode="markdown",
+                    )
+    
+    async def process_media_responses(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process media responses based on message content."""
+        # Cola response
+        if (self._should_send_cola(msg)):
+            
+            reply_to = (update.message.reply_to_message.message_id
+                       if update.message.reply_to_message else update.message.message_id)
+            
+            try:
+                async with aiofiles.open("img/colocola.jpg", "rb") as f:
+                    photo_data = await f.read()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=reply_to,
+                        caption=colocola,
+                        photo=photo_data,
+                        parse_mode="markdown",
+                    )
+            except FileNotFoundError:
+                logger.error("Cola image not found")
+        
+        # Elephant response
+        if self._should_send_elephant(msg):
+            reply_to = (update.message.reply_to_message.message_id
+                       if update.message.reply_to_message else update.message.message_id)
+            
+            try:
+                async with aiofiles.open("img/slon.jpg", "rb") as f:
+                    photo_data = await f.read()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=reply_to,
+                        photo=photo_data,
+                        parse_mode="markdown",
+                    )
+            except FileNotFoundError:
+                logger.error("Elephant image not found")
+        
+        # Nazi response
+        if "нацист" in msg:
+            try:
+                file = choice(["img/nz.jpg", "img/nz_1.jpg"])
+                async with aiofiles.open(file, "rb") as f:
+                    photo_data = await f.read()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        photo=photo_data,
+                        parse_mode="markdown",
+                    )
+            except FileNotFoundError:
+                logger.error("Nazi image not found")
+    
+    def _should_send_cola(self, msg: str) -> bool:
+        """Check if cola response should be sent."""
+        return ("колокол" not in msg.split() and 
+                "колокольн" not in msg and 
+                "колокол" in msg)
+    
+    def _should_send_elephant(self, msg: str) -> bool:
+        """Check if elephant response should be sent."""
+        return ("слон" in msg and
+                msg.startswith("слон") and
+                not msg.startswith("слонн") and
+                not msg.startswith("прислон")
+                )
+    
+    async def process_diarrhea_spell(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process the diarrhea spell command."""
+        if not (msg.startswith("понос ") and " на " in msg):
+            return
+            
+        user = msg.split("понос ")[-1].split(" на")[0]
+        reg_value = re.sub("[^0-9]", "", msg)
+        reg_value = int(reg_value) if reg_value else -999
+        value = msg[-1]
+        text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
+        
+        if value.isdigit():
+            value = int(value)
+            
+            if 1 <= value <= 6 and reg_value == value:
+                roll = await context.bot.send_dice(chat_id=update.effective_message.chat_id)
+                await asyncio.sleep(2.7)
+                
+                if roll.dice.value == value:
+                    text = f"*Понос* {user} обеспечен"
+                else:
+                    text = "_Каст поноса был провален!_"
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+    
+    async def process_sticker_responses(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process sticker responses based on message content."""
+        # Synthetic lovers
+        if "любителям синтетики" in msg:
+            try:
+                async with aiofiles.open("img/GM.webp", "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    logger.info("answer_message: sticker sent")
+            except FileNotFoundError:
+                logger.error("GM sticker not found")
+        
+        # Nevsky photo
+        if msg == "вот так вот":
+            try:
+                async with aiofiles.open("img/nevsky.jpeg", "rb") as f:
+                    photo_data = await f.read()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        photo=photo_data,
+                    )
+                    logger.info("answer_message: nevsky photo sent")
+            except FileNotFoundError:
+                logger.error("Nevsky image not found")
+        
+        # Good morning
+        if msg == "доброе утро":
+            try:
+                async with aiofiles.open("img/GM_SHUE.webp", "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    logger.info("answer_message: good morning crackheads sticker sent")
+            except FileNotFoundError:
+                logger.error("GM_SHUE sticker not found")
+        
+        # Yandex
+        if "хуяндекс" in msg:
+            try:
+                async with aiofiles.open("img/yandex.webp", "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+            except FileNotFoundError:
+                logger.error("Yandex sticker not found")
+        
+        # Good night
+        if re.search(r'\b(?:спокойной?|доброй?|сладкой?|ой)\s+(?:ночи|ночки|ночью)\b', msg, re.IGNORECASE):
+            try:
+                async with aiofiles.open("img/GN.webp", "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    logger.info("answer_message: yandex sticker sent")
+                    
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        text=choice([
+                            "Good night!",
+                            "Спокойной ночи",
+                            "Сладких снов",
+                            "Покасики!",
+                        ]),
+                        parse_mode="markdown",
+                    )
+                    logger.info("answer_message: good night crackheads sticker sent")
+            except FileNotFoundError:
+                logger.error("GN sticker not found")
+    
+    async def process_pot_drinking(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process pot drinking status messages."""
+        if not any(phrase in msg for phrase in [
+            "горшок не пьет", "горшок не пьёт", "горшок держится"
+        ]):
+            return
+            
+        not_drink_choice = choice([
+            "не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"
+        ])
+        
+        not_drink = (
+            datetime.datetime.now(tz).date() -
+            POT_DATE
+        )
+        not_drink_ending = td_convert(not_drink)
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
+            parse_mode="markdown",
+        )
+    
+    async def process_zalupa_stickers(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process zalupa sticker responses."""
+        if "залуп" in msg:
+            file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
+            try:
+                async with aiofiles.open(file, "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    logger.info("answer_message: zalupa sticker sent")
+            except FileNotFoundError:
+                logger.error(f"Zalupa sticker not found: {file}")
+    
+    async def process_jackpot(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
+        """Process jackpot responses."""
+        if "джекпот" in msg:
+            try:
+                async with aiofiles.open("img/jackpot.webp", "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
+                        parse_mode="markdown",
+                    )
+                    logger.info("answer_message: jackpot sticker sent")
+            except FileNotFoundError:
+                logger.error("Jackpot sticker not found")
+
+
+class ContentSender:
+    """Handles sending various types of content."""
+    
+    @staticmethod
+    async def send_oxxxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send random Oxxxy mashup URL."""
+        url = choice(oxxxy_playlist)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=url,
+            parse_mode="markdown",
+        )
+        logger.info(f"send_oxxxy: oxxy mashup {url} sent")
+    
+    @staticmethod
+    async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send random goblin content."""
+        goblin_dir = "img/goblin/"
+        mode = choice(["mp4", "img", "sticker", "text", "youtube"])
+        urls = goblin_urls
+        
+        try:
+            if mode == "mp4":
+                animation = os.path.join(
+                    goblin_dir,
+                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".mp4")])
+                )
+                async with aiofiles.open(animation, "rb") as f:
+                    animation_data = await f.read()
+                    await context.bot.send_animation(
+                        chat_id=update.effective_chat.id,
+                        animation=animation_data,
+                        read_timeout=20,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                    logger.info(f"send_goblin: mode {mode} file {animation} sent")
+                    
+            elif mode == "img":
+                img = os.path.join(
+                    goblin_dir,
+                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".jpeg")])
+                )
+                async with aiofiles.open(img, "rb") as f:
+                    photo_data = await f.read()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        photo=photo_data,
+                    )
+                    logger.info(f"send_goblin: mode {mode} file {img} sent")
+                    
+            elif mode == "sticker":
+                sticker = os.path.join(
+                    goblin_dir,
+                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".webp")])
+                )
+                async with aiofiles.open(sticker, "rb") as f:
+                    sticker_data = await f.read()
+                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                    logger.info(f"send_goblin: mode {mode} file {sticker} sent")
+                    
+            elif mode == "text":
+                text = choice(goblin_pasta)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=text,
+                    parse_mode="markdown",
+                )
+                logger.info(f"send_goblin: mode {mode} file text sent")
+                
+            elif mode == "youtube":
+                url = choice(urls)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text=f"СМОТРЕТЬ ВСЕМ\n{url}",
+                    parse_mode="markdown",
+                )
+                logger.info(f"send_goblin: mode {mode} file {url} sent")
+                
+        except FileNotFoundError as e:
+            logger.error(f"Goblin file not found: {e}")
+        except Exception as e:
+            logger.error(f"Error sending goblin content: {e}")
+    
+    @staticmethod
+    async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send morning factory/office message."""
+        bot_data = context.bot_data
+        
+        text = "Русские, в офис / на завод!\n..._loading_..."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info("send_morning: preload")
+        
+        username = update.effective_user.username
+        
+        if bot_data["dt"] is None:
+            bot_data["dt"] = datetime.datetime.now()
+            bot_data["ZAVOD_CHECK"] = True
+            bot_data["username"] = username
+        else:
+            bot_data["ZAVOD_CHECK"] = (
+                (datetime.datetime.now() - bot_data["dt"]).days > 0 and
+                (4 <= datetime.datetime.now().hour < 12)
+            )
+            if bot_data["ZAVOD_CHECK"]:
+                bot_data["username"] = username
+        
+        if bot_data["ZAVOD_CHECK"]:
+            file = choice([
+                "img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"
+            ])
+            try:
+                async with aiofiles.open(file, "rb") as f:
+                    photo_data = await f.read()
+                    zavod_user = f"Офисчанин/Заводчанин дня - @{username}!"
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        reply_to_message_id=update.message.message_id,
+                        caption=zavod_user,
+                        photo=photo_data,
+                    )
+                    logger.info("send_morning: zavod success!")
+            except FileNotFoundError:
+                logger.error(f"Zavod image not found: {file}")
+        else:
+            zavod_user = bot_data["username"].replace("@", "")
+            text = (f"Поздно, другалёчек!\n"
+                   f"Офисчанин/Заводчанин дня - @{zavod_user}!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+            logger.info("send_morning: zavod success but late!")
+    
+    @staticmethod
+    async def show_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show day-specific sticker."""
+        weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
+        sticker = os.path.join("img/eva", f"{weekday}.webp")
+        
+        try:
+            async with aiofiles.open(sticker, "rb") as f:
+                sticker_data = await f.read()
+                await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
+                logger.info(f"show_day: file {sticker} sent")
+        except FileNotFoundError:
+            logger.error(f"Day sticker not found: {sticker}")
+    
+    @staticmethod
+    async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show current holidays."""
+        dt = datetime.datetime.now(tz)
+        text = get_holidays(dt)
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            parse_mode="markdown",
+        )
+        logger.info("show_day: sent holidays list")
+
+    @staticmethod
+    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send AI horoscope."""
+        # Передаем историю гороскопов в функцию промпта
+        if update.effective_user.id not in excluded_uids:
+            history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
+            prompt = get_ai_horoscope_prompt(history)
+            messages = [{"role": "system", "content": professional_prompt},
+                        {"role": "user", "content": prompt}] 
+            
+            
+            # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
+            if context.bot_data["horoscope_history"]:
+                previous_messages = []
+                for message in context.bot_data["horoscope_history"]:
+                    previous_messages.append({"role": "assistant", "content": message})
+                messages = previous_messages + messages
+                  
+            text = ""
+            stream = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                stream=True
+            )
+            text = await parse_stream(stream)
+            print("Text: ", text)
+            if text:
+                context.bot_data["horoscope_history"].append(text)
+                await send_long_message(
+                    bot=context.bot,
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown"
+                )
+            logger.info(f"ai_horoscope: sent with prompt {prompt}")
+
+class PlotinaManager:
+    """Manages the plotina (dam) building game."""
+    
+    def __init__(self, file_path: str = "plotina.parquet"):
+        self.file_path = file_path
+    
+    async def build_plotina(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Process plotina building command."""
+        try:
+            df = pd.read_parquet(self.file_path)
+        except FileNotFoundError:
+            df = pd.DataFrame(columns=[
+                "id", "username", "first_name", "last_name",
+                "dt", "last_build", "overall_build"
+            ])
+        
+        _id = update.effective_user.id
+        username = update.effective_user.username
+        first_name = update.effective_user.first_name
+        last_name = update.effective_user.last_name
+        dt = datetime.datetime.now()
+        
+        random_number = choice(range(1, 10))
+        if choice(range(10)) > 9:
+            random_number = choice(range(20, 101))
+        
+        if _id in df.id.values:
+            record = df[df.id == _id]
+            if (dt - pd.to_datetime(record.iloc[0]["dt"])).seconds // 3600 >= 1:
+                df.loc[df.id == _id, "dt"] = pd.to_datetime(dt)
+                df.loc[df.id == _id, "last_build"] = random_number
+                df.loc[df.id == _id, "overall_build"] = df.loc[df.id == _id, "overall_build"] + random_number
+                text = get_length(df, first_name, random_number)
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+            else:
+                text = f"Бобер {first_name} все еще спит!"
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        else:
+            int_dt = int(pd.Timestamp(dt).to_datetime64())
+            record = pd.DataFrame({
+                "id": [_id],
+                "username": [username],
+                "first_name": [first_name],
+                "last_name": [last_name],
+                "dt": [int_dt],
+                "last_build": [random_number],
+                "overall_build": [random_number],
+            })
+            text = (f"Бобер {first_name} вступил в игру и "
+                   f"сделал плотину выше на {random_number} см!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+            df = pd.concat([df, record], ignore_index=True)
+        
+        # Save to file asynchronously (using thread executor for pandas operations)
+        await asyncio.get_event_loop().run_in_executor(None, lambda: df.to_parquet(self.file_path))
+    
+    async def show_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show plotina building statistics."""
+        try:
+            df = pd.read_parquet(self.file_path)
+            text = get_length(df, None, None, stats=True)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+        except FileNotFoundError:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Статистика пока недоступна."
+            )
 
 
 def pause(func):
-    def wrapper(update, context):
-        if context.bot_data["paused"]:
-            pass
-        else:
-            func(update, context)
-
+    """Decorator to pause bot functionality."""
+    async def wrapper(update, context):
+        if not context.bot_data.get("paused", False):
+            return await func(update, context)
+        return None
     return wrapper
 
+@pause
+async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    result = []
+    with open("tarot_cards.json") as f:
+        deck = random.sample(json.load(f)["cards"], k=3)
+    for card, time in zip(deck, ["прощлое", "настоящее", "будущее"]):
+        reversed_flag = random.choice([True, False])
+        result.append({
+            "card": card["name"],
+            "orientation": "перевернутая" if reversed_flag else "прямая",
+            "meaning": card["reversed_meaning"] if reversed_flag else card["upright_meaning"],
+            "time": time
+        })
+    tarot_prompt = generate_tarot_prompt(result)
+    
+    request = []
+    request.append({"role": "system", "content": professional_prompt})
+    request.append({"role": "user", "content": tarot_prompt})
+    
+    stream = await client.chat.completions.create(
+                        model="deepseek-reasoner",
+                        messages=request,
+                        stream=True
+                    )
+    text = await parse_stream(stream)
+    
+    await send_long_message(
+                    bot=context.bot,
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode="markdown",
+                    reply_to_message_id=update.message.message_id
+                )
+    
+    
+
 
 @pause
-def quote(update, context) -> None:
+async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send random quote."""
     text = quote_choice()
     logger.info(f"quote: {text[:10]}...")
-    context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 
 @pause
-def get_horoscope(update, context) -> None:
+async def get_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send horoscope posts."""
     first_post, second_post = generate_post()
-    logger.info(f"sending horoscopes")
-    context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
-    context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
-
-
-# def horoscope(update: Update, context) -> None:
-#     keyboard = [
-#         [
-#             InlineKeyboardButton("Овен", callback_data="aries"),
-#             InlineKeyboardButton("Телец", callback_data="taurus"),
-#             InlineKeyboardButton("Близнецы", callback_data="gemini")
-#         ],
-#         [
-#             InlineKeyboardButton("Рак", callback_data="cancer"),
-#             InlineKeyboardButton("Лев", callback_data="leo"),
-#             InlineKeyboardButton("Дева", callback_data="virgo")
-#         ],
-#         [
-#             InlineKeyboardButton("Весы", callback_data="libra"),
-#             InlineKeyboardButton("Скорпион", callback_data="scorpio"),
-#             InlineKeyboardButton("Стрелец", callback_data="sagittarius")
-#         ],
-#         [
-#             InlineKeyboardButton("Козерог", callback_data="capricorn"),
-#             InlineKeyboardButton("Водолей", callback_data="aquarius"),
-#             InlineKeyboardButton("Рыбы", callback_data="pisces")
-#         ],
-#     ]
-#
-#     reply_markup = InlineKeyboardMarkup(keyboard)
-#
-#     update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
-#
-#
-# def button(update: Update, context) -> None:
-#     query = update.callback_query
-#     query.answer()
-#
-#     message = generate_horo_message(query.data)
-#     context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+    logger.info("sending horoscopes")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
 
 
 @pause
-def godnoscope(update: Update, context) -> None:
+async def godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show horoscope sign selection keyboard."""
     keyboard = [
         [
             InlineKeyboardButton("Овен", callback_data="ОВЕН"),
@@ -142,675 +894,300 @@ def godnoscope(update: Update, context) -> None:
             InlineKeyboardButton("Рыбы", callback_data="РЫБЫ"),
         ],
     ]
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    update.message.reply_text("Выбирай епте:", reply_markup=reply_markup)
+    await update.message.reply_text("Выбирай:", reply_markup=reply_markup)
 
 
 @pause
-def button_godnoscope(update: Update, context) -> None:
+async def button_godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle horoscope sign selection."""
     query = update.callback_query
-    query.answer()
+    await query.answer()
+    
+    message = await tracker.get_horoscope(query.data)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
-    message = tracker.get_horoscope(query.data)
-    context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
-
-def spam_gif_detector(update, context) -> None:
+async def spam_gif_detector(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Detect and remove spam GIFs."""
     if update.message.document.mime_type == "video/mp4":
-        last_msg = {"from": update.message.from_user.id, "date": update.message.date}
+        last_msg = {
+            "from": update.message.from_user.id,
+            "date": update.message.date
+        }
         context.bot_data["msg_deque"].append(last_msg)
+        
         for idx in range(len(context.bot_data["msg_deque"]) - 1):
             msg = context.bot_data["msg_deque"][idx]
-            if msg["from"] == last_msg["from"]:
-                if (last_msg["date"] - msg["date"]).seconds < 3:
-                    context.bot.delete_message(
-                        update.effective_chat.id, update.message.message_id
-                    )
+            if (msg["from"] == last_msg["from"] and
+                (last_msg["date"] - msg["date"]).seconds < 3):
+                await context.bot.delete_message(
+                    update.effective_chat.id, update.message.message_id
+                )
 
 
-# Вынести в отдельный файл? Написать класс?
 @pause
-def parse_message(update, context) -> None:
+async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Main message parsing function - now fully async."""
     bot_data = context.bot_data
     text = ""
     prob = 0
-
-    # delete shit
-    if update.message.via_bot is not None:
-        shit_bot = update.message.via_bot.id == SHIT_BOT_ID
-        godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
-
-        if shit_bot:
-            sleep_choice(CHOICES)
-            name = "shit"
-            context.bot.delete_message(
-                update.effective_chat.id, update.message.message_id
-            )
-            logger.info(f"delete_message from {name} bot: {update.message.text}")
-
-        elif godnoscop_bot:
-            name = "godnoscop"
-            context.bot.send_message(
-                update.effective_chat.id, update.message.text.replace("#NoWar", "")
-            )
-            context.bot.delete_message(
-                update.effective_chat.id, update.message.message_id
-            )
-            logger.info(f"edited_message from {name} bot: {update.message.text}")
-    if (
-        update.message.from_user.id in men_squad
-        and "нахуй баб" in update.message.text.lower()
-    ):
-        regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
-        number = re.findall(regex, update.message.text)[0]
-
-        if not number.isdigit():
-            text = "Ты неправильно накастовал, дебил"
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text=text,
-                parse_mode="markdown",
-            )
-        else:
-            count = int(number)
-            count = 10 if count > 999 else count
-            for _ in range(count):
-                text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-                sleep(choice([0.5, 0.25, 1, 0.75, 0.666]))
-
-    if (
-        update.message.reply_to_message is not None
-        and update.message.reply_to_message.from_user.id == context.bot_data["self_id"]
-    ):
-
-        content = update.message.text
-
-        # if content.startswith("создай картинку"):
-        #     prompt = content.split("создай картинку ")[-1]
-        #     response = client.images.generate(
-        #         prompt=prompt,
-        #         model="gemini"
-        #     )
-        #     image_url = response.data[0].url
-        #     context.bot.send_message(
-        #         chat_id=update.effective_chat.id,
-        #         reply_to_message_id=update.message.message_id,
-        #         text=image_url,
-        #         parse_mode="markdown",
-        #     )
-        if choice(range(5)) == 4:
-            content = f"{professional_prompt}\n{content}"
-
-        context.bot_data["chat_deque"].append({"role": "user", "content": content})
-        # content = [{"role": "user", "content": content}]
-
-        response = client.chat.completions.create(
-            model="deepseek-chat", messages=context.bot_data["chat_deque"], stream=False
-        )
-
-        text = response.choices[0].message.content
-
-        context.bot_data["chat_deque"].append({"role": "assistant", "content": text})
-
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info(f"chatGPT: generated text sent text:{text}")
-
+    
+    # Initialize message processor
+    processor = MessageProcessor(bot_data)
+    
+    # Process bot messages
+    await processor.process_bot_messages(update, context)
+    
+    # Process men squad messages
+    await processor.process_men_squad_message(update, context)
+    
+    # Process AI responses
+    await processor.process_ai_response(update, context)
+    
+    # Process regular messages
     if update.message.text is not None and not text:
         msg = clean_string(update.message.text.lower())
         _id = update.message.from_user.id
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
-
-        if (
-            prev_ts is not None
-            and (ts - prev_ts).seconds < 3
-            and _id != context.bot_data["master"]
-        ):
+        
+        # Spam protection
+        if (prev_ts is not None and
+            (ts - prev_ts).seconds < 3 and
+            _id != context.bot_data["master"]):
             msg = False
+        
         context.bot_data["spam_stopper"][_id] = ts
-
+        
         if msg:
+            # Process triggers from triggers.json
+            
             text, prob = ifs(msg=msg, _id=_id, spam_mode=bot_data["spam_mode"])
             if text:
                 logger.info(f"triggered by: {msg}")
                 logger.info(f"scripted answer_message: flag to show was {bool(prob)}")
+            
             if text and prob:
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
+                # Determine trigger type and process accordingly
+                trigger_type = get_trigger_type(text)
+                await process_trigger_response(update, context, text, trigger_type)
+                
                 log_text = text
-
                 if len(log_text.split()) > 20:
                     log_text = (
                         f"{' '.join([log_text.split()[idx] for idx in range(5)])}"
                         f"...{' '.join([log_text.split()[idx] for idx in range(-3, 0)])}"
                     )
                 logger.info(f"scripted answer_message: replied with {log_text}")
-            # if "анек" in msg and not "манекен" in msg.split() and _id not in (1276243648, 355485696, 657852809):
-            #     text = get_anecdote()
-            #     context.bot.send_message(
-            #         chat_id=update.effective_chat.id,
-            #         reply_to_message_id=update.message.message_id,
-            #         text=text,
-            #         parse_mode="markdown")
-            if "дембель" in msg:
-                td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(
-                    tz
-                )
-                text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-            if "страшно жить" in msg:
-                text = f"ВАЩЕ ПИЗДЕЦ"
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-
-            if "кубик" in msg:
-                text = roll_custom_dice(msg)
-                if text is not None:
-                    if text == "default":
-                        context.bot.send_dice(
-                            chat_id=update.effective_message.chat_id,
-                            reply_to_message_id=update.message.message_id,
-                        )
-                    else:
-                        context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            reply_to_message_id=update.message.message_id,
-                            text=text,
-                            parse_mode="markdown",
-                        )
-
-            if (
-                "колокол" not in msg.split()
-                and "колокольн" not in msg
-                and "колокол" in msg
-                and not update.message.forward_from_message_id
-            ):
-                if update.message.reply_to_message is not None:
-                    reply_to = update.message.reply_to_message.message_id
-                else:
-                    reply_to = update.message.message_id
-                with open("img/colocola.jpg", "rb") as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=reply_to,
-                        caption=colocola,
-                        photo=f,
-                        parse_mode="markdown",
-                    )
-            if "слон" in msg and not "слонн" in msg and not "прислон" in msg:
-                if update.message.reply_to_message is not None:
-                    reply_to = update.message.reply_to_message.message_id
-                else:
-                    reply_to = update.message.message_id
-                with open("img/slon.jpg", "rb") as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=reply_to,
-                        photo=f,
-                        parse_mode="markdown",
-                    )
-            if "нацист" in msg:
-                with open("img/nz.jpg", "rb") as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        photo=f,
-                        parse_mode="markdown",
-                    )
-
-            if msg.startswith("понос ") and " на " in msg:
-                user = msg.split("понос ")[-1].split(" на")[0]
-                reg_value = re.sub("[^0-9]", "", msg)
-                reg_value = int(reg_value) if reg_value else -999
-                value = msg[-1]
-                text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
-
-                if value.isdigit():
-                    value = int(value)
-
-                    if 1 <= value <= 6 and reg_value == value:
-                        roll = context.bot.send_dice(
-                            chat_id=update.effective_message.chat_id
-                        )
-                        sleep(2.7)
-
-                        if roll.dice.value == value:
-                            text = f"*Понос* {user} обеспечен"
-                        else:
-                            text = f"_Каст поноса был провален!_"
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-
-            # send sticker
-            if "любителям синтетики" in msg:
-                with open("img/GM.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: sticker sent")
-
-            if text == "О, морская!" and prob:
-                with open("img/snail.jpeg", "rb") as f:
-                    context.bot.send_photo(chat_id=update.effective_chat.id, photo=f)
-                logger.info("answer_message: snail photo sent")
-
-            if msg == "вот так вот":
-                with open("img/nevsky.jpeg", "rb") as f:
-                    context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        photo=f,
-                    )
-                logger.info("answer_message: nevsky photo sent")
-
-            if msg == "доброе утро":
-                with open("img/GM_SHUE.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: good morning crackheads sticker sent")
-            if "хуяндекс" in msg:
-                with open("img/yandex.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-            if "ой ночи" in msg:
-                with open("img/GN.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    logger.info("answer_message: yandex sticker sent")
-                    context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        text=choice(
-                            [
-                                "Good night!",
-                                "Спокойной ночи",
-                                "Сладких снов",
-                                "Покасики!",
-                            ]
-                        ),
-                        parse_mode="markdown",
-                    )
-                    logger.info("answer_message: good night crackheads sticker sent")
-
-            if (
-                "горшок не пьет" in msg
-                or "горшок не пьёт" in msg
-                or "горшок держится" in msg
-            ):
-                not_drink_choice = choice(
-                    [
-                        "не пьет",
-                        "держится",
-                        "в завязке",
-                        "не бухает",
-                        "проявляет силу воли",
-                    ]
-                )
-
-                not_drink = (
-                    datetime.datetime.now(tz).date()
-                    - datetime.datetime.strptime("19072013", "%d%m%Y").date()
-                )
-                not_drink_ending = td_convert(not_drink)
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
-                    parse_mode="markdown",
-                )
-
-            if "залуп" in msg:
-                file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
-                with open(file, "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    # context.bot.send_message(
-                    #     chat_id=update.effective_chat.id,
-                    #     reply_to_message_id=update.message.message_id,
-                    #     text=choice(["_Залупа-лупа!_", "_Залупу-лупу!_"]),
-                    #     parse_mode="markdown",
-                    # )
-                    logger.info("answer_message: zalupa sticker sent")
-
-            if "джекпот" in msg:
-                with open("img/jackpot.webp", "rb") as f:
-                    context.bot.send_sticker(
-                        chat_id=update.effective_chat.id, sticker=f
-                    ).sticker
-                    context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
-                        parse_mode="markdown",
-                    )
-                    logger.info("answer_message: jackpot sticker sent")
+            
+            # Process special triggers that require custom logic
+            await process_special_triggers(update, context, msg)
+            
+            # Process media responses that are not covered by triggers
+            await processor.process_media_responses(update, context, msg)
+            
+            # Process sticker responses that are not covered by triggers
+            await processor.process_sticker_responses(update, context, msg)
+            
+            # Process zalupa stickers
+            await processor.process_zalupa_stickers(update, context, msg)
+            
+            # Process jackpot
+            await processor.process_jackpot(update, context, msg)
+            
+            await processor.process_special_commands(update, context, msg)
 
 
 @pause
-def send_oxxxy(update, context) -> None:
-    url = choice(oxxxy_playlist)
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        reply_to_message_id=update.message.message_id,
-        text=f"{url}",
-        parse_mode="markdown",
-    )
-    logger.info(f"send_oxxxy: oxxy mashup {url} sent")
+async def send_oxxxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send random Oxxxy content."""
+    await ContentSender.send_oxxxy(update, context)
 
 
 @pause
-def send_goblin(update, context) -> None:
-    goblin_dir = "img/goblin/"
-    mode = choice(["mp4", "img", "sticker", "text", "youtube"])
-    urls = goblin_urls
-
-    if mode == "mp4":
-        animation = os.path.join(
-            goblin_dir,
-            choice([file for file in os.listdir(goblin_dir) if file.endswith(".mp4")]),
-        )
-        with open(animation, "rb") as f:
-            context.bot.send_animation(
-                chat_id=update.effective_chat.id,
-                animation=f,
-                timeout=20,
-                reply_to_message_id=update.message.message_id,
-            )
-            logger.info(f"send_goblin: mode {mode} file {animation} sent")
-    if mode == "img":
-        img = os.path.join(
-            goblin_dir,
-            choice([file for file in os.listdir(goblin_dir) if file.endswith(".jpeg")]),
-        )
-        with open(img, "rb") as f:
-            context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                photo=f,
-            )
-            logger.info(f"send_goblin: mode {mode} file {img} sent")
-    if mode == "sticker":
-        sticker = os.path.join(
-            goblin_dir,
-            choice([file for file in os.listdir(goblin_dir) if file.endswith(".webp")]),
-        )
-        with open(sticker, "rb") as f:
-            context.bot.send_sticker(
-                chat_id=update.effective_chat.id, sticker=f
-            ).sticker
-            logger.info(f"send_goblin: mode {mode} file {sticker} sent")
-    if mode == "text":
-        text = choice(goblin_pasta)
-        print(text)
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info(f"send_goblin: mode {mode} file text sent")
-    if mode == "youtube":
-        url = choice(urls)
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=f"СМОТРЕТЬ ВСЕМ\n{url}",
-            parse_mode="markdown",
-        )
-        logger.info(f"send_goblin: mode {mode} file {url} sent")
+async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send random goblin content."""
+    await ContentSender.send_goblin(update, context)
 
 
-def delete_dice(update, context) -> None:
+async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Delete dice messages."""
     if update.message.dice.emoji in emojis:
-        sleep_choice(CHOICES)
-        context.bot.delete_message(update.effective_chat.id, update.message.message_id)
+        await asyncio.sleep(choice(CHOICES))
+        await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
         logger.info(f"delete_dice: {update.message.text}")
 
 
 @pause
-def send_morning(update, context) -> None:
-    bot_data = context.bot_data
-
-    text = "Русские, в офис / на завод!\n" "..._loading_..."
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        reply_to_message_id=update.message.message_id,
-        text=text,
-        parse_mode="markdown",
-    )
-    logger.info(f"send_morning: preload")
-    username = update.effective_user.username
-    if bot_data["dt"] is None:
-        bot_data["dt"] = datetime.datetime.now()
-        bot_data["ZAVOD_CHECK"] = True
-        bot_data["username"] = username
-    else:
-        bot_data["ZAVOD_CHECK"] = (
-            datetime.datetime.now() - bot_data["dt"]
-        ).days > 0 and (4 <= datetime.datetime.now().hour < 12)
-        if bot_data["ZAVOD_CHECK"]:
-            bot_data["username"] = username
-    if bot_data["ZAVOD_CHECK"]:
-        file = choice(
-            ["img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"]
-        )
-        with open(file, "rb") as f:
-            zavod_user = f"Офисчанин/Заводчанин дня - @{username}!"
-            context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                caption=zavod_user,
-                photo=f,
-            )
-            logger.info(f"send_morning: zavod success!")
-
-    else:
-        zavod_user = bot_data["username"].replace("@", "")
-        text = f"Поздно, другалёчек!\n" + f"Офисчанин/Заводчанин дня - @{zavod_user}!"
-        context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        logger.info(f"send_morning: zavod success but late!")
+async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send morning factory message."""
+    await ContentSender.send_morning(update, context)
 
 
 @pause
-def roll_dice(update, context) -> None:
-    context.bot.send_dice(
+async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Roll a dice."""
+    await context.bot.send_dice(
         chat_id=update.effective_message.chat_id,
         reply_to_message_id=update.message.message_id,
     )
-    logger.info(f"roll_dice: success")
+    logger.info("roll_dice: success")
 
 
 @pause
-def show_day(update, context) -> None:
-    weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
-    sticker = os.path.join("img/eva", f"{weekday}.webp")
-
-    with open(sticker, "rb") as f:
-        context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=f).sticker
-        logger.info(f"show_day: file {sticker} sent")
-
-    logger.info(f"show_day: sent day sticker")
+async def show_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show day sticker."""
+    await ContentSender.show_day(update, context)
 
 
 @pause
-def show_holidays(update, context) -> None:
-    dt = datetime.datetime.now(tz)
-    text = get_holidays(dt)
-
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"{text}",
-        parse_mode="markdown",
-    )
-
-    logger.info(f"show_day: sent holidays list")
+async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show holidays."""
+    await ContentSender.show_holidays(update, context)
 
 
 @pause
-def build_plotina(update, context) -> None:
-    df = pd.read_parquet("plotina.parquet")
-    _id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = update.effective_user.first_name
-    last_name = update.effective_user.last_name
-    dt = datetime.datetime.now()
-    random_number = choice(range(1, 10))
-    if choice(range(10)) > 9:
-        random_number = choice(range(20, 101))
-    if _id in df.id.values:
-        record = df[df.id == _id]
-        if (dt - pd.to_datetime(record.loc[0, "dt"])).seconds // 3600 >= 1:
-            record["dt"] = pd.to_datetime(dt)
-            record["last_build"] = random_number
-            record["overall_build"] = record["overall_build"] + random_number
-            df.update(record)
-            text = get_length(df)
-            context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        else:
-            text = f"Бобер {first_name} все еще спит!"
-            context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-
-    else:
-        int_dt = int(pd.Timestamp(dt).to_datetime64())
-        record = pd.DataFrame(
-            {
-                "id": [_id],
-                "username": [username],
-                "first_name": [first_name],
-                "last_name": [last_name],
-                "dt": [int_dt],
-                "last_build": [random_number],
-                "overall_build": [random_number],
-            }
-        )
-        text = f"Бобер {first_name} вступил в игру и сделал плотину выше на {random_number} см!"
-        context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        df = df.append(record)
-    df.to_parquet("plotina.parquet")
+async def build_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Build plotina."""
+    plotina_manager = PlotinaManager()
+    await plotina_manager.build_plotina(update, context)
 
 
 @pause
-def stats_plotina(update, context) -> None:
-    df = pd.read_parquet("plotina.parquet")
-    text = get_length(df, stats=True)
-    context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+async def stats_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show plotina statistics."""
+    plotina_manager = PlotinaManager()
+    await plotina_manager.show_stats(update, context)
+    
+@pause
+async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send AI horoscope."""
+    await ContentSender.ai_horoscope(update, context)
+    
+@pause
+async def clear_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear AI context."""
+    context.bot_data["chat_deque"] = deque(maxlen=100)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Контекст очищен")
 
 
-def paused(update, context) -> None:
+async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle bot pause state."""
     if update.message.from_user.id == context.bot_data["master"]:
-        context.bot_data["paused"] = not context.bot_data["paused"]
+        context.bot_data["paused"] = not context.bot_data.get("paused", False)
         if context.bot_data["paused"]:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=update.effective_chat.id, text="Бельмондо спит"
             )
     else:
         if random.randint(0, 10) == 10:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Ты чёт ошибся, другалек, " "я только по команде хозяина сплю",
+                text="Ты чёт ошибся, другалек, я только по команде хозяина сплю",
             )
 
 
-def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
+async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
+    """Main bot initialization and setup - now fully async."""
+    application = None
     vars_dict["spam_mode"] = spam_mode
-    vars_dict["chat_deque"] = deque(maxlen=10)
-    vars_dict["msg_deque"] = deque(maxlen=10)
-    if mode in ["dev", "prod"]:
-        if mode == "dev":
-            vars_dict["self_id"] = vars_dict["self_id_dev"]
-        bot = Bot(token)
-        updater = Updater(
-            token=token,
-            use_context=True,
-            request_kwargs={"read_timeout": 1000, "connect_timeout": 1000},
-        )
-    else:
-        logger.error(f"Bot start: FAIL!")
-    logger.info(f"Bot start: success!")
-    dispatcher = updater.dispatcher
-    job = updater.job_queue
-    dispatcher.bot_data.update(vars_dict)
+    vars_dict["chat_deque"] = deque(maxlen=100)
+    vars_dict["msg_deque"] = deque(maxlen=100)
+    vars_dict["horoscope_history"] = deque(maxlen=1)
 
-    quote_handler = CommandHandler("quote", quote)
-    dispatcher.add_handler(quote_handler)
+    if mode not in ["dev", "prod"]:
+        logger.error("Bot start: FAIL! Invalid mode")
+        return
 
-    # horoscope_handler = CommandHandler("horoscope", get_horoscope)
-    # dispatcher.add_handler(horoscope_handler)
+    if mode == "dev":
+        vars_dict["self_id"] = vars_dict["self_id_dev"]
 
-    delete_dice_handler = MessageHandler(Filters.dice, delete_dice)
-    dispatcher.add_handler(delete_dice_handler)
+    # Create Application instead of Updater
+    application = (
+        Application.builder()
+        .token(token)
+        .read_timeout(1000)
+        .connect_timeout(1000)
+        .build()
+    )
+        
+    logger.info("Bot start: success!")
+    
+    # Update bot_data
+    application.bot_data.update(vars_dict)
+        
+    # Register command handlers
+    handlers = [
+        CommandHandler("quote", quote),
+        CommandHandler("goblin", send_goblin),
+        CommandHandler("oxxxy", send_oxxxy),
+        CommandHandler("day", show_day),
+        CommandHandler("holiday", show_holidays),
+        CommandHandler("zavod", send_morning),
+        CommandHandler("roll", roll_dice),
+        CommandHandler("horoscope", godnoscope),
+        CommandHandler("pause", paused),
+        CommandHandler("plotina", build_plotina),
+        CommandHandler("stats", stats_plotina),
+        CommandHandler("ai_horoscope", ai_horoscope),
+        CommandHandler("clear_context", clear_context),
+        CommandHandler("tarot", tarot),
+    ]
+        
+    for handler in handlers:
+        application.add_handler(handler)
+    
+    # Register message handlers (note: filters instead of Filters)
+    application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message))
+    application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
+        
+    # Register callback handlers
+    application.add_handler(CallbackQueryHandler(button_godnoscope))
+    
+    # Start the application with polling
+    logger.info("Bot is running... Press Ctrl+C to stop")
+    
+    try:
+        # Initialize and start the application
+        await application.initialize()
+        await application.start()
+        
+        # Run polling in the current event loop
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running
+        try:
+            # Wait indefinitely
+            await asyncio.Event().wait()
+        except KeyboardInterrupt:
+            pass
+            
+    except KeyboardInterrupt:
+        logger.info("Shutting down bot...")
+    finally:
+        try:
+            await application.stop()
+            await application.shutdown()
+            logger.info("Bot shutdown complete")
+        except Exception as e:
+            logger.warning(f"Error during shutdown: {e}")
+        
 
-    goblin_handler = CommandHandler("goblin", send_goblin)
-    dispatcher.add_handler(goblin_handler)
 
-    oxxxy_handler = CommandHandler("oxxxy", send_oxxxy)
-    dispatcher.add_handler(oxxxy_handler)
-
-    day_handler = CommandHandler("day", show_day)
-    dispatcher.add_handler(day_handler)
-
-    holiday_handler = CommandHandler("holiday", show_holidays)
-    dispatcher.add_handler(holiday_handler)
-
-    morning_handler = CommandHandler("zavod", send_morning)
-    dispatcher.add_handler(morning_handler)
-
-    roll_handler = CommandHandler("roll", roll_dice)
-    dispatcher.add_handler(roll_handler)
-
-    parse_handler = MessageHandler(Filters.text & ~Filters.command, parse_message)
-    dispatcher.add_handler(parse_handler)
-
-    # rambler_horoscope_handler = CommandHandler('horoscope', horoscope)
-    # dispatcher.add_handler(rambler_horoscope_handler)
-    # dispatcher.add_handler(CallbackQueryHandler(button))
-
-    godnoscope_handler = CommandHandler("horoscope", godnoscope)
-    dispatcher.add_handler(godnoscope_handler)
-    dispatcher.add_handler(CallbackQueryHandler(button_godnoscope))
-
-    pausing_handler = CommandHandler("pause", paused)
-    dispatcher.add_handler(pausing_handler)
-
-    dispatcher.add_handler(MessageHandler(Filters.document, spam_gif_detector))
-
-    updater.start_polling(drop_pending_updates=True)
-    updater.idle()
+def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
+    """Wrapper function to run the async main function."""
+    try:
+        asyncio.run(main(mode, spam_mode, token))
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by KeyboardInterrupt")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    fire.Fire(run_bot)

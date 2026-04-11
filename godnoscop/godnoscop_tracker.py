@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from telethon import TelegramClient, events, sync
+from telethon import TelegramClient, events
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.types import InputPeerEmpty
 
@@ -31,16 +31,13 @@ class GodnoscopTracker:
         self.godnoscopes = self.load_data()
         self.not_updated_text = "Они еще не проапдейтили гороскопы!"
 
-    def create_client(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    async def create_client(self):
         client = TelegramClient(
             str(self.config["auth"]["phone"]),
             self.config["auth"]["api_id"],
             self.config["auth"]["api_hash"],
-            loop=loop,
         )
-        client.start()
+        await client.start()
         return client
 
     @staticmethod
@@ -60,11 +57,11 @@ class GodnoscopTracker:
                     return sign, None
         return None
 
-    def update_godnoscopes(self):
+    async def update_godnoscopes(self):
         self.godnoscopes["last_date"] = str(self.get_last_date())
         self.godnoscopes["data"] = {}
-        client = self.create_client()
-        for message in client.iter_messages("godnoscopp", limit=20):
+        client = await self.create_client()
+        async for message in client.iter_messages("godnoscopp", limit=20):
             parsed = self.parse_post(message.text)
             print(parsed)
             if parsed is not None:
@@ -72,7 +69,7 @@ class GodnoscopTracker:
                 if post is not None:
                     self.godnoscopes["data"][sign] = post
         self.dump_data()
-        client.disconnect()
+        await client.disconnect()
         return self.godnoscopes
 
     def load_data(self):
@@ -87,7 +84,7 @@ class GodnoscopTracker:
         with open(self.config["paths"]["gonoscopes_path"], "w") as f:
             json.dump(self.godnoscopes, f)
 
-    def get_horoscope(self, sign):
+    async def get_horoscope(self, sign):
         if (
             not self.godnoscopes
             or self.godnoscopes["last_date"] != str(self.get_last_date())
@@ -95,15 +92,28 @@ class GodnoscopTracker:
             or sign not in self.godnoscopes["data"]
         ):
 
-            self.update_godnoscopes()
+            await self.update_godnoscopes()
 
         return self.godnoscopes["data"].get(sign, f"{sign}: {self.not_updated_text}")
 
 
-if __name__ == "__main__":
-    tracker = GodnoscopTracker()
+async def main():
+    # Note: config parameter is required but not provided in original main
+    # You'll need to pass a proper config dictionary
+    config = {
+        "auth": {
+            "phone": "your_phone",
+            "api_id": "your_api_id",
+            "api_hash": "your_api_hash"
+        },
+        "paths": {
+            "gonoscopes_path": "godnoscopes.json"
+        }
+    }
+    tracker = GodnoscopTracker(config)
 
     for sign in horo_list:
-        print(tracker.get_horoscope(sign))
+        horoscope = await tracker.get_horoscope(sign)
+        print(horoscope)
 
     tracker.dump_data()
