@@ -1,12 +1,11 @@
 import re
-from datetime import timedelta, datetime
+from datetime import timedelta
 from numpy.random import normal, uniform
 from time import sleep
 from random import choice
 from quotes import quotes
 import string
 from const import *
-import pandas as pd
 import asyncio
 import threading
 
@@ -139,7 +138,7 @@ def td_convert(td):
 
 
 def roll_custom_dice(text):
-    regex_find = re.findall("кубик \d+", text)
+    regex_find = re.findall(r"кубик \d+", text)
     if regex_find:
         number = int(regex_find[0].split()[-1])
         if 1 < number:
