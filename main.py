@@ -24,7 +24,7 @@ from telegram.ext import (
 )
 
 from logger import get_logger
-from if_rules import ifs, process_special_triggers, process_trigger_response, get_trigger_type
+from if_rules import ifs, process_trigger_response, get_trigger_type
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
@@ -192,7 +192,8 @@ class MessageProcessor:
     
     async def process_men_squad_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process special messages from men squad."""
-        if (update.message.from_user.id in men_squad and
+        first_condition = update.message is not None and update.message.from_user is not None
+        if (first_condition and update.message.from_user.id in men_squad and
             "нахуй баб" in update.message.text.lower()):
             
             regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
@@ -382,6 +383,7 @@ class MessageProcessor:
                 msg.startswith("слон") and
                 not msg.startswith("слонн") and
                 not msg.startswith("прислон")
+                and random.random() < 0.5
                 )
     
     async def process_diarrhea_spell(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
@@ -982,9 +984,9 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     )
                 logger.info(f"scripted answer_message: replied with {log_text}")
             
-            # Process special triggers that require custom logic
-            await process_special_triggers(update, context, msg)
-            
+            await processor.process_diarrhea_spell(update, context, msg)
+            await processor.process_pot_drinking(update, context, msg)
+
             # Process media responses that are not covered by triggers
             await processor.process_media_responses(update, context, msg)
             
