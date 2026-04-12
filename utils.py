@@ -1,12 +1,11 @@
 import re
-from datetime import timedelta, datetime
+from datetime import timedelta
 from numpy.random import normal, uniform
 from time import sleep
 from random import choice
 from quotes import quotes
 import string
 from const import *
-import pandas as pd
 import asyncio
 import threading
 
