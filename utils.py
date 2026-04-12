@@ -69,6 +69,7 @@ def check_is_in(msg: str, sentences: list, exact: bool = False) -> bool:
         else:
             if word == msg:
                 return True
+    return False
 
 
 def check_admin(uid: int, admins_list) -> bool:
@@ -95,7 +96,7 @@ def answer_probability(
     elif spam_mode == "medium":
         return uniform(0, 1) >= 0.75
     elif spam_mode == "rare":
-        return uniform(0, 0.1) > 0.8
+        return uniform(0, 1) >= 0.95
     return 0.75
 
 
