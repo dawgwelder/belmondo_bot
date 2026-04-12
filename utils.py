@@ -139,7 +139,7 @@ def td_convert(td):
 
 
 def roll_custom_dice(text):
-    regex_find = re.findall("кубик \d+", text)
+    regex_find = re.findall(r"кубик \d+", text)
     if regex_find:
         number = int(regex_find[0].split()[-1])
         if 1 < number:

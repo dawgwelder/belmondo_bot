@@ -228,7 +228,8 @@ class MessageProcessor:
     
     async def process_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process AI chat responses."""
-        if (update.message.reply_to_message is not None and
+        if (update.message is not None and
+            update.message.reply_to_message is not None and
             update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
             update.message.from_user.id not in excluded_uids):
             
