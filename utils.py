@@ -100,46 +100,6 @@ def answer_probability(
     return 0.75
 
 
-def get_last_record(df, _id):
-    if _id in df.id.values:
-        return df.where(df.id == _id).max()
-    else:
-        return None
-
-
-def parse_length(length):
-    text = f"{length} см"
-    meter = length // 100
-    kilometer = length // 100000
-
-    if kilometer:
-        text = f"{kilometer} км {meter} м " + text
-    elif meter:
-        text = f" {meter} м " + text
-
-    return text
-
-
-def get_length(df, first_name, random_number, stats=False):
-    plotina_length = df["overall_build"].sum()
-    plotina = parse_length(plotina_length)
-
-    if not stats:
-        text = (
-            f"Бобер {first_name} сделал плотину выше на {random_number} см! "
-            f"Общая высота плотины {plotina}"
-        )
-    else:
-        active_length = df["overall_build"].max()
-        active = df[df["overall_build"] == active_length].loc[0, "first_name"]
-        active_length = parse_length(active_length)
-        text = (
-            f"Общая высота плотины - {plotina}! \n"
-            f"Самый активный бобёр - {active}, он построил {active_length}."
-        )
-    return text
-
-
 def td_convert(td):
     def dummy_converter(number, first, interval, others):
         formatted = ""

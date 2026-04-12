@@ -758,74 +758,6 @@ class ContentSender:
                 len(context.bot_data["horoscope_history"]),
             )
 
-class PlotinaManager:
-    """Manages the plotina (dam) building game."""
-    
-    def __init__(self, file_path: str = "plotina.parquet"):
-        self.file_path = file_path
-    
-    async def build_plotina(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Process plotina building command."""
-        try:
-            df = pd.read_parquet(self.file_path)
-        except FileNotFoundError:
-            df = pd.DataFrame(columns=[
-                "id", "username", "first_name", "last_name",
-                "dt", "last_build", "overall_build"
-            ])
-        
-        _id = update.effective_user.id
-        username = update.effective_user.username
-        first_name = update.effective_user.first_name
-        last_name = update.effective_user.last_name
-        dt = datetime.datetime.now()
-        
-        random_number = choice(range(1, 10))
-        if choice(range(10)) > 9:
-            random_number = choice(range(20, 101))
-        
-        if _id in df.id.values:
-            record = df[df.id == _id]
-            if (dt - pd.to_datetime(record.iloc[0]["dt"])).total_seconds() // 3600 >= 1:
-                df.loc[df.id == _id, "dt"] = pd.to_datetime(dt)
-                df.loc[df.id == _id, "last_build"] = random_number
-                df.loc[df.id == _id, "overall_build"] = df.loc[df.id == _id, "overall_build"] + random_number
-                text = get_length(df, first_name, random_number)
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-            else:
-                text = f"Бобер {first_name} все еще спит!"
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        else:
-            int_dt = int(pd.Timestamp(dt).to_datetime64())
-            record = pd.DataFrame({
-                "id": [_id],
-                "username": [username],
-                "first_name": [first_name],
-                "last_name": [last_name],
-                "dt": [int_dt],
-                "last_build": [random_number],
-                "overall_build": [random_number],
-            })
-            text = (f"Бобер {first_name} вступил в игру и "
-                   f"сделал плотину выше на {random_number} см!")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-            df = pd.concat([df, record], ignore_index=True)
-        
-        # Save to file asynchronously (using thread executor for pandas operations)
-        await asyncio.get_event_loop().run_in_executor(None, lambda: df.to_parquet(self.file_path))
-    
-    async def show_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show plotina building statistics."""
-        try:
-            df = pd.read_parquet(self.file_path)
-            text = get_length(df, None, None, stats=True)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        except FileNotFoundError:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Статистика пока недоступна."
-            )
-
 
 def pause(func):
     """Decorator to pause bot functionality."""
@@ -869,8 +801,6 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     reply_to_message_id=update.message.message_id
                 )
     
-    
-
 
 @pause
 async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1069,19 +999,6 @@ async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 @pause
-async def build_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Build plotina."""
-    plotina_manager = PlotinaManager()
-    await plotina_manager.build_plotina(update, context)
-
-
-@pause
-async def stats_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show plotina statistics."""
-    plotina_manager = PlotinaManager()
-    await plotina_manager.show_stats(update, context)
-    
-@pause
 async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send AI horoscope."""
     await ContentSender.ai_horoscope(update, context)
@@ -1150,8 +1067,6 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("horoscope", godnoscope),
         CommandHandler("horoscope_mail", get_horoscope),
         CommandHandler("pause", paused),
-        CommandHandler("plotina", build_plotina),
-        CommandHandler("stats", stats_plotina),
         CommandHandler("ai_horoscope", ai_horoscope),
         CommandHandler("clear_context", clear_context),
         CommandHandler("tarot", tarot),
