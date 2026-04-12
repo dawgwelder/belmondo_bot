@@ -76,7 +76,7 @@ class GodnoscopTracker:
         try:
             with open(self.config["paths"]["gonoscopes_path"]) as f:
                 data = json.load(f)
-        except:
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
             data = {}
         return data
 

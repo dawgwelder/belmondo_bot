@@ -28,7 +28,7 @@ from if_rules import ifs, process_trigger_response, get_trigger_type
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post, get_ai_horoscope_prompt, generate_tarot_prompt
+from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
@@ -57,7 +57,10 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 async def parse_stream(stream):
     text = ""
     async for chunk in stream:
-        if chunk.choices[0].delta.content:
+        if (
+            chunk.choices
+            and chunk.choices[0].delta.content is not None
+        ):
             text += chunk.choices[0].delta.content
     return text
 
@@ -199,7 +202,11 @@ class MessageProcessor:
             regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
             numbers = re.findall(regex, update.message.text)
             
-            if not numbers or not numbers[0].isdigit():
+            try:
+                _cast = int(numbers[0]) if numbers else None
+            except ValueError:
+                _cast = None
+            if _cast is None:
                 text = "Ты неправильно накастовал, дебил"
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -208,7 +215,7 @@ class MessageProcessor:
                     parse_mode="markdown",
                 )
             else:
-                count = min(int(numbers[0]), 10)
+                count = min(abs(_cast), 10)
                 for _ in range(count):
                     text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
                     await context.bot.send_message(
@@ -223,7 +230,7 @@ class MessageProcessor:
         """Process AI chat responses."""
         if (update.message.reply_to_message is not None and
             update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
-            update.message.reply_to_message.from_user.id not in excluded_uids):
+            update.message.from_user.id not in excluded_uids):
             
             content = update.message.text
             model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
@@ -671,7 +678,8 @@ class ContentSender:
             except FileNotFoundError:
                 logger.error(f"Zavod image not found: {file}")
         else:
-            zavod_user = bot_data["username"].replace("@", "")
+            raw_name = bot_data.get("username") or username or "без_ника"
+            zavod_user = raw_name.replace("@", "")
             text = (f"Поздно, другалёчек!\n"
                    f"Офисчанин/Заводчанин дня - @{zavod_user}!")
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
@@ -710,11 +718,9 @@ class ContentSender:
         # Передаем историю гороскопов в функцию промпта
         if update.effective_user.id not in excluded_uids:
             history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
-            prompt = get_ai_horoscope_prompt(history)
-            messages = [{"role": "system", "content": professional_prompt},
-                        {"role": "user", "content": prompt}] 
-            
-            
+            prompt = build_ai_horoscope_user_message(history)
+            messages = [{"role": "system", "content": professional_prompt_ai_horoscope},
+                        {"role": "user", "content": prompt}]
             # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
             if context.bot_data["horoscope_history"]:
                 previous_messages = []
@@ -723,13 +729,21 @@ class ContentSender:
                 messages = previous_messages + messages
                   
             text = ""
-            stream = await client.chat.completions.create(
-                model="deepseek-chat",
-                messages=messages,
-                stream=True
-            )
-            text = await parse_stream(stream)
-            print("Text: ", text)
+            try:
+                stream = await client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    stream=True
+                )
+                text = await parse_stream(stream)
+            except Exception as e:
+                logger.error(f"ai_horoscope: API error: {e}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Не удалось сгенерировать гороскоп. Попробуйте позже.",
+                    parse_mode="markdown",
+                )
+                return
             if text:
                 context.bot_data["horoscope_history"].append(text)
                 await send_long_message(
@@ -738,74 +752,10 @@ class ContentSender:
                     text=text,
                     parse_mode="markdown"
                 )
-            logger.info(f"ai_horoscope: sent with prompt {prompt}")
-
-class PlotinaManager:
-    """Manages the plotina (dam) building game."""
-    
-    def __init__(self, file_path: str = "plotina.parquet"):
-        self.file_path = file_path
-    
-    async def build_plotina(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Process plotina building command."""
-        try:
-            df = pd.read_parquet(self.file_path)
-        except FileNotFoundError:
-            df = pd.DataFrame(columns=[
-                "id", "username", "first_name", "last_name",
-                "dt", "last_build", "overall_build"
-            ])
-        
-        _id = update.effective_user.id
-        username = update.effective_user.username
-        first_name = update.effective_user.first_name
-        last_name = update.effective_user.last_name
-        dt = datetime.datetime.now()
-        
-        random_number = choice(range(1, 10))
-        if choice(range(10)) > 9:
-            random_number = choice(range(20, 101))
-        
-        if _id in df.id.values:
-            record = df[df.id == _id]
-            if (dt - pd.to_datetime(record.iloc[0]["dt"])).seconds // 3600 >= 1:
-                df.loc[df.id == _id, "dt"] = pd.to_datetime(dt)
-                df.loc[df.id == _id, "last_build"] = random_number
-                df.loc[df.id == _id, "overall_build"] = df.loc[df.id == _id, "overall_build"] + random_number
-                text = get_length(df, first_name, random_number)
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-            else:
-                text = f"Бобер {first_name} все еще спит!"
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        else:
-            int_dt = int(pd.Timestamp(dt).to_datetime64())
-            record = pd.DataFrame({
-                "id": [_id],
-                "username": [username],
-                "first_name": [first_name],
-                "last_name": [last_name],
-                "dt": [int_dt],
-                "last_build": [random_number],
-                "overall_build": [random_number],
-            })
-            text = (f"Бобер {first_name} вступил в игру и "
-                   f"сделал плотину выше на {random_number} см!")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-            df = pd.concat([df, record], ignore_index=True)
-        
-        # Save to file asynchronously (using thread executor for pandas operations)
-        await asyncio.get_event_loop().run_in_executor(None, lambda: df.to_parquet(self.file_path))
-    
-    async def show_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show plotina building statistics."""
-        try:
-            df = pd.read_parquet(self.file_path)
-            text = get_length(df, None, None, stats=True)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-        except FileNotFoundError:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Статистика пока недоступна."
+            logger.info(
+                "ai_horoscope: user_message_len=%s horoscope_history_count=%s",
+                len(prompt),
+                len(context.bot_data["horoscope_history"]),
             )
 
 
@@ -851,8 +801,6 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     reply_to_message_id=update.message.message_id
                 )
     
-    
-
 
 @pause
 async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -923,7 +871,7 @@ async def spam_gif_detector(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for idx in range(len(context.bot_data["msg_deque"]) - 1):
             msg = context.bot_data["msg_deque"][idx]
             if (msg["from"] == last_msg["from"] and
-                (last_msg["date"] - msg["date"]).seconds < 3):
+                (last_msg["date"] - msg["date"]).total_seconds() < 3):
                 await context.bot.delete_message(
                     update.effective_chat.id, update.message.message_id
                 )
@@ -957,7 +905,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         
         # Spam protection
         if (prev_ts is not None and
-            (ts - prev_ts).seconds < 3 and
+            (ts - prev_ts).total_seconds() < 3 and
             _id != context.bot_data["master"]):
             msg = False
         
@@ -1019,7 +967,7 @@ async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if update.message.dice.emoji in emojis:
         await asyncio.sleep(choice(CHOICES))
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
-        logger.info(f"delete_dice: {update.message.text}")
+        logger.info(f"delete_dice: msg_id={update.message.message_id}")
 
 
 @pause
@@ -1050,19 +998,6 @@ async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await ContentSender.show_holidays(update, context)
 
 
-@pause
-async def build_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Build plotina."""
-    plotina_manager = PlotinaManager()
-    await plotina_manager.build_plotina(update, context)
-
-
-@pause
-async def stats_plotina(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show plotina statistics."""
-    plotina_manager = PlotinaManager()
-    await plotina_manager.show_stats(update, context)
-    
 @pause
 async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send AI horoscope."""
@@ -1130,9 +1065,8 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("zavod", send_morning),
         CommandHandler("roll", roll_dice),
         CommandHandler("horoscope", godnoscope),
+        CommandHandler("horoscope_mail", get_horoscope),
         CommandHandler("pause", paused),
-        CommandHandler("plotina", build_plotina),
-        CommandHandler("stats", stats_plotina),
         CommandHandler("ai_horoscope", ai_horoscope),
         CommandHandler("clear_context", clear_context),
         CommandHandler("tarot", tarot),
