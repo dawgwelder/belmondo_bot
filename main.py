@@ -57,7 +57,10 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 async def parse_stream(stream):
     text = ""
     async for chunk in stream:
-        if chunk.choices[0].delta.content:
+        if (
+            chunk.choices
+            and chunk.choices[0].delta.content is not None
+        ):
             text += chunk.choices[0].delta.content
     return text
 
@@ -199,7 +202,11 @@ class MessageProcessor:
             regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
             numbers = re.findall(regex, update.message.text)
             
-            if not numbers or not numbers[0].isdigit():
+            try:
+                _cast = int(numbers[0]) if numbers else None
+            except ValueError:
+                _cast = None
+            if _cast is None:
                 text = "Ты неправильно накастовал, дебил"
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -208,7 +215,7 @@ class MessageProcessor:
                     parse_mode="markdown",
                 )
             else:
-                count = min(int(numbers[0]), 10)
+                count = min(abs(_cast), 10)
                 for _ in range(count):
                     text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
                     await context.bot.send_message(
@@ -223,7 +230,7 @@ class MessageProcessor:
         """Process AI chat responses."""
         if (update.message.reply_to_message is not None and
             update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
-            update.message.reply_to_message.from_user.id not in excluded_uids):
+            update.message.from_user.id not in excluded_uids):
             
             content = update.message.text
             model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
@@ -671,7 +678,8 @@ class ContentSender:
             except FileNotFoundError:
                 logger.error(f"Zavod image not found: {file}")
         else:
-            zavod_user = bot_data["username"].replace("@", "")
+            raw_name = bot_data.get("username") or username or "без_ника"
+            zavod_user = raw_name.replace("@", "")
             text = (f"Поздно, другалёчек!\n"
                    f"Офисчанин/Заводчанин дня - @{zavod_user}!")
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
@@ -721,13 +729,21 @@ class ContentSender:
                 messages = previous_messages + messages
                   
             text = ""
-            stream = await client.chat.completions.create(
-                model="deepseek-chat",
-                messages=messages,
-                stream=True
-            )
-            text = await parse_stream(stream)
-            print("Text: ", text)
+            try:
+                stream = await client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    stream=True
+                )
+                text = await parse_stream(stream)
+            except Exception as e:
+                logger.error(f"ai_horoscope: API error: {e}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Не удалось сгенерировать гороскоп. Попробуйте позже.",
+                    parse_mode="markdown",
+                )
+                return
             if text:
                 context.bot_data["horoscope_history"].append(text)
                 await send_long_message(
@@ -770,7 +786,7 @@ class PlotinaManager:
         
         if _id in df.id.values:
             record = df[df.id == _id]
-            if (dt - pd.to_datetime(record.iloc[0]["dt"])).seconds // 3600 >= 1:
+            if (dt - pd.to_datetime(record.iloc[0]["dt"])).total_seconds() // 3600 >= 1:
                 df.loc[df.id == _id, "dt"] = pd.to_datetime(dt)
                 df.loc[df.id == _id, "last_build"] = random_number
                 df.loc[df.id == _id, "overall_build"] = df.loc[df.id == _id, "overall_build"] + random_number
@@ -925,7 +941,7 @@ async def spam_gif_detector(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for idx in range(len(context.bot_data["msg_deque"]) - 1):
             msg = context.bot_data["msg_deque"][idx]
             if (msg["from"] == last_msg["from"] and
-                (last_msg["date"] - msg["date"]).seconds < 3):
+                (last_msg["date"] - msg["date"]).total_seconds() < 3):
                 await context.bot.delete_message(
                     update.effective_chat.id, update.message.message_id
                 )
@@ -959,7 +975,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         
         # Spam protection
         if (prev_ts is not None and
-            (ts - prev_ts).seconds < 3 and
+            (ts - prev_ts).total_seconds() < 3 and
             _id != context.bot_data["master"]):
             msg = False
         
@@ -1021,7 +1037,7 @@ async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if update.message.dice.emoji in emojis:
         await asyncio.sleep(choice(CHOICES))
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
-        logger.info(f"delete_dice: {update.message.text}")
+        logger.info(f"delete_dice: msg_id={update.message.message_id}")
 
 
 @pause
@@ -1132,6 +1148,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("zavod", send_morning),
         CommandHandler("roll", roll_dice),
         CommandHandler("horoscope", godnoscope),
+        CommandHandler("horoscope_mail", get_horoscope),
         CommandHandler("pause", paused),
         CommandHandler("plotina", build_plotina),
         CommandHandler("stats", stats_plotina),

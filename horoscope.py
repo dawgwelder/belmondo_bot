@@ -7,6 +7,9 @@ from datetime import datetime
 mail = Template("https://horo.mail.ru/prediction/$horo/today/")
 rambler = Template("https://horoscopes.rambler.ru/$horo/")
 
+# (connect timeout, read timeout) for requests.get
+_HTTP_TIMEOUT = (5, 20)
+
 horo_list = [
     "aries",
     "taurus",
@@ -141,13 +144,18 @@ def _extract_keywords(text, max_keywords=5):
 
 
 def get_horoscope_mail(horo):
-    soup = BeautifulSoup(requests.get(mail.substitute(horo=horo)).text, features="lxml")
-    text = "\n".join(p.text for p in soup.find_all("p"))
-    return text
+    try:
+        r = requests.get(mail.substitute(horo=horo), timeout=_HTTP_TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, features="lxml")
+        text = "\n".join(p.text for p in soup.find_all("p"))
+        return text
+    except requests.RequestException:
+        return f"(не удалось загрузить эталон для {horo})"
 
 
 def get_horoscope_rambler(horo):
-    soup = BeautifulSoup(requests.get(rambler.substitute(horo=horo)).text, features="lxml")
+    soup = BeautifulSoup(requests.get(rambler.substitute(horo=horo), timeout=_HTTP_TIMEOUT).text, features="lxml")
     text = "\n".join(p.text for p in soup.find_all("p"))
     return text
 
@@ -162,9 +170,16 @@ def get_horoscopes():
 
 
 def get_horoscope(horo):
-    soup = BeautifulSoup(requests.get(mail.substitute(horo=horo)).text, features="lxml")
-    text = soup.find_all("p")[0].text
-    return text
+    try:
+        r = requests.get(mail.substitute(horo=horo), timeout=_HTTP_TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, features="lxml")
+        paras = soup.find_all("p")
+        if not paras:
+            return "Текст гороскопа временно недоступен."
+        return paras[0].text
+    except requests.RequestException:
+        return "Не удалось загрузить гороскоп. Попробуйте позже."
 
 
 def generate_horo_message(horo):
