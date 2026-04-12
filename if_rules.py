@@ -1,13 +1,9 @@
 from utils import *
 from const import *
-from datetime import datetime
 from typing import Tuple
 import json
 from random import choice
-import asyncio
 import aiofiles
-import re
-import pytz
 from logger import get_logger
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -153,84 +149,3 @@ def get_trigger_type(answer: str) -> str:
         return "mixed"
     else:
         return "text"
-
-
-async def process_special_triggers(update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
-    """Process special triggers that require custom logic."""
-    # Dice rolling
-    if "кубик" in msg:
-        text = roll_custom_dice(msg)
-        if text is not None:
-            if text == "default":
-                await context.bot.send_dice(
-                    chat_id=update.effective_message.chat_id,
-                    reply_to_message_id=update.message.message_id,
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-    
-    # Diarrhea spell
-    if msg.startswith("понос ") and " на " in msg:
-        user = msg.split("понос ")[-1].split(" на")[0]
-        reg_value = re.sub("[^0-9]", "", msg)
-        reg_value = int(reg_value) if reg_value else -999
-        value = msg[-1]
-        text = "Вы допустили ошибку в заклинании - теперь ждите кару самопоноса"
-        
-        if value.isdigit():
-            value = int(value)
-            
-            if 1 <= value <= 6 and reg_value == value:
-                roll = await context.bot.send_dice(chat_id=update.effective_message.chat_id)
-                await asyncio.sleep(2.7)
-                
-                if roll.dice.value == value:
-                    text = f"*Понос* {user} обеспечен"
-                else:
-                    text = "_Каст поноса был провален!_"
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-    
-    # Pot drinking status
-    if any(phrase in msg for phrase in ["горшок не пьет", "горшок не пьёт", "горшок держится"]):
-        not_drink_choice = choice([
-            "не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"
-        ])
-        
-        not_drink = (
-            datetime.now(pytz.timezone("Europe/Moscow")).date() -
-            datetime.strptime("19072013", "%d%m%Y").date()
-        )
-        not_drink_ending = td_convert(not_drink)
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=f"Горшок {not_drink_choice} уже {not_drink_ending}",
-            parse_mode="markdown",
-        )
-    
-    # Jackpot with text
-    if "джекпот" in msg:
-        try:
-            async with aiofiles.open("img/jackpot.webp", "rb") as f:
-                sticker_data = await f.read()
-                await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
-                    parse_mode="markdown",
-                )
-        except FileNotFoundError:
-            logger.error("Jackpot sticker not found")
