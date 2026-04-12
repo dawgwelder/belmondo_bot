@@ -207,15 +207,6 @@
     "exclude_uids" : [],
     "exact": false
   },
-  "dice":
-  {
-    "triggers": ["кубик"],
-    "answers": ["default"],
-    "exclude_words": [],
-    "prob": -1,
-    "exclude_uids" : [],
-    "exact": false
-  },
   "nazi":
   {
     "triggers": ["нацист"],

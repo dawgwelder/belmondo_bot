@@ -28,7 +28,7 @@ from if_rules import ifs, process_trigger_response, get_trigger_type
 from utils import *
 from const import *
 from oxxxy_urls import oxxxy_playlist
-from horoscope import generate_post, get_ai_horoscope_prompt, generate_tarot_prompt
+from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
@@ -710,11 +710,9 @@ class ContentSender:
         # Передаем историю гороскопов в функцию промпта
         if update.effective_user.id not in excluded_uids:
             history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
-            prompt = get_ai_horoscope_prompt(history)
-            messages = [{"role": "system", "content": professional_prompt},
-                        {"role": "user", "content": prompt}] 
-            
-            
+            prompt = build_ai_horoscope_user_message(history)
+            messages = [{"role": "system", "content": professional_prompt_ai_horoscope},
+                        {"role": "user", "content": prompt}]
             # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
             if context.bot_data["horoscope_history"]:
                 previous_messages = []
@@ -738,7 +736,11 @@ class ContentSender:
                     text=text,
                     parse_mode="markdown"
                 )
-            logger.info(f"ai_horoscope: sent with prompt {prompt}")
+            logger.info(
+                "ai_horoscope: user_message_len=%s horoscope_history_count=%s",
+                len(prompt),
+                len(context.bot_data["horoscope_history"]),
+            )
 
 class PlotinaManager:
     """Manages the plotina (dam) building game."""

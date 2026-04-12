@@ -84,46 +84,38 @@ def generate_tarot_prompt(result):
     return prompt
 
 
-def get_ai_horoscope_prompt(history=None):
+def _cdata_escape(text: str) -> str:
+    """Экранирует последовательность ]]> внутри XML CDATA."""
+    return text.replace("]]>", "]]]]><![CDATA[>")
+
+
+def build_reference_horoscopes_xml() -> str:
+    """Эталонные тексты по знакам: пары sign / horoscope в CDATA."""
+    parts = []
+    for horo in horo_list:
+        raw = get_horoscope_mail(horo)
+        safe = _cdata_escape(raw)
+        parts.append(f"<sign>{horo}</sign>\n<horoscope><![CDATA[{safe}]]></horoscope>")
+    return "\n".join(parts)
+
+
+def build_ai_horoscope_user_message(history=None):
     """
-    Генерирует промпт для создания гороскопа с учетом истории предыдущих гороскопов.
-    
-    Args:
-        history: Список предыдущих гороскопов для предотвращения повторений
-    
-    Returns:
-        str: Промпт для генерации гороскопа
+    Минимальный user-промпт: дата, эталонные гороскопы в XML, при необходимости ключевые слова прошлого ответа.
+    Полные правила заданы в professional_prompt_ai_horoscope (system).
     """
     dt = datetime.now().date().strftime("%d.%m.%Y")
-    prompt = f"Построй гороскоп для всех знаков зодиака на {dt}"
-    horo_text = get_horoscopes()
-    
-    # Добавляем инструкции по предотвращению повторений
-    prompt += "\n\nВАЖНЫЕ ТРЕБОВАНИЯ:"
-    prompt += "\n- Не повторяй информацию из своих предыдущих гороскопов"
-    prompt += "\n- Используй разные формулировки и подходы"
-    prompt += "\n- Создавай уникальный контент для каждого знака зодиака"
-    prompt += "\n- Избегай шаблонных фраз и клише"
-    prompt += "\n- Не используй таблицы для форматирования текста"
-    prompt += "\n- Не используй HTML теги"
-    prompt += "\n- Можешь использовать жирный текст для выделения важных слов в формате Markdown"
-    prompt += "\n- Гороскопы на сегодня на других сайтах, используй эту информацию:"
-    prompt += "\n" + horo_text
-    
-    # Если есть история, добавляем конкретные инструкции
-    if history and len(history) > 0:
-        prompt += f"\n\nУ тебя есть история из {len(history)} предыдущих гороскопов."
-        prompt += "\nОбязательно создавай НОВЫЙ контент, отличающийся от предыдущих версий."
-        
-        # Добавляем краткое описание предыдущих гороскопов для контекста
-        if len(history) >= 1:
-            prompt += f"\n\nПоследний гороскоп содержал информацию о: {_extract_keywords(history[-1])}"
-        # if len(history) >= 2:
-        #     prompt += f"\nПредыдущий гороскоп содержал информацию о: {_extract_keywords(history[-2])}"
-            
-        prompt += "\n\nСоздай совершенно новый гороскоп с другими темами и подходами!"
-    
-    return prompt
+    chunks = [f"<date>{dt}</date>", build_reference_horoscopes_xml()]
+    if history and len(history) >= 1:
+        kw = _extract_keywords(history[-1])
+        kw_safe = _cdata_escape(kw)
+        chunks.append(f"<previous_keywords><![CDATA[{kw_safe}]]></previous_keywords>")
+    return "\n".join(chunks)
+
+
+def get_ai_horoscope_prompt(history=None):
+    """Совместимость: то же, что build_ai_horoscope_user_message."""
+    return build_ai_horoscope_user_message(history)
 
 
 def _extract_keywords(text, max_keywords=5):
