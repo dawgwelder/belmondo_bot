@@ -5,7 +5,6 @@ from time import sleep
 from random import choice
 from quotes import quotes
 import string
-from const import *
 import asyncio
 import threading
 

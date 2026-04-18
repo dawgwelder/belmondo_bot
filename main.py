@@ -1,5 +1,6 @@
 import os
 import random
+from random import choice
 import re
 import datetime
 import pytz
@@ -25,8 +26,8 @@ from telegram.ext import (
 
 from logger import get_logger
 from if_rules import ifs, process_trigger_response, get_trigger_type
-from utils import *
-from const import *
+import const
+import utils
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
@@ -157,6 +158,24 @@ async def send_long_message(
         # Small delay between messages to avoid rate limiting
         if i < len(chunks) - 1:
             await asyncio.sleep(0.1)
+            
+
+async def ensure_master_in_chat_for_ai(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    """True if master is in the chat; otherwise send refusal and return False."""
+    member = await context.bot.get_chat_member(
+        update.effective_chat.id, context.bot_data["master"]
+    )
+    if member.status not in ("member", "administrator", "creator"):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text="Я не хочу с тобой разговаривать, mon ami",
+            parse_mode="markdown",
+        )
+        return False
+    return True
 
 
 class MessageProcessor:
@@ -170,12 +189,12 @@ class MessageProcessor:
         if update.message is None or update.message.via_bot is None:
             return
             
-        godnoscop_bot = update.message.via_bot.id == GODNOSCOP_ID
+        godnoscop_bot = update.message.via_bot.id == const.GODNOSCOP_ID
         
-        if update.message.via_bot.id not in [GODNOSCOP_ID, SELF_ID, PREDSKAZ_ID]:
+        if update.message.via_bot.id not in [const.GODNOSCOP_ID, const.SELF_ID, const.PREDSKAZ_ID]:
             # Асинхронная задержка с автоматическим удалением сообщения
-            await sleep_choice_asyncio(
-                DELAY_CHOICES,
+            await utils.sleep_choice_asyncio(
+                const.DELAY_CHOICES,
                 context.bot,
                 update.effective_chat.id,
                 update.message.message_id,
@@ -196,7 +215,7 @@ class MessageProcessor:
     async def process_men_squad_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process special messages from men squad."""
         first_condition = update.message is not None and update.message.from_user is not None
-        if (first_condition and update.message.from_user.id in men_squad and
+        if (first_condition and update.message.from_user.id in const.men_squad and
             "нахуй баб" in update.message.text.lower()):
             
             regex = r"(-?[0-9]|[1-9][0-9]|[1-9][0-9][0-9])"
@@ -231,12 +250,15 @@ class MessageProcessor:
         if (update.message is not None and
             update.message.reply_to_message is not None and
             update.message.reply_to_message.from_user.id == context.bot_data["self_id"] and
-            update.message.from_user.id not in excluded_uids):
+            update.message.from_user.id not in const.excluded_uids):
+            
+            if not await ensure_master_in_chat_for_ai(update, context):
+                return
             
             content = update.message.text
             model_type = "deepseek-reasoner" if content.lower().startswith("подумай") else "deepseek-chat"
             
-            context.bot_data["chat_deque"].append({"role": "system", "content": professional_prompt})
+            context.bot_data["chat_deque"].append({"role": "system", "content": const.professional_prompt})
             context.bot_data["chat_deque"].append({"role": "user", "content": content})
             
             try:
@@ -251,7 +273,7 @@ class MessageProcessor:
                 else:
                     stream = await client.chat.completions.create(
                         model=model_type,
-                        messages=list([{"role": "system", "content": professional_prompt},
+                        messages=list([{"role": "system", "content": const.professional_prompt},
                                        {"role": "user", "content": content}]),
                         stream=True
                     )
@@ -282,7 +304,7 @@ class MessageProcessor:
         # Demobilization countdown
         if "дембель" in msg:
             td = datetime.datetime(2028, 11, 14, tzinfo=tz) - datetime.datetime.now(tz)
-            text = f"Арбузу до пенсии осталось ровно {td_convert(td)}"
+            text = f"Арбузу до пенсии осталось ровно {utils.td_convert(td)}"
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
@@ -291,7 +313,7 @@ class MessageProcessor:
             )
         if "амир" in msg:
             td = datetime.datetime(2026, 10, 14, tzinfo=tz) - datetime.datetime.now(tz)
-            text = f"Амиру до свободы осталось {td_convert(td)}"
+            text = f"Амиру до свободы осталось {utils.td_convert(td)}"
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 reply_to_message_id=update.message.message_id,
@@ -311,7 +333,7 @@ class MessageProcessor:
         
         # Dice rolling
         if "кубик" in msg:
-            text = roll_custom_dice(msg)
+            text = utils.roll_custom_dice(msg)
             if text is not None:
                 if text == "default":
                     await context.bot.send_dice(
@@ -340,7 +362,7 @@ class MessageProcessor:
                     await context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=reply_to,
-                        caption=colocola,
+                        caption=const.colocola,
                         photo=photo_data,
                         parse_mode="markdown",
                     )
@@ -505,9 +527,9 @@ class MessageProcessor:
         
         not_drink = (
             datetime.datetime.now(tz).date() -
-            POT_DATE
+            const.POT_DATE
         )
-        not_drink_ending = td_convert(not_drink)
+        not_drink_ending = utils.td_convert(not_drink)
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -566,7 +588,7 @@ class ContentSender:
         """Send random goblin content."""
         goblin_dir = "img/goblin/"
         mode = choice(["mp4", "img", "sticker", "text", "youtube"])
-        urls = goblin_urls
+        urls = const.goblin_urls
         
         try:
             if mode == "mp4":
@@ -609,7 +631,7 @@ class ContentSender:
                     logger.info(f"send_goblin: mode {mode} file {sticker} sent")
                     
             elif mode == "text":
-                text = choice(goblin_pasta)
+                text = choice(const.goblin_pasta)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
@@ -716,11 +738,13 @@ class ContentSender:
     @staticmethod
     async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send AI horoscope."""
+        if not await ensure_master_in_chat_for_ai(update, context):
+            return
         # Передаем историю гороскопов в функцию промпта
-        if update.effective_user.id not in excluded_uids:
+        if update.effective_user.id not in const.excluded_uids:
             history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
             prompt = build_ai_horoscope_user_message(history)
-            messages = [{"role": "system", "content": professional_prompt_ai_horoscope},
+            messages = [{"role": "system", "content": const.professional_prompt_ai_horoscope},
                         {"role": "user", "content": prompt}]
             # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
             if context.bot_data["horoscope_history"]:
@@ -770,6 +794,9 @@ def pause(func):
 
 @pause
 async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await ensure_master_in_chat_for_ai(update, context):
+        return
+    
     result = []
     with open("tarot_cards.json") as f:
         deck = random.sample(json.load(f)["cards"], k=3)
@@ -784,7 +811,7 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tarot_prompt = generate_tarot_prompt(result)
     
     request = []
-    request.append({"role": "system", "content": professional_prompt})
+    request.append({"role": "system", "content": const.professional_prompt})
     request.append({"role": "user", "content": tarot_prompt})
     
     stream = await client.chat.completions.create(
@@ -801,12 +828,80 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     parse_mode="markdown",
                     reply_to_message_id=update.message.message_id
                 )
-    
+
+
+_WEEKDAYS_RU = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+
+
+@pause
+async def magic_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Шуточное предсказание на день (1–2 предложения)."""
+    if not await ensure_master_in_chat_for_ai(update, context):
+        return
+
+    now = datetime.datetime.now(tz)
+    weekday_ru = _WEEKDAYS_RU[now.weekday()]
+    date_msk = now.strftime("%d.%m.%Y")
+    user_content = (
+        f"Сегодня по Москве: {weekday_ru}, {date_msk}.\n\n"
+        "Дай шуточное предсказание на этот день: ровно одно или два предложения — "
+        "намекни, как может пройти день, чего опасаться или к чему стремиться. "
+        "Без списков и без длинных абзацев; заверши короткой французской фразой с переводом в скобках."
+    )
+    messages = [
+        {"role": "system", "content": const.professional_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    try:
+        stream = await client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            stream=True,
+            max_tokens=180,
+        )
+        text = await parse_stream(stream)
+    except Exception as e:
+        logger.error(f"magic_prediction: API error: {e}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text="Не удалось сгенерировать предсказание. Попробуйте позже.",
+            parse_mode="markdown",
+        )
+        return
+
+    if not (text or "").strip():
+        logger.warning("magic_prediction: empty model response")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id,
+            text="Пустой ответ модели. Попробуйте ещё раз.",
+            parse_mode="markdown",
+        )
+        return
+
+    await send_long_message(
+        bot=context.bot,
+        chat_id=update.effective_chat.id,
+        text=text,
+        parse_mode="markdown",
+        reply_to_message_id=update.message.message_id,
+    )
+    logger.info("magic_prediction: sent prediction for %s", date_msk)
+
 
 @pause
 async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send random quote."""
-    text = quote_choice()
+    text = utils.quote_choice()
     logger.info(f"quote: {text[:10]}...")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
@@ -899,7 +994,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     # Process regular messages
     if update.message.text is not None and not text:
-        msg = clean_string(update.message.text.lower())
+        msg = utils.clean_string(update.message.text.lower())
         _id = update.message.from_user.id
         ts = update.message.date
         prev_ts = context.bot_data["spam_stopper"].get(_id, None)
@@ -965,8 +1060,8 @@ async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Delete dice messages."""
-    if update.message.dice.emoji in emojis:
-        await asyncio.sleep(choice(CHOICES))
+    if update.message.dice.emoji in const.emojis:
+        await asyncio.sleep(choice(const.CHOICES))
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
         logger.info(f"delete_dice: msg_id={update.message.message_id}")
 
@@ -1030,17 +1125,17 @@ async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Main bot initialization and setup - now fully async."""
     application = None
-    vars_dict["spam_mode"] = spam_mode
-    vars_dict["chat_deque"] = deque(maxlen=100)
-    vars_dict["msg_deque"] = deque(maxlen=100)
-    vars_dict["horoscope_history"] = deque(maxlen=1)
+    const.vars_dict["spam_mode"] = spam_mode
+    const.vars_dict["chat_deque"] = deque(maxlen=100)
+    const.vars_dict["msg_deque"] = deque(maxlen=100)
+    const.vars_dict["horoscope_history"] = deque(maxlen=1)
 
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
         return
 
     if mode == "dev":
-        vars_dict["self_id"] = vars_dict["self_id_dev"]
+        const.vars_dict["self_id"] = const.vars_dict["self_id_dev"]
 
     # Create Application instead of Updater
     application = (
@@ -1054,7 +1149,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     logger.info("Bot start: success!")
     
     # Update bot_data
-    application.bot_data.update(vars_dict)
+    application.bot_data.update(const.vars_dict)
         
     # Register command handlers
     handlers = [
@@ -1071,6 +1166,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         CommandHandler("ai_horoscope", ai_horoscope),
         CommandHandler("clear_context", clear_context),
         CommandHandler("tarot", tarot),
+        CommandHandler("magic_prediction", magic_prediction),
     ]
         
     for handler in handlers:

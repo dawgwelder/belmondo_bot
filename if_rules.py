@@ -1,5 +1,4 @@
-from utils import *
-from const import *
+import utils
 from typing import Tuple
 import json
 from random import choice
@@ -27,7 +26,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         update_uid: int = 0,
         exact: bool = False,
     ):
-        put_answer = check_is_in(msg, words, exact=exact)
+        put_answer = utils.check_is_in(msg, words, exact=exact)
         text = ""
         _prob = 0
         if put_answer:
@@ -35,7 +34,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
 
             if prob == -1:
                 # _prob = draw_prob(spam_mode=spam_mode)
-                prob = answer_probability(spam_mode)
+                prob = utils.answer_probability(spam_mode)
 
             if exclude_uids:
                 if update_uid in exclude_uids:  #
