@@ -7,7 +7,7 @@ from logger import get_logger
 from telegram import Update
 from telegram.ext import ContextTypes
 
-logger = get_logger("if_rules")
+logger = get_logger("triggers")
 
 
 with open("speaking/triggers.json") as f:

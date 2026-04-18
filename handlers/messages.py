@@ -11,7 +11,7 @@ import utils
 from config import logger
 from guards import pause
 from handlers.ai import process_ai_response
-from if_rules import get_trigger_type, ifs, process_trigger_response
+from triggers import get_trigger_type, ifs, process_trigger_response
 from processors import (
     process_bot_messages,
     process_diarrhea_spell,
