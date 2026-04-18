@@ -25,6 +25,7 @@ import const
 import utils
 from config import client, config, logger, tz, TELEGRAM_MAX_MESSAGE_LENGTH
 from state import vars_dict
+from guards import pause, ensure_master_in_chat_for_ai
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
@@ -137,24 +138,6 @@ async def send_long_message(
         if i < len(chunks) - 1:
             await asyncio.sleep(0.1)
             
-
-async def ensure_master_in_chat_for_ai(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> bool:
-    """True if master is in the chat; otherwise send refusal and return False."""
-    member = await context.bot.get_chat_member(
-        update.effective_chat.id, context.bot_data["master"]
-    )
-    if member.status not in ("member", "administrator", "creator"):
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text="Я не хочу с тобой разговаривать, mon ami",
-            parse_mode="markdown",
-        )
-        return False
-    return True
-
 
 class MessageProcessor:
     """Handles message processing and bot responses."""
@@ -761,14 +744,6 @@ class ContentSender:
                 len(context.bot_data["horoscope_history"]),
             )
 
-
-def pause(func):
-    """Decorator to pause bot functionality."""
-    async def wrapper(update, context):
-        if not context.bot_data.get("paused", False):
-            return await func(update, context)
-        return None
-    return wrapper
 
 @pause
 async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
