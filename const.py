@@ -12,19 +12,6 @@ TEST_CHAT_ID = -1001513214389
 
 PENGUIN_ID = 396043132
 
-vars_dict = {
-    "ZAVOD_CHECK": False,
-    "dt": None,
-    "zavod_text": "",
-    "spam_mode": "medium",
-    "username": None,
-    "paused": False,
-    "spam_stopper": {},
-    "self_id_dev": SELF_ID_DEV,
-    "self_id": SELF_ID,
-    "master": 113300226,
-}
-
 CHOICES = tuple([3, 4, 5, 6])
 DELAY_CHOICES = tuple([10, 15, 20])
 

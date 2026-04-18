@@ -1,24 +1,25 @@
-import re
-from datetime import timedelta
-from numpy.random import normal, uniform
-from time import sleep
-from random import choice
-from quotes import quotes
-import string
-from const import *
 import asyncio
+import random
+import re
+import string
 import threading
+from datetime import timedelta
+from time import sleep
+
+from numpy.random import normal, uniform
+
+from quotes import quotes
 
 
 def sleep_choice(choices):
-    sleep(choice(choices))
+    sleep(random.choice(choices))
 
 
 def sleep_choice_async(choices):
     """Асинхронная версия sleep_choice, которая не блокирует основной поток"""
     def delayed_action():
-        sleep(choice(choices))
-    
+        sleep(random.choice(choices))
+
     thread = threading.Thread(target=delayed_action)
     thread.daemon = True
     thread.start()
@@ -35,7 +36,7 @@ async def sleep_choice_asyncio(choices, bot=None, chat_id=None, message_id=None,
         message_id: ID сообщения для удаления
         logger: объект логгера для записи
     """
-    delay = choice(choices)
+    delay = random.choice(choices)
     
     if bot and chat_id and message_id:
         # Если переданы параметры для удаления, ждем и удаляем
@@ -44,16 +45,16 @@ async def sleep_choice_asyncio(choices, bot=None, chat_id=None, message_id=None,
             await bot.delete_message(chat_id, message_id)
             if logger:
                 logger.info(f"Сообщение удалено после задержки {delay} секунд")
-        except Exception as e:
+        except Exception:
             if logger:
-                logger.error(f"Ошибка при удалении сообщения: {e}")
+                logger.exception("Ошибка при удалении сообщения")
     else:
         # Если параметры не переданы, просто ждем
         await asyncio.sleep(delay)
 
 
 def quote_choice() -> str:
-    return choice(quotes)
+    return random.choice(quotes)
 
 
 def clean_string(s: str = "") -> str:
@@ -145,7 +146,7 @@ def roll_custom_dice(text):
             if number == 6:
                 return "default"
             else:
-                chosen_number = choice(range(1, number + 1))
+                chosen_number = random.choice(range(1, number + 1))
                 sentence = f"Я кинул {number}-гранный кубик.\nВыпало {chosen_number}"
                 return sentence
     return None

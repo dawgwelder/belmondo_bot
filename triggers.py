@@ -1,14 +1,15 @@
-from utils import *
-from const import *
-from typing import Tuple
 import json
-from random import choice
+import random
+from typing import Tuple
+
 import aiofiles
+
+import utils
 from logger import get_logger
 from telegram import Update
 from telegram.ext import ContextTypes
 
-logger = get_logger("if_rules")
+logger = get_logger("triggers")
 
 
 with open("speaking/triggers.json") as f:
@@ -27,15 +28,15 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         update_uid: int = 0,
         exact: bool = False,
     ):
-        put_answer = check_is_in(msg, words, exact=exact)
+        put_answer = utils.check_is_in(msg, words, exact=exact)
         text = ""
         _prob = 0
         if put_answer:
-            text = choice(answers)
+            text = random.choice(answers)
 
             if prob == -1:
                 # _prob = draw_prob(spam_mode=spam_mode)
-                prob = answer_probability(spam_mode)
+                prob = utils.answer_probability(spam_mode)
 
             if exclude_uids:
                 if update_uid in exclude_uids:  #
@@ -63,7 +64,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         )
         if _text != "":
             if text != "":
-                new = choice([0, 1])
+                new = random.choice([0, 1])
                 text = [text, _text][new]
                 prob = [prob, _prob][new]
             else:
