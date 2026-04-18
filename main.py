@@ -1,9 +1,7 @@
 import os
 import random
-from random import choice
 import re
 import datetime
-import pytz
 import asyncio
 
 from collections import deque
@@ -12,8 +10,6 @@ import aiofiles
 import fire
 import json
 import pandas as pd
-from configparser import ConfigParser
-from openai import AsyncOpenAI as OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -24,36 +20,17 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from logger import get_logger
 from if_rules import ifs, process_trigger_response, get_trigger_type
 import const
 import utils
+from config import client, config, logger, tz, TELEGRAM_MAX_MESSAGE_LENGTH
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
-# Initialize logger
-logger = get_logger("Belmondo Logger")
-
-# Load configuration
-config = ConfigParser()
-config.read("auth.conf")
-
-# Initialize OpenAI client (async)
-client = OpenAI(
-    api_key=config["auth"]["openai_api_key"],
-    base_url="https://api.deepseek.com"
-)
-
-# Initialize Godnoscop tracker
 tracker = GodnoscopTracker(config)
 
-# Set timezone
-tz = pytz.timezone("Europe/Moscow")
-
-# Telegram message length limit
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 async def parse_stream(stream):
     text = ""
@@ -236,14 +213,14 @@ class MessageProcessor:
             else:
                 count = min(abs(_cast), 10)
                 for _ in range(count):
-                    text = choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
+                    text = random.choice(["НАХУЙ БАБ", "_НАХУЙ БАБ_", "*НАХУЙ БАБ*"])
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text=text,
                         parse_mode="markdown",
                     )
                     # Асинхронная задержка без блокировки
-                    await asyncio.sleep(choice([0.5, 0.25, 1, 0.75, 0.666]))
+                    await asyncio.sleep(random.choice([0.5, 0.25, 1, 0.75, 0.666]))
     
     async def process_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process AI chat responses."""
@@ -389,7 +366,7 @@ class MessageProcessor:
         # Nazi response
         if "нацист" in msg:
             try:
-                file = choice(["img/nz.jpg", "img/nz_1.jpg"])
+                file = random.choice(["img/nz.jpg", "img/nz_1.jpg"])
                 async with aiofiles.open(file, "rb") as f:
                     photo_data = await f.read()
                     await context.bot.send_photo(
@@ -502,7 +479,7 @@ class MessageProcessor:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=update.message.message_id,
-                        text=choice([
+                        text=random.choice([
                             "Good night!",
                             "Спокойной ночи",
                             "Сладких снов",
@@ -521,7 +498,7 @@ class MessageProcessor:
         ]):
             return
             
-        not_drink_choice = choice([
+        not_drink_choice = random.choice([
             "не пьет", "держится", "в завязке", "не бухает", "проявляет силу воли"
         ])
         
@@ -541,7 +518,7 @@ class MessageProcessor:
     async def process_zalupa_stickers(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str) -> None:
         """Process zalupa sticker responses."""
         if "залуп" in msg:
-            file = choice(["img/zalupa.webp", "img/zalupa_1.webp"])
+            file = random.choice(["img/zalupa.webp", "img/zalupa_1.webp"])
             try:
                 async with aiofiles.open(file, "rb") as f:
                     sticker_data = await f.read()
@@ -560,7 +537,7 @@ class MessageProcessor:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         reply_to_message_id=update.message.message_id,
-                        text=choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
+                        text=random.choice(["*ДЖЕКПОТ!*", "Джекпот! Хуй те в рот!"]),
                         parse_mode="markdown",
                     )
                     logger.info("answer_message: jackpot sticker sent")
@@ -574,7 +551,7 @@ class ContentSender:
     @staticmethod
     async def send_oxxxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send random Oxxxy mashup URL."""
-        url = choice(oxxxy_playlist)
+        url = random.choice(oxxxy_playlist)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             reply_to_message_id=update.message.message_id,
@@ -587,14 +564,14 @@ class ContentSender:
     async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send random goblin content."""
         goblin_dir = "img/goblin/"
-        mode = choice(["mp4", "img", "sticker", "text", "youtube"])
+        mode = random.choice(["mp4", "img", "sticker", "text", "youtube"])
         urls = const.goblin_urls
         
         try:
             if mode == "mp4":
                 animation = os.path.join(
                     goblin_dir,
-                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".mp4")])
+                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".mp4")])
                 )
                 async with aiofiles.open(animation, "rb") as f:
                     animation_data = await f.read()
@@ -609,7 +586,7 @@ class ContentSender:
             elif mode == "img":
                 img = os.path.join(
                     goblin_dir,
-                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".jpeg")])
+                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".jpeg")])
                 )
                 async with aiofiles.open(img, "rb") as f:
                     photo_data = await f.read()
@@ -623,7 +600,7 @@ class ContentSender:
             elif mode == "sticker":
                 sticker = os.path.join(
                     goblin_dir,
-                    choice([f for f in os.listdir(goblin_dir) if f.endswith(".webp")])
+                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".webp")])
                 )
                 async with aiofiles.open(sticker, "rb") as f:
                     sticker_data = await f.read()
@@ -631,7 +608,7 @@ class ContentSender:
                     logger.info(f"send_goblin: mode {mode} file {sticker} sent")
                     
             elif mode == "text":
-                text = choice(const.goblin_pasta)
+                text = random.choice(const.goblin_pasta)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
@@ -641,7 +618,7 @@ class ContentSender:
                 logger.info(f"send_goblin: mode {mode} file text sent")
                 
             elif mode == "youtube":
-                url = choice(urls)
+                url = random.choice(urls)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     reply_to_message_id=update.message.message_id,
@@ -684,7 +661,7 @@ class ContentSender:
                 bot_data["username"] = username
         
         if bot_data["ZAVOD_CHECK"]:
-            file = choice([
+            file = random.choice([
                 "img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"
             ])
             try:
@@ -1061,7 +1038,7 @@ async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Delete dice messages."""
     if update.message.dice.emoji in const.emojis:
-        await asyncio.sleep(choice(const.CHOICES))
+        await asyncio.sleep(random.choice(const.CHOICES))
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
         logger.info(f"delete_dice: msg_id={update.message.message_id}")
 
