@@ -24,6 +24,7 @@ from if_rules import ifs, process_trigger_response, get_trigger_type
 import const
 import utils
 from config import client, config, logger, tz, TELEGRAM_MAX_MESSAGE_LENGTH
+from state import vars_dict
 from oxxxy_urls import oxxxy_playlist
 from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
 from site_parser import get_holidays
@@ -1102,17 +1103,17 @@ async def paused(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Main bot initialization and setup - now fully async."""
     application = None
-    const.vars_dict["spam_mode"] = spam_mode
-    const.vars_dict["chat_deque"] = deque(maxlen=100)
-    const.vars_dict["msg_deque"] = deque(maxlen=100)
-    const.vars_dict["horoscope_history"] = deque(maxlen=1)
+    vars_dict["spam_mode"] = spam_mode
+    vars_dict["chat_deque"] = deque(maxlen=100)
+    vars_dict["msg_deque"] = deque(maxlen=100)
+    vars_dict["horoscope_history"] = deque(maxlen=1)
 
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
         return
 
     if mode == "dev":
-        const.vars_dict["self_id"] = const.vars_dict["self_id_dev"]
+        vars_dict["self_id"] = vars_dict["self_id_dev"]
 
     # Create Application instead of Updater
     application = (
@@ -1126,7 +1127,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     logger.info("Bot start: success!")
     
     # Update bot_data
-    application.bot_data.update(const.vars_dict)
+    application.bot_data.update(vars_dict)
         
     # Register command handlers
     handlers = [
