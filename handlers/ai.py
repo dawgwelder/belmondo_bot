@@ -274,7 +274,7 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def _build_tarot_spread(deck: list[dict]) -> list[dict]:
     sample = random.sample(deck, k=3)
     result = []
-    for card, time in zip(sample, ["прощлое", "настоящее", "будущее"]):
+    for card, time in zip(sample, ["прошлое", "настоящее", "будущее"]):
         reversed_flag = random.choice([True, False])
         result.append(
             {
