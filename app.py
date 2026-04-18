@@ -1,7 +1,6 @@
 """Application bootstrap: build the Telegram Application and register handlers."""
 
 import asyncio
-from collections import deque
 
 from telegram import Update
 from telegram.ext import (
@@ -16,6 +15,7 @@ from config import logger
 from handlers.ai import (
     ai_horoscope,
     clear_context,
+    load_tarot_deck,
     magic_prediction,
     tarot,
 )
@@ -57,9 +57,6 @@ async def main(
     """Initialize and run the bot."""
     application = None
     vars_dict["spam_mode"] = spam_mode
-    vars_dict["chat_deque"] = deque(maxlen=100)
-    vars_dict["msg_deque"] = deque(maxlen=100)
-    vars_dict["horoscope_history"] = deque(maxlen=1)
 
     if mode not in ["dev", "prod"]:
         logger.error("Bot start: FAIL! Invalid mode")
@@ -79,6 +76,16 @@ async def main(
     logger.info("Bot start: success!")
 
     application.bot_data.update(vars_dict)
+
+    try:
+        application.bot_data["tarot_deck"] = load_tarot_deck()
+        logger.info(
+            "Bot start: loaded tarot deck (%s cards)",
+            len(application.bot_data["tarot_deck"]),
+        )
+    except Exception:
+        logger.exception("Bot start: failed to load tarot deck")
+        application.bot_data["tarot_deck"] = []
 
     for handler in _build_handlers():
         application.add_handler(handler)
@@ -111,8 +118,8 @@ async def main(
             await application.stop()
             await application.shutdown()
             logger.info("Bot shutdown complete")
-        except Exception as e:
-            logger.warning(f"Error during shutdown: {e}")
+        except Exception:
+            logger.exception("Error during shutdown")
 
 
 def run_bot(
@@ -123,8 +130,5 @@ def run_bot(
         asyncio.run(main(mode, spam_mode, token))
     except KeyboardInterrupt:
         logger.info("Bot stopped by KeyboardInterrupt")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception:
+        logger.exception("Unexpected error in run_bot")

@@ -11,6 +11,7 @@ import utils
 from config import logger
 from guards import pause
 from handlers.ai import process_ai_response
+from state import ensure_chat_state
 from triggers import get_trigger_type, ifs, process_trigger_response
 from processors import (
     process_bot_messages,
@@ -31,27 +32,40 @@ async def spam_gif_detector(
     """Detect and remove rapidly-repeated GIFs from the same user."""
     if update.message.document.mime_type != "video/mp4":
         return
+
+    chat_data = ensure_chat_state(context)
     last_msg = {
         "from": update.message.from_user.id,
         "date": update.message.date,
     }
-    context.bot_data["msg_deque"].append(last_msg)
+    msg_deque = chat_data["msg_deque"]
+    msg_deque.append(last_msg)
 
-    for idx in range(len(context.bot_data["msg_deque"]) - 1):
-        msg = context.bot_data["msg_deque"][idx]
+    for idx in range(len(msg_deque) - 1):
+        msg = msg_deque[idx]
         if (
             msg["from"] == last_msg["from"]
             and (last_msg["date"] - msg["date"]).total_seconds() < 3
         ):
-            await context.bot.delete_message(
-                update.effective_chat.id, update.message.message_id
-            )
+            try:
+                await context.bot.delete_message(
+                    update.effective_chat.id, update.message.message_id
+                )
+                logger.info(
+                    "spam_gif_detector: deleted gif from user=%s msg_id=%s",
+                    last_msg["from"],
+                    update.message.message_id,
+                )
+            except Exception as exc:
+                logger.warning("spam_gif_detector: failed to delete: %s", exc)
+            break
 
 
 @pause
 async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Main message parsing function — dispatches to processors and trigger engine."""
     bot_data = context.bot_data
+    chat_data = ensure_chat_state(context)
 
     await process_bot_messages(update, context)
     await process_men_squad_message(update, context)
@@ -63,16 +77,17 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     msg = utils.clean_string(update.message.text.lower())
     _id = update.message.from_user.id
     ts = update.message.date
-    prev_ts = context.bot_data["spam_stopper"].get(_id, None)
+    spam_stopper = chat_data["spam_stopper"]
+    prev_ts = spam_stopper.get(_id)
 
     if (
         prev_ts is not None
         and (ts - prev_ts).total_seconds() < 3
-        and _id != context.bot_data["master"]
+        and _id != bot_data["master"]
     ):
         msg = False
 
-    context.bot_data["spam_stopper"][_id] = ts
+    spam_stopper[_id] = ts
 
     if not msg:
         return
@@ -104,10 +119,23 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Delete dice messages after a short delay."""
-    if update.message.dice.emoji in const.emojis:
-        await asyncio.sleep(random.choice(const.CHOICES))
+    """Delete dice messages after a short delay.
+
+    Ignores dice sent by the bot itself — deleting our own dice races with
+    ``roll_dice`` which deletes them explicitly after the animation.
+    """
+    if update.message is None or update.message.dice is None:
+        return
+    if update.message.from_user is not None and update.message.from_user.id == context.bot_data.get("self_id"):
+        return
+    if update.message.dice.emoji not in const.emojis:
+        return
+
+    await asyncio.sleep(random.choice(const.CHOICES))
+    try:
         await context.bot.delete_message(
             update.effective_chat.id, update.message.message_id
         )
         logger.info(f"delete_dice: msg_id={update.message.message_id}")
+    except Exception as exc:
+        logger.warning("delete_dice: failed to delete message: %s", exc)

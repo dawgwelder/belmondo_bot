@@ -14,6 +14,7 @@ from config import logger, tz
 from guards import pause
 from oxxxy_urls import oxxxy_playlist
 from site_parser import get_holidays
+from state import ensure_chat_state
 
 
 @pause
@@ -106,14 +107,14 @@ async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     except FileNotFoundError as e:
         logger.error(f"Goblin file not found: {e}")
-    except Exception as e:
-        logger.error(f"Error sending goblin content: {e}")
+    except Exception:
+        logger.exception("Error sending goblin content")
 
 
 @pause
 async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send morning factory/office message and pick zavodchanin of the day."""
-    bot_data = context.bot_data
+    chat_data = ensure_chat_state(context)
 
     text = "Русские, в офис / на завод!\n..._loading_..."
     await context.bot.send_message(
@@ -126,19 +127,19 @@ async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     username = update.effective_user.username
 
-    if bot_data["dt"] is None:
-        bot_data["dt"] = datetime.datetime.now()
-        bot_data["ZAVOD_CHECK"] = True
-        bot_data["username"] = username
+    if chat_data["dt"] is None:
+        chat_data["dt"] = datetime.datetime.now()
+        chat_data["ZAVOD_CHECK"] = True
+        chat_data["username"] = username
     else:
-        bot_data["ZAVOD_CHECK"] = (
-            (datetime.datetime.now() - bot_data["dt"]).days > 0
+        chat_data["ZAVOD_CHECK"] = (
+            (datetime.datetime.now() - chat_data["dt"]).days > 0
             and (4 <= datetime.datetime.now().hour < 12)
         )
-        if bot_data["ZAVOD_CHECK"]:
-            bot_data["username"] = username
+        if chat_data["ZAVOD_CHECK"]:
+            chat_data["username"] = username
 
-    if bot_data["ZAVOD_CHECK"]:
+    if chat_data["ZAVOD_CHECK"]:
         file = random.choice(
             ["img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"]
         )
@@ -156,7 +157,7 @@ async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except FileNotFoundError:
             logger.error(f"Zavod image not found: {file}")
     else:
-        raw_name = bot_data.get("username") or username or "без_ника"
+        raw_name = chat_data.get("username") or username or "без_ника"
         zavod_user = raw_name.replace("@", "")
         text = (
             f"Поздно, другалёчек!\n"

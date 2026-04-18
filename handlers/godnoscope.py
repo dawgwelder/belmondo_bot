@@ -62,7 +62,18 @@ async def button_godnoscope(
     query = update.callback_query
     await query.answer()
 
-    message = await tracker.get_horoscope(query.data)
+    try:
+        message = await tracker.get_horoscope(query.data)
+    except Exception:
+        logger.exception(
+            "button_godnoscope: failed to fetch horoscope for sign=%s", query.data
+        )
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Не удалось получить гороскоп. Попробуйте позже.",
+        )
+        return
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=message
     )

@@ -1,8 +1,10 @@
-import utils
-from typing import Tuple
 import json
-from random import choice
+import random
+from typing import Tuple
+
 import aiofiles
+
+import utils
 from logger import get_logger
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -30,7 +32,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         text = ""
         _prob = 0
         if put_answer:
-            text = choice(answers)
+            text = random.choice(answers)
 
             if prob == -1:
                 # _prob = draw_prob(spam_mode=spam_mode)
@@ -62,7 +64,7 @@ def ifs(msg: str = None, _id: int = 0, spam_mode: str = "medium") -> Tuple[str, 
         )
         if _text != "":
             if text != "":
-                new = choice([0, 1])
+                new = random.choice([0, 1])
                 text = [text, _text][new]
                 prob = [prob, _prob][new]
             else:
