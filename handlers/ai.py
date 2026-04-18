@@ -6,6 +6,7 @@ import random
 from collections import deque
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 import const
@@ -114,9 +115,101 @@ async def process_ai_response(
             )
 
 
+_AI_HOROSCOPE_PLACEHOLDER = (
+    "🔮 Бельмондо разглядывает звёзды… _составляю гороскоп._"
+)
+_TAROT_PLACEHOLDER = (
+    "🎴 Бельмондо тасует колоду и раскладывает карты… _слушаю шёпот арканов._"
+)
+
+
+async def _send_placeholder(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    *,
+    log_prefix: str,
+):
+    """Send a reply placeholder + typing action; returns the Message or None."""
+    placeholder = None
+    try:
+        placeholder = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            reply_to_message_id=update.message.message_id if update.message else None,
+            text=text,
+            parse_mode="markdown",
+        )
+    except Exception:
+        logger.exception("%s: failed to send placeholder", log_prefix)
+
+    try:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=ChatAction.TYPING
+        )
+    except Exception:
+        logger.exception("%s: failed to send chat action", log_prefix)
+
+    return placeholder
+
+
+async def _fail_placeholder(
+    context: ContextTypes.DEFAULT_TYPE,
+    placeholder,
+    chat_id: int,
+    text: str,
+    *,
+    log_prefix: str,
+) -> None:
+    """Edit the placeholder with an error message, or send a new message as fallback."""
+    if placeholder is not None:
+        try:
+            await placeholder.edit_text(text=text, parse_mode="markdown")
+            return
+        except Exception:
+            logger.exception("%s: failed to edit error placeholder", log_prefix)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode="markdown",
+    )
+
+
+async def _finalize_placeholder(
+    context: ContextTypes.DEFAULT_TYPE,
+    placeholder,
+    text: str,
+    *,
+    parse_mode: str = "markdown",
+    log_prefix: str = "ai",
+) -> None:
+    """Edit the placeholder in place, or delete and send_long_message if too long."""
+    from config import TELEGRAM_MAX_MESSAGE_LENGTH
+
+    if placeholder is not None and len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+        try:
+            await placeholder.edit_text(text=text, parse_mode=parse_mode)
+            return
+        except Exception:
+            logger.exception("%s: failed to edit placeholder, falling back", log_prefix)
+
+    if placeholder is not None:
+        try:
+            await placeholder.delete()
+        except Exception:
+            logger.exception("%s: failed to delete placeholder", log_prefix)
+
+    await send_long_message(
+        bot=context.bot,
+        chat_id=placeholder.chat_id if placeholder is not None else None,
+        text=text,
+        parse_mode=parse_mode,
+    )
+
+
 @pause
 async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send AI horoscope."""
+    """Send AI horoscope with a live placeholder message showing progress."""
     if update.effective_user.id in const.excluded_uids:
         return
     if not await ensure_master_in_chat_for_ai(update, context):
@@ -137,6 +230,10 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ]
         messages = previous_messages + messages
 
+    placeholder = await _send_placeholder(
+        update, context, _AI_HOROSCOPE_PLACEHOLDER, log_prefix="ai_horoscope"
+    )
+
     try:
         stream = await client.chat.completions.create(
             model="deepseek-chat", messages=messages, stream=True
@@ -144,33 +241,33 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text = await parse_stream(stream)
     except Exception:
         logger.exception("ai_horoscope: API error")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Не удалось сгенерировать гороскоп. Попробуйте позже.",
-            parse_mode="markdown",
+        await _fail_placeholder(
+            context,
+            placeholder,
+            update.effective_chat.id,
+            "Не удалось сгенерировать гороскоп. Попробуйте позже.",
+            log_prefix="ai_horoscope",
         )
         return
 
     if not (text or "").strip():
         logger.warning("ai_horoscope: empty model response")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Пустой ответ модели. Попробуйте ещё раз.",
-            parse_mode="markdown",
+        await _fail_placeholder(
+            context,
+            placeholder,
+            update.effective_chat.id,
+            "Пустой ответ модели. Попробуйте ещё раз.",
+            log_prefix="ai_horoscope",
         )
         return
 
     horoscope_history.append(text)
-    await send_long_message(
-        bot=context.bot,
-        chat_id=update.effective_chat.id,
-        text=text,
-        parse_mode="markdown",
-    )
+    await _finalize_placeholder(context, placeholder, text, log_prefix="ai_horoscope")
     logger.info(
-        "ai_horoscope: user_message_len=%s horoscope_history_count=%s",
+        "ai_horoscope: user_message_len=%s horoscope_history_count=%s text_len=%s",
         len(prompt),
         len(horoscope_history),
+        len(text),
     )
 
 
@@ -194,7 +291,7 @@ def _build_tarot_spread(deck: list[dict]) -> list[dict]:
 
 @pause
 async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Three-card tarot reading via DeepSeek."""
+    """Three-card tarot reading via DeepSeek, with a live status placeholder."""
     if not await ensure_master_in_chat_for_ai(update, context):
         return
 
@@ -212,6 +309,17 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     spread = _build_tarot_spread(deck)
     tarot_prompt = generate_tarot_prompt(spread)
 
+    cards_header = "*Расклад:*\n" + "\n".join(
+        f"• *{c['time'].capitalize()}* — {c['card']} ({c['orientation']})"
+        for c in spread
+    )
+    placeholder = await _send_placeholder(
+        update,
+        context,
+        f"{_TAROT_PLACEHOLDER}\n\n{cards_header}",
+        log_prefix="tarot",
+    )
+
     request = [
         {"role": "system", "content": const.professional_prompt},
         {"role": "user", "content": tarot_prompt},
@@ -224,31 +332,29 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = await parse_stream(stream)
     except Exception:
         logger.exception("tarot: API error")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text="Не удалось сделать расклад. Попробуйте позже.",
-            parse_mode="markdown",
+        await _fail_placeholder(
+            context,
+            placeholder,
+            update.effective_chat.id,
+            "Не удалось сделать расклад. Попробуйте позже.",
+            log_prefix="tarot",
         )
         return
 
     if not (text or "").strip():
         logger.warning("tarot: empty model response")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text="Пустой ответ модели. Попробуйте ещё раз.",
-            parse_mode="markdown",
+        await _fail_placeholder(
+            context,
+            placeholder,
+            update.effective_chat.id,
+            "Пустой ответ модели. Попробуйте ещё раз.",
+            log_prefix="tarot",
         )
         return
 
-    await send_long_message(
-        bot=context.bot,
-        chat_id=update.effective_chat.id,
-        text=text,
-        parse_mode="markdown",
-        reply_to_message_id=update.message.message_id,
-    )
+    final_text = f"{cards_header}\n\n{text}"
+    await _finalize_placeholder(context, placeholder, final_text, log_prefix="tarot")
+    logger.info("tarot: delivered reading text_len=%s", len(text))
 
 
 MAGIC_PREDICTION_CALLBACK = "mp:flip"
