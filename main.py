@@ -5,7 +5,7 @@ import asyncio
 from collections import deque
 
 import fire
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -48,60 +48,7 @@ from handlers.ai import (
     tarot,
 )
 from handlers.commands import paused, quote, roll_dice
-from horoscope import generate_post
-from godnoscop.godnoscop_tracker import GodnoscopTracker
-
-tracker = GodnoscopTracker(config)
-
-
-@pause
-async def get_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send horoscope posts."""
-    first_post, second_post = generate_post()
-    logger.info("sending horoscopes")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=first_post)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=second_post)
-
-
-@pause
-async def godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show horoscope sign selection keyboard."""
-    keyboard = [
-        [
-            InlineKeyboardButton("Овен", callback_data="ОВЕН"),
-            InlineKeyboardButton("Телец", callback_data="ТЕЛЕЦ"),
-            InlineKeyboardButton("Близнецы", callback_data="БЛИЗНЕЦЫ"),
-        ],
-        [
-            InlineKeyboardButton("Рак", callback_data="РАК"),
-            InlineKeyboardButton("Лев", callback_data="ЛЕВ"),
-            InlineKeyboardButton("Дева", callback_data="ДЕВА"),
-        ],
-        [
-            InlineKeyboardButton("Весы", callback_data="ВЕСЫ"),
-            InlineKeyboardButton("Скорпион", callback_data="СКОРПИОН"),
-            InlineKeyboardButton("Стрелец", callback_data="СТРЕЛЕЦ"),
-        ],
-        [
-            InlineKeyboardButton("Козерог", callback_data="КОЗЕРОГ"),
-            InlineKeyboardButton("Водолей", callback_data="ВОДОЛЕЙ"),
-            InlineKeyboardButton("Рыбы", callback_data="РЫБЫ"),
-        ],
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выбирай:", reply_markup=reply_markup)
-
-
-@pause
-async def button_godnoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle horoscope sign selection."""
-    query = update.callback_query
-    await query.answer()
-    
-    message = await tracker.get_horoscope(query.data)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
-
+from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 
 async def spam_gif_detector(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Detect and remove spam GIFs."""
