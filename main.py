@@ -1,15 +1,12 @@
-import os
 import random
 import re
 import datetime
 import asyncio
 
 from collections import deque
-import aiofiles
 
 import fire
 import json
-import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -38,9 +35,14 @@ from processors import (
     process_sticker_responses,
     process_zalupa_stickers,
 )
-from oxxxy_urls import oxxxy_playlist
+from handlers.content import (
+    send_goblin,
+    send_morning,
+    send_oxxxy,
+    show_day,
+    show_holidays,
+)
 from horoscope import generate_post, build_ai_horoscope_user_message, generate_tarot_prompt
-from site_parser import get_holidays
 from godnoscop.godnoscop_tracker import GodnoscopTracker
 
 tracker = GodnoscopTracker(config)
@@ -101,220 +103,51 @@ async def process_ai_response(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
 
-class ContentSender:
-    """Handles sending various types of content."""
-    
-    @staticmethod
-    async def send_oxxxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send random Oxxxy mashup URL."""
-        url = random.choice(oxxxy_playlist)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=url,
-            parse_mode="markdown",
-        )
-        logger.info(f"send_oxxxy: oxxy mashup {url} sent")
-    
-    @staticmethod
-    async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send random goblin content."""
-        goblin_dir = "img/goblin/"
-        mode = random.choice(["mp4", "img", "sticker", "text", "youtube"])
-        urls = const.goblin_urls
-        
-        try:
-            if mode == "mp4":
-                animation = os.path.join(
-                    goblin_dir,
-                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".mp4")])
-                )
-                async with aiofiles.open(animation, "rb") as f:
-                    animation_data = await f.read()
-                    await context.bot.send_animation(
-                        chat_id=update.effective_chat.id,
-                        animation=animation_data,
-                        read_timeout=20,
-                        reply_to_message_id=update.message.message_id,
-                    )
-                    logger.info(f"send_goblin: mode {mode} file {animation} sent")
-                    
-            elif mode == "img":
-                img = os.path.join(
-                    goblin_dir,
-                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".jpeg")])
-                )
-                async with aiofiles.open(img, "rb") as f:
-                    photo_data = await f.read()
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        photo=photo_data,
-                    )
-                    logger.info(f"send_goblin: mode {mode} file {img} sent")
-                    
-            elif mode == "sticker":
-                sticker = os.path.join(
-                    goblin_dir,
-                    random.choice([f for f in os.listdir(goblin_dir) if f.endswith(".webp")])
-                )
-                async with aiofiles.open(sticker, "rb") as f:
-                    sticker_data = await f.read()
-                    await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
-                    logger.info(f"send_goblin: mode {mode} file {sticker} sent")
-                    
-            elif mode == "text":
-                text = random.choice(const.goblin_pasta)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=text,
-                    parse_mode="markdown",
-                )
-                logger.info(f"send_goblin: mode {mode} file text sent")
-                
-            elif mode == "youtube":
-                url = random.choice(urls)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    reply_to_message_id=update.message.message_id,
-                    text=f"СМОТРЕТЬ ВСЕМ\n{url}",
-                    parse_mode="markdown",
-                )
-                logger.info(f"send_goblin: mode {mode} file {url} sent")
-                
-        except FileNotFoundError as e:
-            logger.error(f"Goblin file not found: {e}")
-        except Exception as e:
-            logger.error(f"Error sending goblin content: {e}")
-    
-    @staticmethod
-    async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send morning factory/office message."""
-        bot_data = context.bot_data
-        
-        text = "Русские, в офис / на завод!\n..._loading_..."
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info("send_morning: preload")
-        
-        username = update.effective_user.username
-        
-        if bot_data["dt"] is None:
-            bot_data["dt"] = datetime.datetime.now()
-            bot_data["ZAVOD_CHECK"] = True
-            bot_data["username"] = username
-        else:
-            bot_data["ZAVOD_CHECK"] = (
-                (datetime.datetime.now() - bot_data["dt"]).days > 0 and
-                (4 <= datetime.datetime.now().hour < 12)
-            )
-            if bot_data["ZAVOD_CHECK"]:
-                bot_data["username"] = username
-        
-        if bot_data["ZAVOD_CHECK"]:
-            file = random.choice([
-                "img/zavodchanin.jpeg", "img/zombie_zavod.jpeg", "img/flower.jpeg"
-            ])
-            try:
-                async with aiofiles.open(file, "rb") as f:
-                    photo_data = await f.read()
-                    zavod_user = f"Офисчанин/Заводчанин дня - @{username}!"
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        reply_to_message_id=update.message.message_id,
-                        caption=zavod_user,
-                        photo=photo_data,
-                    )
-                    logger.info("send_morning: zavod success!")
-            except FileNotFoundError:
-                logger.error(f"Zavod image not found: {file}")
-        else:
-            raw_name = bot_data.get("username") or username or "без_ника"
-            zavod_user = raw_name.replace("@", "")
-            text = (f"Поздно, другалёчек!\n"
-                   f"Офисчанин/Заводчанин дня - @{zavod_user}!")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-            logger.info("send_morning: zavod success but late!")
-    
-    @staticmethod
-    async def show_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show day-specific sticker."""
-        weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
-        sticker = os.path.join("img/eva", f"{weekday}.webp")
-        
-        try:
-            async with aiofiles.open(sticker, "rb") as f:
-                sticker_data = await f.read()
-                await context.bot.send_sticker(chat_id=update.effective_chat.id, sticker=sticker_data)
-                logger.info(f"show_day: file {sticker} sent")
-        except FileNotFoundError:
-            logger.error(f"Day sticker not found: {sticker}")
-    
-    @staticmethod
-    async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show current holidays."""
-        dt = datetime.datetime.now(tz)
-        text = get_holidays(dt)
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text,
-            parse_mode="markdown",
-        )
-        logger.info("show_day: sent holidays list")
+@pause
+async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send AI horoscope."""
+    if not await ensure_master_in_chat_for_ai(update, context):
+        return
+    if update.effective_user.id not in const.excluded_uids:
+        history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
+        prompt = build_ai_horoscope_user_message(history)
+        messages = [{"role": "system", "content": const.professional_prompt_ai_horoscope},
+                    {"role": "user", "content": prompt}]
+        if context.bot_data["horoscope_history"]:
+            previous_messages = []
+            for message in context.bot_data["horoscope_history"]:
+                previous_messages.append({"role": "assistant", "content": message})
+            messages = previous_messages + messages
 
-    @staticmethod
-    async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send AI horoscope."""
-        if not await ensure_master_in_chat_for_ai(update, context):
-            return
-        # Передаем историю гороскопов в функцию промпта
-        if update.effective_user.id not in const.excluded_uids:
-            history = list(context.bot_data["horoscope_history"]) if context.bot_data["horoscope_history"] else None
-            prompt = build_ai_horoscope_user_message(history)
-            messages = [{"role": "system", "content": const.professional_prompt_ai_horoscope},
-                        {"role": "user", "content": prompt}]
-            # Дополнительно добавляем историю в контекст сообщений для лучшего понимания модели
-            if context.bot_data["horoscope_history"]:
-                previous_messages = []
-                for message in context.bot_data["horoscope_history"]:
-                    previous_messages.append({"role": "assistant", "content": message})
-                messages = previous_messages + messages
-                  
-            text = ""
-            try:
-                stream = await client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=messages,
-                    stream=True
-                )
-                text = await parse_stream(stream)
-            except Exception as e:
-                logger.error(f"ai_horoscope: API error: {e}")
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Не удалось сгенерировать гороскоп. Попробуйте позже.",
-                    parse_mode="markdown",
-                )
-                return
-            if text:
-                context.bot_data["horoscope_history"].append(text)
-                await send_long_message(
-                    bot=context.bot,
-                    chat_id=update.effective_chat.id,
-                    text=text,
-                    parse_mode="markdown"
-                )
-            logger.info(
-                "ai_horoscope: user_message_len=%s horoscope_history_count=%s",
-                len(prompt),
-                len(context.bot_data["horoscope_history"]),
+        text = ""
+        try:
+            stream = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                stream=True
             )
+            text = await parse_stream(stream)
+        except Exception as e:
+            logger.error(f"ai_horoscope: API error: {e}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Не удалось сгенерировать гороскоп. Попробуйте позже.",
+                parse_mode="markdown",
+            )
+            return
+        if text:
+            context.bot_data["horoscope_history"].append(text)
+            await send_long_message(
+                bot=context.bot,
+                chat_id=update.effective_chat.id,
+                text=text,
+                parse_mode="markdown"
+            )
+        logger.info(
+            "ai_horoscope: user_message_len=%s horoscope_history_count=%s",
+            len(prompt),
+            len(context.bot_data["horoscope_history"]),
+        )
 
 
 @pause
@@ -549,30 +382,12 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await process_special_commands(update, context, msg)
 
 
-@pause
-async def send_oxxxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send random Oxxxy content."""
-    await ContentSender.send_oxxxy(update, context)
-
-
-@pause
-async def send_goblin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send random goblin content."""
-    await ContentSender.send_goblin(update, context)
-
-
 async def delete_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Delete dice messages."""
     if update.message.dice.emoji in const.emojis:
         await asyncio.sleep(random.choice(const.CHOICES))
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
         logger.info(f"delete_dice: msg_id={update.message.message_id}")
-
-
-@pause
-async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send morning factory message."""
-    await ContentSender.send_morning(update, context)
 
 
 @pause
@@ -585,23 +400,6 @@ async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("roll_dice: success")
 
 
-@pause
-async def show_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show day sticker."""
-    await ContentSender.show_day(update, context)
-
-
-@pause
-async def show_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show holidays."""
-    await ContentSender.show_holidays(update, context)
-
-
-@pause
-async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send AI horoscope."""
-    await ContentSender.ai_horoscope(update, context)
-    
 @pause
 async def clear_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clear AI context."""
