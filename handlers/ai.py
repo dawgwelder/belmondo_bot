@@ -5,7 +5,7 @@ import json
 import random
 from collections import deque
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 import const
@@ -251,63 +251,138 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-@pause
-async def magic_prediction(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Шуточное предсказание на день (1–2 предложения)."""
-    if not await ensure_master_in_chat_for_ai(update, context):
-        return
+MAGIC_PREDICTION_CALLBACK = "mp:flip"
+_DIVINE_LUCK_ODDS = 9999
 
+
+def _roll_luck_level() -> int:
+    """Roll a luck level in [0, 100] with a 1-in-9999 chance of divine 9999."""
+    if random.randint(1, _DIVINE_LUCK_ODDS) == 1:
+        return 9999
+    return random.randint(0, 100)
+
+
+def _build_magic_prediction_messages(luck_level: int) -> list[dict]:
     now = datetime.datetime.now(tz)
     weekday_ru = _WEEKDAYS_RU[now.weekday()]
     date_msk = now.strftime("%d.%m.%Y")
     user_content = (
-        f"Сегодня по Москве: {weekday_ru}, {date_msk}.\n\n"
-        "Дай шуточное предсказание на этот день: ровно одно или два предложения — "
-        "намекни, как может пройти день, чего опасаться или к чему стремиться. "
-        "Без списков и без длинных абзацев; заверши короткой французской фразой с переводом в скобках."
+        f"Сегодня по Москве: {weekday_ru}, {date_msk}.\n"
+        f"Уровень удачи сегодня — {luck_level}.\n\n"
+        "Шкала уровня удачи (`luck_level`):\n"
+        "• 0 — ужасный день, всё сыпется из рук;\n"
+        "• 50 — обычный серый день, ни плохо ни хорошо;\n"
+        "• 100 — великолепный день, всё складывается само;\n"
+        "• 9999 — божественная удача, выпадающая раз в 9999 лет, "
+        "подчеркни её исключительность.\n\n"
+        "Сгенерируй шуточное предсказание на этот день с учётом уровня удачи: "
+        "ровно одно или два предложения — намекни, как может пройти день, "
+        "чего опасаться или к чему стремиться. Тон и настроение ответа должны "
+        "соответствовать уровню удачи. Без списков и без длинных абзацев; "
+        "заверши короткой французской фразой с переводом в скобках."
     )
-    messages = [
+    return [
         {"role": "system", "content": const.professional_prompt},
         {"role": "user", "content": user_content},
     ]
+
+
+def _magic_prediction_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🪙 Подкинуть монетку", callback_data=MAGIC_PREDICTION_CALLBACK)]]
+    )
+
+
+@pause
+async def magic_prediction(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Предложить подкинуть монетку, чтобы получить предсказание."""
+    if not await ensure_master_in_chat_for_ai(update, context):
+        return
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        reply_to_message_id=update.message.message_id,
+        text="Подкинь монетку, и Бельмондо нашепчет тебе судьбу.",
+        reply_markup=_magic_prediction_keyboard(),
+    )
+
+
+async def magic_prediction_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Callback for the 'подкинуть монетку' button: roll luck and fetch prediction."""
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    if not await ensure_master_in_chat_for_ai(update, context):
+        return
+
+    luck_level = _roll_luck_level()
+    logger.info("magic_prediction: luck_level=%s chat=%s", luck_level, update.effective_chat.id)
+
+    try:
+        await query.edit_message_text(
+            text=f"🪙 Монетка подброшена… уровень удачи: *{luck_level}*.\n_Бельмондо задумался…_",
+            parse_mode="markdown",
+        )
+    except Exception:
+        logger.exception("magic_prediction: failed to edit placeholder message")
+
     try:
         stream = await client.chat.completions.create(
             model="deepseek-chat",
-            messages=messages,
+            messages=_build_magic_prediction_messages(luck_level),
             stream=True,
-            max_tokens=180,
+            max_tokens=220,
         )
         text = await parse_stream(stream)
     except Exception:
         logger.exception("magic_prediction: API error")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text="Не удалось сгенерировать предсказание. Попробуйте позже.",
-            parse_mode="markdown",
-        )
+        try:
+            await query.edit_message_text(
+                text="Не удалось сгенерировать предсказание. Попробуйте позже.",
+                reply_markup=_magic_prediction_keyboard(),
+                parse_mode="markdown",
+            )
+        except Exception:
+            logger.exception("magic_prediction: failed to edit error message")
         return
 
     if not (text or "").strip():
         logger.warning("magic_prediction: empty model response")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text="Пустой ответ модели. Попробуйте ещё раз.",
-            parse_mode="markdown",
-        )
+        try:
+            await query.edit_message_text(
+                text="Пустой ответ модели. Попробуйте ещё раз.",
+                reply_markup=_magic_prediction_keyboard(),
+                parse_mode="markdown",
+            )
+        except Exception:
+            logger.exception("magic_prediction: failed to edit empty-response message")
         return
 
-    await send_long_message(
-        bot=context.bot,
-        chat_id=update.effective_chat.id,
-        text=text,
-        parse_mode="markdown",
-        reply_to_message_id=update.message.message_id,
+    header = f"🪙 Уровень удачи: *{luck_level}*\n\n"
+    final_text = header + text
+    try:
+        await query.edit_message_text(text=final_text, parse_mode="markdown")
+    except Exception:
+        logger.exception(
+            "magic_prediction: failed to edit final message, falling back to a new send"
+        )
+        await send_long_message(
+            bot=context.bot,
+            chat_id=update.effective_chat.id,
+            text=final_text,
+            parse_mode="markdown",
+        )
+    logger.info(
+        "magic_prediction: delivered prediction luck_level=%s len=%s",
+        luck_level,
+        len(text),
     )
-    logger.info("magic_prediction: sent prediction for %s", date_msk)
 
 
 @pause

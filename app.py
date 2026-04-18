@@ -13,10 +13,12 @@ from telegram.ext import (
 
 from config import logger
 from handlers.ai import (
+    MAGIC_PREDICTION_CALLBACK,
     ai_horoscope,
     clear_context,
     load_tarot_deck,
     magic_prediction,
+    magic_prediction_callback,
     tarot,
 )
 from handlers.commands import paused, quote, roll_dice
@@ -96,6 +98,11 @@ async def main(
     )
     application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
 
+    application.add_handler(
+        CallbackQueryHandler(
+            magic_prediction_callback, pattern=f"^{MAGIC_PREDICTION_CALLBACK}$"
+        )
+    )
     application.add_handler(CallbackQueryHandler(button_godnoscope))
 
     logger.info("Bot is running... Press Ctrl+C to stop")
