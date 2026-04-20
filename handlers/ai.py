@@ -1,8 +1,10 @@
 """AI-powered handlers: process_ai_response, ai_horoscope, tarot, magic_prediction, clear_context."""
 
 import datetime
+import html
 import json
 import random
+import re
 from collections import deque
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -121,6 +123,20 @@ _AI_HOROSCOPE_PLACEHOLDER = (
 _TAROT_PLACEHOLDER = (
     "🎴 Бельмондо тасует колоду и раскладывает карты… _слушаю шёпот арканов._"
 )
+_ZODIAC_RU = [
+    "Овен",
+    "Телец",
+    "Близнецы",
+    "Рак",
+    "Лев",
+    "Дева",
+    "Весы",
+    "Скорпион",
+    "Стрелец",
+    "Козерог",
+    "Водолей",
+    "Рыбы",
+]
 
 
 async def _send_placeholder(
@@ -183,7 +199,7 @@ async def _finalize_placeholder(
     parse_mode: str = "markdown",
     log_prefix: str = "ai",
 ) -> None:
-    """Edit the placeholder in place, or delete and send_long_message if too long."""
+    """Edit the placeholder in place, or delete and send a single message."""
     from config import TELEGRAM_MAX_MESSAGE_LENGTH
 
     if placeholder is not None and len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
@@ -199,12 +215,177 @@ async def _finalize_placeholder(
         except Exception:
             logger.exception("%s: failed to delete placeholder", log_prefix)
 
-    await send_long_message(
-        bot=context.bot,
+    await context.bot.send_message(
         chat_id=placeholder.chat_id if placeholder is not None else None,
         text=text,
         parse_mode=parse_mode,
     )
+
+
+def _html_expandable_quote(text: str) -> str:
+    """Render plain text as a Telegram HTML expandable quote."""
+    escaped = html.escape((text or "").strip())
+    return f"<blockquote expandable>{escaped}</blockquote>"
+
+
+def _tarot_cards_header_html(spread: list[dict]) -> str:
+    lines = [
+        f"• {html.escape(c['time'].capitalize())} — "
+        f"{html.escape(c['card'])} ({html.escape(c['orientation'])})"
+        for c in spread
+    ]
+    return "Расклад:\n" + "\n".join(lines)
+
+
+def _split_text_chunks(text: str, max_length: int) -> list[str]:
+    """Split plain text into chunks that fit Telegram message limits."""
+    content = (text or "").strip()
+    if not content:
+        return []
+    if len(content) <= max_length:
+        return [content]
+
+    chunks: list[str] = []
+    current = ""
+    for line in content.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) <= max_length:
+            current = candidate
+            continue
+
+        if current:
+            chunks.append(current)
+            current = ""
+
+        if len(line) <= max_length:
+            current = line
+            continue
+
+        for idx in range(0, len(line), max_length):
+            chunks.append(line[idx : idx + max_length])
+
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _split_horoscope_sections(text: str) -> tuple[str, list[str]]:
+    """Split AI horoscope into header and zodiac sections."""
+    source = (text or "").strip()
+    if not source:
+        return "", []
+
+    if "\n" in source:
+        header, rest = source.split("\n", 1)
+        rest = rest.strip()
+    else:
+        return source, []
+
+    starts: list[int] = []
+    offset = 0
+    zodiac_pattern = re.compile(
+        rf"^(?:[-•\s]*)[*_~`\"]*(?:{'|'.join(_ZODIAC_RU)})[*_~`\"]*[.:]?(?:\s|$)",
+        flags=re.IGNORECASE,
+    )
+
+    for line in rest.splitlines(keepends=True):
+        probe = line.strip()
+        if zodiac_pattern.match(probe):
+            starts.append(offset)
+        offset += len(line)
+
+    if not starts:
+        return header.strip(), [rest] if rest else []
+
+    sections: list[str] = []
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(rest)
+        section = rest[start:end].strip()
+        if section:
+            sections.append(section)
+    return header.strip(), sections
+
+
+def _split_first_sentence(text: str) -> tuple[str, str]:
+    """Return first sentence and remainder."""
+    source = (text or "").strip()
+    if not source:
+        return "", ""
+    match = re.match(r"^(.*?[.!?])(?:\s+|$)(.*)$", source, flags=re.S)
+    if not match:
+        return source, ""
+    return match.group(1).strip(), match.group(2).strip()
+
+
+async def _send_ai_horoscope_structured(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    text: str,
+) -> None:
+    """Send AI horoscope in compact batches near Telegram limit."""
+    from config import TELEGRAM_MAX_MESSAGE_LENGTH
+
+    header, sections = _split_horoscope_sections(text)
+    footer = ""
+    quote_overhead = len("<blockquote expandable></blockquote>")
+    quote_max = max(1, TELEGRAM_MAX_MESSAGE_LENGTH - quote_overhead)
+
+    section_blocks: list[str] = []
+    if not sections:
+        for chunk in _split_text_chunks(text, quote_max):
+            section_blocks.append(_html_expandable_quote(chunk))
+    else:
+        # Footer is expected as the last paragraph in the last zodiac section.
+        if sections:
+            last_section = sections[-1]
+            if "\n\n" in last_section:
+                head, tail = last_section.rsplit("\n\n", 1)
+                tail_clean = tail.strip()
+                # Extract footer only when it looks like a French phrase + translation.
+                has_translation_parentheses = bool(
+                    re.search(r"[A-Za-zÀ-ÿ][^()\n]*\([^)\n]{3,}\)", tail_clean)
+                )
+                if tail_clean and has_translation_parentheses:
+                    sections[-1] = head.strip()
+                    footer = tail_clean
+
+        for section in sections:
+            title, hidden = _split_first_sentence(section)
+            title_text = title.rstrip(".:").strip() if title else ""
+            title_escaped = html.escape(title_text) if title_text else ""
+
+            hidden_chunks = _split_text_chunks(hidden, quote_max) if hidden else []
+            if not hidden_chunks:
+                if title_escaped:
+                    section_blocks.append(title_escaped)
+                continue
+
+            for idx, hidden_chunk in enumerate(hidden_chunks):
+                quote = _html_expandable_quote(hidden_chunk)
+                if idx == 0 and title_escaped:
+                    section_blocks.append(f"{title_escaped}\n{quote}")
+                else:
+                    section_blocks.append(quote)
+
+    if footer:
+        for footer_chunk in _split_text_chunks(footer, TELEGRAM_MAX_MESSAGE_LENGTH):
+            section_blocks.append(html.escape(footer_chunk))
+
+    messages: list[str] = []
+    current = html.escape(header.strip()) if header else ""
+    for block in section_blocks:
+        candidate = f"{current}\n\n{block}" if current else block
+        if len(candidate) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+            current = candidate
+            continue
+        if current:
+            messages.append(current)
+        current = block
+    if current:
+        messages.append(current)
+
+    for message in messages:
+        await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 @pause
@@ -262,7 +443,13 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     horoscope_history.append(text)
-    await _finalize_placeholder(context, placeholder, text, log_prefix="ai_horoscope")
+    try:
+        if placeholder is not None:
+            await placeholder.delete()
+    except Exception:
+        logger.exception("ai_horoscope: failed to delete placeholder")
+
+    await _send_ai_horoscope_structured(context, update.effective_chat.id, text)
     logger.info(
         "ai_horoscope: user_message_len=%s horoscope_history_count=%s text_len=%s",
         len(prompt),
@@ -352,8 +539,28 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    final_text = f"{cards_header}\n\n{text}"
-    await _finalize_placeholder(context, placeholder, final_text, log_prefix="tarot")
+    from config import TELEGRAM_MAX_MESSAGE_LENGTH
+
+    try:
+        if placeholder is not None:
+            await placeholder.delete()
+    except Exception:
+        logger.exception("tarot: failed to delete placeholder")
+
+    await send_long_message(
+        bot=context.bot,
+        chat_id=update.effective_chat.id,
+        text=_tarot_cards_header_html(spread),
+    )
+
+    quote_overhead = len("<blockquote expandable></blockquote>")
+    quote_max = max(1, TELEGRAM_MAX_MESSAGE_LENGTH - quote_overhead)
+    for chunk in _split_text_chunks(text, quote_max):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=_html_expandable_quote(chunk),
+            parse_mode="HTML",
+        )
     logger.info("tarot: delivered reading text_len=%s", len(text))
 
 
