@@ -18,7 +18,7 @@ DELAY_CHOICES = tuple([10, 15, 20])
 emojis = ["🎯", "🏀", "⚽", "🎰", "🎳"]
 
 men_squad = [113300226, 1276243648, 72196947, 129453193, 113222251]
-excluded_uids = [1276243648]
+excluded_uids = []  # 1276243648
 
 goblin_pasta = [
     """
