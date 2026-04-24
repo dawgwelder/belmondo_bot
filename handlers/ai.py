@@ -67,11 +67,6 @@ async def process_ai_response(
 
     async with lock:
         content = update.message.text
-        model_type = (
-            "deepseek-reasoner"
-            if content.lower().startswith("подумай")
-            else "deepseek-chat"
-        )
 
         chat_deque = chat_data["chat_deque"]
         _ensure_system_prompt(chat_deque, const.professional_prompt)
@@ -80,7 +75,9 @@ async def process_ai_response(
         try:
             if "гороскоп" not in content:
                 stream = await client.chat.completions.create(
-                    model=model_type,
+                    model="deepseek-v4-flash",
+                    reasoning_effort="high",
+                    extra_body={"thinking": {"type": "enabled"}},
                     messages=list(chat_deque),
                     stream=True,
                 )
@@ -118,7 +115,8 @@ async def process_ai_response(
 
 
 _AI_HOROSCOPE_PLACEHOLDER = (
-    "🔮 Бельмондо разглядывает звёзды… _составляю гороскоп._"
+    "🔮 Бельмондо разглядывает звёзды… _составляю гороскоп._",
+    "🔮 Бельмондо вышел на охоту за Ретроградным Меркурием… _составляю гороскоп._"
 )
 _TAROT_PLACEHOLDER = (
     "🎴 Бельмондо тасует колоду и раскладывает карты… _слушаю шёпот арканов._"
@@ -412,12 +410,16 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         messages = previous_messages + messages
 
     placeholder = await _send_placeholder(
-        update, context, _AI_HOROSCOPE_PLACEHOLDER, log_prefix="ai_horoscope"
+        update, context, random.choice(_AI_HOROSCOPE_PLACEHOLDER), log_prefix="ai_horoscope"
     )
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-chat", messages=messages, stream=True
+            model="deepseek-v4-flash",
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+            messages=messages,
+            stream=True,
         )
         text = await parse_stream(stream)
     except Exception:
@@ -514,7 +516,11 @@ async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-reasoner", messages=request, stream=True
+            model="deepseek-v4-flash",
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+            messages=request,
+            stream=True,
         )
         text = await parse_stream(stream)
     except Exception:
@@ -647,7 +653,9 @@ async def magic_prediction_callback(
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
             messages=_build_magic_prediction_messages(luck_level),
             stream=True,
             max_tokens=220,
