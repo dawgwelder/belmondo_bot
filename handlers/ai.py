@@ -658,7 +658,6 @@ async def magic_prediction_callback(
             extra_body={"thinking": {"type": "enabled"}},
             messages=_build_magic_prediction_messages(luck_level),
             stream=True,
-            max_tokens=420,
         )
         text = await parse_stream(stream)
     except Exception:
