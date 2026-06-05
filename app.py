@@ -29,6 +29,7 @@ from handlers.content import (
     show_day,
     show_holidays,
 )
+from handlers.duel import DUEL_CALLBACK_PATTERN, duel, duel_callback, duel_cancel
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from state import vars_dict
@@ -50,6 +51,8 @@ def _build_handlers() -> list:
         CommandHandler("clear_context", clear_context),
         CommandHandler("tarot", tarot),
         CommandHandler("magic_prediction", magic_prediction),
+        CommandHandler("duel", duel),
+        CommandHandler("duel_cancel", duel_cancel),
     ]
 
 
@@ -98,6 +101,9 @@ async def main(
     )
     application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
 
+    application.add_handler(
+        CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
+    )
     application.add_handler(
         CallbackQueryHandler(
             magic_prediction_callback, pattern=f"^{MAGIC_PREDICTION_CALLBACK}$"

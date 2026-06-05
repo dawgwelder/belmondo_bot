@@ -10,6 +10,7 @@
 - **AI-гороскоп** — `/ai_horoscope` (генерация по эталонным текстам и промпту в `const.py`)
 - **Таро** — `/tarot` (три карты + интерпретация от модели; колода подгружается один раз на старте)
 - **Предсказание на день** — `/magic_prediction` (1–2 предложения с французской фразой)
+- **Дуэль профессионалов** — `/duel @user` или `/duel` reply-сообщением: AI создаёт сцену и определяет победителя по тайным ходам игроков
 - **Цитаты** — `/quote`
 - **Кубики** — `/roll` и текстовые фразы с «кубик»
 - **Goblin** — `/goblin` (случайный контент из `img/goblin/`)
@@ -101,6 +102,7 @@ belmondo_bot/
 │   ├── ai.py               # process_ai_response, ai_horoscope, tarot, magic_prediction, clear_context
 │   ├── commands.py         # quote, roll_dice, paused
 │   ├── content.py          # send_oxxxy, send_goblin, send_morning, show_day, show_holidays
+│   ├── duel.py             # AI-сценарий, вызов, защищённые кнопки и вердикт дуэли
 │   ├── godnoscope.py       # godnoscope, button_godnoscope, get_horoscope
 │   └── messages.py         # parse_message, spam_gif_detector, delete_dice
 ├── processors/
@@ -122,7 +124,7 @@ belmondo_bot/
 ### Хранение состояния
 
 - **Процесс-wide** (`application.bot_data`, инициализируется из `state.vars_dict`): `paused`, `spam_mode`, `master`, `self_id`, `self_id_dev`, загруженная колода `tarot_deck`.
-- **Per-chat** (`context.chat_data`, лениво через `state.ensure_chat_state`): `chat_deque` (история AI-диалога), `msg_deque` (анти-спам GIF), `horoscope_history`, `spam_stopper` (анти-спам текст), `ai_lock` (сериализация AI-запросов), `dt` / `ZAVOD_CHECK` / `username` (состояние завода), `zavod_text`.
+- **Per-chat** (`context.chat_data`, лениво через `state.ensure_chat_state`): история AI-диалога, антиспам, состояние завода, реестр известных пользователей и текущая дуэль.
 
 ## Команды бота
 
@@ -134,6 +136,8 @@ belmondo_bot/
 | `/ai_horoscope`     | Сгенерированный AI-гороскоп                                  |
 | `/tarot`            | Расклад таро + текст от модели                               |
 | `/magic_prediction` | Шуточное предсказание на день                                |
+| `/duel @user`       | Вызвать участника на AI-дуэль; надёжнее всего reply-командой |
+| `/duel_cancel`      | Отменить зависшую дуэль участником или владельцем бота       |
 | `/goblin`           | Случайный goblin-контент                                     |
 | `/oxxxy`            | Случайная ссылка на плейлист                                 |
 | `/day`              | Стикер дня недели (`img/eva/`)                               |
@@ -142,6 +146,19 @@ belmondo_bot/
 | `/roll`             | Бросок кубика Telegram                                       |
 | `/pause`            | Вкл/выкл паузу обработки (только для владельца)              |
 | `/clear_context`    | Сброс `chat_deque` текущего чата                             |
+
+### Дуэль профессионалов
+
+Вызвать участника можно reply-командой `/duel` на его сообщение или командой
+`/duel @username`. Для обычного упоминания бот сначала проверяет точный username,
+а при принятии вызова привязывает к дуэли числовой Telegram user ID.
+
+Только вызванный пользователь может принять или отклонить вызов. После принятия
+ходы могут выбирать только два дуэлянта, по одному разу каждый. AI-гейм-мастер
+создаёт сцену и выносит финальный вердикт; при ошибке AI используется локальный
+fallback, чтобы игра не зависала. Одновременно в чате может идти одна дуэль.
+Участник или владелец бота может принудительно закрыть её через `/duel_cancel`.
+Если вызов не принят за 120 секунд, он автоматически закрывается.
 
 ## Автоматические реакции (фрагменты)
 

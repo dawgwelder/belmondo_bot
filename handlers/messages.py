@@ -11,7 +11,7 @@ import utils
 from config import logger
 from guards import pause
 from handlers.ai import process_ai_response
-from state import ensure_chat_state
+from state import ensure_chat_state, remember_chat_user
 from triggers import get_trigger_type, ifs, process_trigger_response
 from processors import (
     process_bot_messages,
@@ -66,6 +66,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Main message parsing function — dispatches to processors and trigger engine."""
     bot_data = context.bot_data
     chat_data = ensure_chat_state(context)
+    remember_chat_user(context, update.effective_user)
 
     await process_bot_messages(update, context)
     await process_men_squad_message(update, context)
