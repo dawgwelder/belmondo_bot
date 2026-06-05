@@ -47,4 +47,15 @@ def ensure_chat_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     chat_data.setdefault("zavod_text", "")
     chat_data.setdefault("username", None)
     chat_data.setdefault("ai_lock", asyncio.Lock())
+    chat_data.setdefault("known_chat_users", {})
+    chat_data.setdefault("duels", {})
     return chat_data
+
+
+def remember_chat_user(context: ContextTypes.DEFAULT_TYPE, user) -> None:
+    """Remember a chat member so future @username commands can resolve to a user id."""
+    if user is None:
+        return
+    chat_data = ensure_chat_state(context)
+    if user.username:
+        chat_data["known_chat_users"][user.username.lower()] = user
