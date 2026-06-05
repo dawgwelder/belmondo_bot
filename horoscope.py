@@ -1,14 +1,22 @@
-import requests
-from bs4 import BeautifulSoup
+import asyncio
+from dataclasses import dataclass
+from datetime import date, datetime
 from string import Template
+
+import aiohttp
 from babel.dates import format_date
-from datetime import datetime
+from bs4 import BeautifulSoup
 
 mail = Template("https://horo.mail.ru/prediction/$horo/today/")
 rambler = Template("https://horoscopes.rambler.ru/$horo/")
 
-# (connect timeout, read timeout) for requests.get
-_HTTP_TIMEOUT = (5, 20)
+_HTTP_TIMEOUT = aiohttp.ClientTimeout(connect=5, sock_read=20, total=25)
+_HTTP_CONCURRENCY = 4
+
+_http_client = None
+_mail_cache_date = None
+_mail_cache = {}
+_mail_cache_lock = asyncio.Lock()
 
 horo_list = [
     "aries",
@@ -91,23 +99,104 @@ def _cdata_escape(text: str) -> str:
     return text.replace("]]>", "]]]]><![CDATA[>")
 
 
-def build_reference_horoscopes_xml() -> str:
+@dataclass(frozen=True)
+class HoroscopePage:
+    full_text: str
+    first_paragraph: str
+
+
+def _get_http_client() -> aiohttp.ClientSession:
+    global _http_client
+
+    if _http_client is None or _http_client.closed:
+        connector = aiohttp.TCPConnector(limit=_HTTP_CONCURRENCY)
+        _http_client = aiohttp.ClientSession(
+            connector=connector,
+            timeout=_HTTP_TIMEOUT,
+        )
+    return _http_client
+
+
+async def close_horoscope_http_client() -> None:
+    """Close the shared HTTP client during application shutdown."""
+    global _http_client
+
+    if _http_client is not None and not _http_client.closed:
+        await _http_client.close()
+    _http_client = None
+
+
+async def _fetch_page(url: str) -> HoroscopePage:
+    async with _get_http_client().get(url) as response:
+        response.raise_for_status()
+        html = await response.text()
+
+    paragraphs = [p.text for p in BeautifulSoup(html, features="lxml").find_all("p")]
+    if not paragraphs:
+        return HoroscopePage("", "")
+    return HoroscopePage("\n".join(paragraphs), paragraphs[0])
+
+
+async def _fetch_mail_page(horo: str) -> HoroscopePage:
+    return await _fetch_page(mail.substitute(horo=horo))
+
+
+async def _get_mail_pages(signs) -> dict[str, HoroscopePage]:
+    """Return cached Mail.ru pages, fetching missing signs concurrently."""
+    global _mail_cache_date, _mail_cache
+
+    today = date.today()
+    requested_signs = tuple(dict.fromkeys(signs))
+
+    async with _mail_cache_lock:
+        if _mail_cache_date != today:
+            _mail_cache_date = today
+            _mail_cache = {}
+
+        missing_signs = [sign for sign in requested_signs if sign not in _mail_cache]
+        semaphore = asyncio.Semaphore(_HTTP_CONCURRENCY)
+
+        async def fetch_limited(sign):
+            async with semaphore:
+                try:
+                    return sign, await _fetch_mail_page(sign)
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    return sign, None
+
+        if missing_signs:
+            results = await asyncio.gather(
+                *(fetch_limited(sign) for sign in missing_signs)
+            )
+            _mail_cache.update(
+                (sign, page) for sign, page in results if page is not None
+            )
+
+        return {
+            sign: _mail_cache[sign]
+            for sign in requested_signs
+            if sign in _mail_cache
+        }
+
+
+async def build_reference_horoscopes_xml() -> str:
     """Эталонные тексты по знакам: пары sign / horoscope в CDATA."""
+    pages = await _get_mail_pages(horo_list)
     parts = []
     for horo in horo_list:
-        raw = get_horoscope_mail(horo)
+        page = pages.get(horo)
+        raw = page.full_text if page else f"(не удалось загрузить эталон для {horo})"
         safe = _cdata_escape(raw)
         parts.append(f"<sign>{horo}</sign>\n<horoscope><![CDATA[{safe}]]></horoscope>")
     return "\n".join(parts)
 
 
-def build_ai_horoscope_user_message(history=None):
+async def build_ai_horoscope_user_message(history=None):
     """
     Минимальный user-промпт: дата, эталонные гороскопы в XML, при необходимости ключевые слова прошлого ответа.
     Полные правила заданы в professional_prompt_ai_horoscope (system).
     """
     dt = datetime.now().date().strftime("%d.%m.%Y")
-    chunks = [f"<date>{dt}</date>", build_reference_horoscopes_xml()]
+    chunks = [f"<date>{dt}</date>", await build_reference_horoscopes_xml()]
     if history and len(history) >= 1:
         kw = _extract_keywords(history[-1])
         kw_safe = _cdata_escape(kw)
@@ -115,9 +204,9 @@ def build_ai_horoscope_user_message(history=None):
     return "\n".join(chunks)
 
 
-def get_ai_horoscope_prompt(history=None):
+async def get_ai_horoscope_prompt(history=None):
     """Совместимость: то же, что build_ai_horoscope_user_message."""
-    return build_ai_horoscope_user_message(history)
+    return await build_ai_horoscope_user_message(history)
 
 
 def _extract_keywords(text, max_keywords=5):
@@ -142,69 +231,66 @@ def _extract_keywords(text, max_keywords=5):
     return ', '.join(unique_keywords) if unique_keywords else "общие темы"
 
 
-def get_horoscope_mail(horo):
+async def get_horoscope_mail(horo):
+    pages = await _get_mail_pages([horo])
+    page = pages.get(horo)
+    return page.full_text if page else f"(не удалось загрузить эталон для {horo})"
+
+
+async def get_horoscope_rambler(horo):
     try:
-        r = requests.get(mail.substitute(horo=horo), timeout=_HTTP_TIMEOUT)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, features="lxml")
-        text = "\n".join(p.text for p in soup.find_all("p"))
-        return text
-    except requests.RequestException:
+        page = await _fetch_page(rambler.substitute(horo=horo))
+        return page.full_text
+    except (aiohttp.ClientError, asyncio.TimeoutError):
         return f"(не удалось загрузить эталон для {horo})"
 
 
-def get_horoscope_rambler(horo):
-    soup = BeautifulSoup(requests.get(rambler.substitute(horo=horo), timeout=_HTTP_TIMEOUT).text, features="lxml")
-    text = "\n".join(p.text for p in soup.find_all("p"))
-    return text
-
-
-def get_horoscopes():
-    horo_text = ""
+async def get_horoscopes():
+    pages = await _get_mail_pages(horo_list)
+    chunks = []
     for horo in horo_list:
-        horo_text += horo + "\n"
-        horo_text += get_horoscope_mail(horo)
-        # horo_text += "\n\n" + get_horoscope_rambler(horo) + "\n\n"
-    return horo_text
+        page = pages.get(horo)
+        text = page.full_text if page else f"(не удалось загрузить эталон для {horo})"
+        chunks.append(f"{horo}\n{text}")
+    return "\n".join(chunks)
 
 
-def get_horoscope(horo):
-    try:
-        r = requests.get(mail.substitute(horo=horo), timeout=_HTTP_TIMEOUT)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, features="lxml")
-        paras = soup.find_all("p")
-        if not paras:
-            return "Текст гороскопа временно недоступен."
-        return paras[0].text
-    except requests.RequestException:
+async def get_horoscope(horo):
+    pages = await _get_mail_pages([horo])
+    page = pages.get(horo)
+    if page is None:
         return "Не удалось загрузить гороскоп. Попробуйте позже."
+    return page.first_paragraph or "Текст гороскопа временно недоступен."
 
 
-def generate_horo_message(horo):
+async def generate_horo_message(horo):
     ru_horo = dict(zip(horo_list, horo_ru_list))[horo]
     emoji = dict(zip(horo_list, horo_emojis))[horo]
     dt = datetime.now().date()
     dt = format_date(dt, locale="ru", format="full").capitalize()
 
-    horo_text = get_horoscope(horo)
+    horo_text = await get_horoscope(horo)
     message = f"{dt}\n\n{emoji}{ru_horo}:\n{horo_text}"
     return message
 
 
-def generate_post():
+async def generate_post():
     dt = datetime.now().date()
     dt = format_date(dt, locale="ru", format="full").capitalize()
     first_post = f"{dt}\n\n"
     second_post = ""
 
+    pages = await _get_mail_pages(horo_list)
     for idx, (horo, ru_horo, emoji) in enumerate(
         zip(horo_list, horo_ru_list, horo_emojis)
     ):
-        horo_text = get_horoscope(horo)
+        page = pages.get(horo)
+        if page is None:
+            horo_text = "Не удалось загрузить гороскоп. Попробуйте позже."
+        else:
+            horo_text = page.first_paragraph or "Текст гороскопа временно недоступен."
         if idx < 5:
             first_post = f"{first_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
         else:
             second_post = f"{second_post}{emoji}{ru_horo}:\n{horo_text}\n\n"
     return first_post.strip(), second_post.strip()
-

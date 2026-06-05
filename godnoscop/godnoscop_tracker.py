@@ -1,12 +1,9 @@
-import os
 import json
-import asyncio
-from telethon import TelegramClient, events
-from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.types import InputPeerEmpty
 
-from datetime import datetime
 from babel.dates import format_date
+from datetime import datetime
+from telethon import TelegramClient
+
 
 horo_list = [
     "ОВЕН",
@@ -42,8 +39,6 @@ class GodnoscopTracker:
 
     @staticmethod
     def get_last_date():
-        from datetime import timedelta
-
         return datetime.now().date()  # + timedelta(days=1)
 
     def parse_post(self, post):
@@ -63,7 +58,6 @@ class GodnoscopTracker:
         client = await self.create_client()
         async for message in client.iter_messages("godnoscopp", limit=20):
             parsed = self.parse_post(message.text)
-            print(parsed)
             if parsed is not None:
                 sign, post = parsed
                 if post is not None:
@@ -114,6 +108,5 @@ async def main():
 
     for sign in horo_list:
         horoscope = await tracker.get_horoscope(sign)
-        print(horoscope)
 
     tracker.dump_data()

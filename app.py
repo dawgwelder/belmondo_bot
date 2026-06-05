@@ -32,6 +32,7 @@ from handlers.content import (
 from handlers.duel import DUEL_CALLBACK_PATTERN, duel, duel_callback, duel_cancel
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
+from horoscope import close_horoscope_http_client
 from state import vars_dict
 
 
@@ -129,6 +130,10 @@ async def main(
     finally:
         try:
             await application.stop()
+        except Exception:
+            logger.exception("Error while stopping bot")
+        try:
+            await close_horoscope_http_client()
             await application.shutdown()
             logger.info("Bot shutdown complete")
         except Exception:

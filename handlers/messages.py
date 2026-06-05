@@ -72,7 +72,7 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await process_men_squad_message(update, context)
     await process_ai_response(update, context)
 
-    if update.message.text is None:
+    if update.message is None or update.message.text is None:
         return
 
     msg = utils.clean_string(update.message.text.lower())
