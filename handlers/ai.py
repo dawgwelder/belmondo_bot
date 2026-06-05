@@ -73,25 +73,14 @@ async def process_ai_response(
         chat_deque.append({"role": "user", "content": content})
 
         try:
-            if "гороскоп" not in content:
-                stream = await client.chat.completions.create(
-                    model="deepseek-v4-flash",
-                    reasoning_effort="high",
-                    extra_body={"thinking": {"type": "enabled"}},
-                    messages=list(chat_deque),
-                    stream=True,
-                )
-                text = await parse_stream(stream)
-            else:
-                stream = await client.chat.completions.create(
-                    model=model_type,
-                    messages=[
-                        {"role": "system", "content": const.professional_prompt},
-                        {"role": "user", "content": content},
-                    ],
-                    stream=True,
-                )
-                text = await parse_stream(stream)
+            stream = await client.chat.completions.create(
+                model="deepseek-v4-flash",
+                reasoning_effort="high",
+                extra_body={"thinking": {"type": "enabled"}},
+                messages=list(chat_deque),
+                stream=True,
+            )
+            text = await parse_stream(stream)
 
             chat_deque.append({"role": "assistant", "content": text})
 
@@ -315,6 +304,19 @@ def _split_first_sentence(text: str) -> tuple[str, str]:
     return match.group(1).strip(), match.group(2).strip()
 
 
+def _strip_markdown_wrappers(text: str) -> str:
+    """Remove Markdown markers commonly added around zodiac titles."""
+    source = text.strip()
+    zodiac_name = "|".join(_ZODIAC_RU)
+    source = re.sub(
+        rf"^[*_~`]+(\s*(?:{zodiac_name})\s*)[*_~`]+",
+        r"\1",
+        source,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"^[*_~`]+|[*_~`]+$", "", source)
+
+
 async def _send_ai_horoscope_structured(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
@@ -350,6 +352,7 @@ async def _send_ai_horoscope_structured(
         for section in sections:
             title, hidden = _split_first_sentence(section)
             title_text = title.rstrip(".:").strip() if title else ""
+            title_text = _strip_markdown_wrappers(title_text)
             title_escaped = html.escape(title_text) if title_text else ""
 
             hidden_chunks = _split_text_chunks(hidden, quote_max) if hidden else []
@@ -397,7 +400,7 @@ async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_data = ensure_chat_state(context)
     horoscope_history = chat_data["horoscope_history"]
     history = list(horoscope_history) if horoscope_history else None
-    prompt = build_ai_horoscope_user_message(history)
+    prompt = await build_ai_horoscope_user_message(history)
     messages = [
         {"role": "system", "content": const.professional_prompt_ai_horoscope},
         {"role": "user", "content": prompt},

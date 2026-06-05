@@ -14,7 +14,7 @@ tracker = GodnoscopTracker(config)
 @pause
 async def get_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send pre-generated horoscope posts to the chat."""
-    first_post, second_post = generate_post()
+    first_post, second_post = await generate_post()
     logger.info("sending horoscopes")
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=first_post
