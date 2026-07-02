@@ -49,6 +49,7 @@ def ensure_chat_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     chat_data.setdefault("ai_lock", asyncio.Lock())
     chat_data.setdefault("known_chat_users", {})
     chat_data.setdefault("duels", {})
+    chat_data.setdefault("roulette_games", {})
     return chat_data
 
 

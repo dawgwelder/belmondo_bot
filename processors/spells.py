@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 import const
 import utils
 from config import tz
+from handlers.roulette import start_roulette
 
 
 async def process_special_commands(
@@ -34,6 +35,9 @@ async def process_special_commands(
             text=f"Амиру до свободы осталось {utils.td_convert(td)}",
             parse_mode="markdown",
         )
+
+    if re.search(r"\bрулетка\b", msg):
+        await start_roulette(update, context)
 
     if "страшно жить" in msg:
         await context.bot.send_message(

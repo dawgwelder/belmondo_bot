@@ -32,6 +32,7 @@ from handlers.content import (
 from handlers.duel import DUEL_CALLBACK_PATTERN, duel, duel_callback, duel_cancel
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
+from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
 from horoscope import close_horoscope_http_client
 from state import vars_dict
 
@@ -110,6 +111,9 @@ async def main(
 
     application.add_handler(
         CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
+    )
+    application.add_handler(
+        CallbackQueryHandler(roulette_callback, pattern=ROULETTE_CALLBACK_PATTERN)
     )
     application.add_handler(
         CallbackQueryHandler(
