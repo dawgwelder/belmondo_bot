@@ -25,40 +25,77 @@ from processors import (
     process_zalupa_stickers,
 )
 
+MEDIA_SPAM_THRESHOLD = 3
+MEDIA_SPAM_WINDOW_SECONDS = 3
+GIF_MIME_TYPES = {"image/gif", "video/mp4"}
+
+
+def _spam_media_type(message) -> str | None:
+    document = getattr(message, "document", None)
+    animation = getattr(message, "animation", None)
+
+    if (
+        document is not None
+        and getattr(document, "mime_type", None) in GIF_MIME_TYPES
+    ) or (
+        animation is not None
+        and getattr(animation, "mime_type", None) in GIF_MIME_TYPES
+    ):
+        return "gif"
+
+    if getattr(message, "sticker", None) is not None:
+        return "sticker"
+
+    return None
+
 
 async def spam_gif_detector(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Detect and remove rapidly-repeated GIFs from the same user."""
-    if update.message.document.mime_type != "video/mp4":
+    """Detect and remove rapidly-repeated GIFs/stickers from the same user."""
+    if update.message is None or update.message.from_user is None:
+        return
+
+    media_type = _spam_media_type(update.message)
+    if media_type is None:
         return
 
     chat_data = ensure_chat_state(context)
     last_msg = {
         "from": update.message.from_user.id,
         "date": update.message.date,
+        "media_type": media_type,
     }
     msg_deque = chat_data["msg_deque"]
     msg_deque.append(last_msg)
 
-    for idx in range(len(msg_deque) - 1):
-        msg = msg_deque[idx]
-        if (
-            msg["from"] == last_msg["from"]
-            and (last_msg["date"] - msg["date"]).total_seconds() < 3
-        ):
-            try:
-                await context.bot.delete_message(
-                    update.effective_chat.id, update.message.message_id
-                )
-                logger.info(
-                    "spam_gif_detector: deleted gif from user=%s msg_id=%s",
-                    last_msg["from"],
-                    update.message.message_id,
-                )
-            except Exception as exc:
-                logger.warning("spam_gif_detector: failed to delete: %s", exc)
-            break
+    recent_count = 0
+    for msg in msg_deque:
+        if msg.get("from") != last_msg["from"]:
+            continue
+        if msg.get("media_type") != media_type:
+            continue
+
+        seconds_since_msg = (last_msg["date"] - msg["date"]).total_seconds()
+        if 0 <= seconds_since_msg < MEDIA_SPAM_WINDOW_SECONDS:
+            recent_count += 1
+
+    if recent_count < MEDIA_SPAM_THRESHOLD:
+        return
+
+    try:
+        await context.bot.delete_message(
+            update.effective_chat.id, update.message.message_id
+        )
+        logger.info(
+            "spam_gif_detector: deleted %s from user=%s msg_id=%s count=%s",
+            media_type,
+            last_msg["from"],
+            update.message.message_id,
+            recent_count,
+        )
+    except Exception as exc:
+        logger.warning("spam_gif_detector: failed to delete: %s", exc)
 
 
 @pause
