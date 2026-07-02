@@ -100,7 +100,13 @@ async def main(
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, parse_message)
     )
-    application.add_handler(MessageHandler(filters.Document.ALL, spam_gif_detector))
+    media_spam_filter = (
+        filters.Document.GIF
+        | filters.Document.MP4
+        | filters.ANIMATION
+        | filters.Sticker.ALL
+    )
+    application.add_handler(MessageHandler(media_spam_filter, spam_gif_detector))
 
     application.add_handler(
         CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
