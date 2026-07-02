@@ -26,7 +26,7 @@ async def process_special_commands(
             parse_mode="markdown",
         )
 
-    if "амир" in msg:
+    if re.search(r"\bамир\b", msg):
         td = datetime.datetime(2026, 10, 14, tzinfo=tz) - datetime.datetime.now(tz)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
