@@ -30,6 +30,15 @@ from handlers.content import (
     show_holidays,
 )
 from handlers.duel import DUEL_CALLBACK_PATTERN, duel, duel_callback, duel_cancel
+from handlers.games import (
+    GAME_CALLBACK_PATTERN,
+    alibi,
+    game_callback,
+    game_cancel,
+    operation,
+    pitch,
+    process_game_reply,
+)
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
@@ -55,6 +64,10 @@ def _build_handlers() -> list:
         CommandHandler("magic_prediction", magic_prediction),
         CommandHandler("duel", duel),
         CommandHandler("duel_cancel", duel_cancel),
+        CommandHandler("alibi", alibi),
+        CommandHandler("operation", operation),
+        CommandHandler("pitch", pitch),
+        CommandHandler("game_cancel", game_cancel),
     ]
 
 
@@ -111,6 +124,9 @@ async def main(
 
     application.add_handler(
         CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
+    )
+    application.add_handler(
+        CallbackQueryHandler(game_callback, pattern=GAME_CALLBACK_PATTERN)
     )
     application.add_handler(
         CallbackQueryHandler(roulette_callback, pattern=ROULETTE_CALLBACK_PATTERN)

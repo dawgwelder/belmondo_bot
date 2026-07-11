@@ -11,6 +11,7 @@ import utils
 from config import logger
 from guards import pause
 from handlers.ai import process_ai_response
+from handlers.games import process_game_reply
 from state import ensure_chat_state, remember_chat_user
 from triggers import get_trigger_type, ifs, process_trigger_response
 from processors import (
@@ -105,8 +106,12 @@ async def parse_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     chat_data = ensure_chat_state(context)
     remember_chat_user(context, update.effective_user)
 
+    if await process_game_reply(update, context):
+        return
+
     await process_bot_messages(update, context)
     await process_men_squad_message(update, context)
+
     await process_ai_response(update, context)
 
     if update.message is None or update.message.text is None:
