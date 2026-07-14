@@ -23,13 +23,25 @@ from games import (
 )
 from games.scenarios import SCENARIOS, GameScenario
 from guards import ensure_master_in_chat_for_ai, pause
+from handlers.roulette import start_roulette
 from state import ensure_chat_state, remember_chat_user
 
 GAME_CALLBACK_PATTERN = r"^game:"
+GAME_MENU_CALLBACK_ACTION = "select"
 LOBBY_TIMEOUT_SECONDS = 180
 ROUND_TIMEOUT_SECONDS = 300
 LLM_CALL_TIMEOUT_SECONDS = 45
 PLAYER_NAME_MAX_LENGTH = 64
+GAME_MENU_ITEMS = (
+    ("operation", "Шпионская операция"),
+    ("alibi", "Создай алиби"),
+    ("pitch", "Продай это Бельмондо"),
+    ("chase", "Погоня на чём попало"),
+    ("villain_casting", "Кастинг злодеев"),
+    ("budget_heist", "Ограбление за 12 франков"),
+    ("press_conference", "Объясните прессе"),
+    ("roulette", "Рулетка"),
+)
 
 
 def _store(context: ContextTypes.DEFAULT_TYPE) -> GameStore:
@@ -92,6 +104,28 @@ def _keyboard(game: GameState) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def _menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"game:{GAME_MENU_CALLBACK_ACTION}:{game_type}",
+                )
+            ]
+            for game_type, label in GAME_MENU_ITEMS
+        ]
+    )
+
+
+def _source_message(update: Update):
+    if update.message is not None:
+        return update.message
+    if update.callback_query is not None:
+        return update.callback_query.message
+    return None
 
 
 def _phase_round(game: GameState) -> int:
@@ -666,7 +700,8 @@ async def _create_lobby(
     context: ContextTypes.DEFAULT_TYPE,
     game_type: str,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    source_message = _source_message(update)
+    if source_message is None or update.effective_user is None:
         return
     if not await ensure_master_in_chat_for_ai(update, context):
         return
@@ -702,13 +737,13 @@ async def _create_lobby(
             game_added = True
             _sessions(context)[game.game_id] = session
     if not game_added:
-        await update.message.reply_text(
+        await source_message.reply_text(
             "В этом чате уже идёт групповая игра. Дождитесь завершения или /game_cancel."
         )
         return
 
     try:
-        await update.message.reply_text(
+        await source_message.reply_text(
             _lobby_text(game, session), reply_markup=_keyboard(game)
         )
     except Exception:
@@ -727,6 +762,13 @@ async def _create_lobby(
 
 
 @pause
+async def game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
+    await update.message.reply_text("Выберите игру:", reply_markup=_menu_keyboard())
+
+
+@pause
 async def alibi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _create_lobby(update, context, "alibi")
 
@@ -741,11 +783,33 @@ async def pitch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _create_lobby(update, context, "pitch")
 
 
+async def _handle_menu_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    game_type: str,
+) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    if game_type == "roulette":
+        await query.answer("Запускаю рулетку.")
+        await start_roulette(update, context)
+        return
+    if game_type in SCENARIOS:
+        await query.answer("Запускаю игру.")
+        await _create_lobby(update, context, game_type)
+        return
+    await query.answer("Неизвестная игра.", show_alert=True)
+
+
 async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or update.effective_user is None:
         return
     parts = (query.data or "").split(":")
+    if len(parts) == 3 and parts[0] == "game" and parts[1] == GAME_MENU_CALLBACK_ACTION:
+        await _handle_menu_selection(update, context, parts[2])
+        return
     if len(parts) != 4 or parts[0] != "game":
         await query.answer("Некорректная команда игры.", show_alert=True)
         return
