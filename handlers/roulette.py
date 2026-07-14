@@ -72,12 +72,15 @@ def _final_text(game: dict) -> str:
 
 async def start_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start a Russian roulette game for the current chat."""
-    if update.message is None:
+    source_message = update.message
+    if source_message is None and update.callback_query is not None:
+        source_message = update.callback_query.message
+    if source_message is None:
         return
 
     games = _roulette_store(context)
     if games:
-        await update.message.reply_text(
+        await source_message.reply_text(
             "Рулетка уже крутится. Нажимайте кнопку в активной игре."
         )
         return
@@ -93,7 +96,7 @@ async def start_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     }
     games[game_id] = game
 
-    await update.message.reply_text(
+    await source_message.reply_text(
         _active_text(game), reply_markup=_roulette_keyboard(game_id)
     )
     logger.info(

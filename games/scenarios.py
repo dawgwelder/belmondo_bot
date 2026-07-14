@@ -94,7 +94,7 @@ class AlibiScenario(GameScenario):
         super().__init__(
             game_type="alibi",
             title="Алиби, месье",
-            command="/alibi",
+            command="/game",
             lobby_intro="Расследование начинается. Наберите минимум двух агентов.",
         )
 
@@ -273,7 +273,7 @@ class OperationScenario(GameScenario):
         super().__init__(
             game_type="operation",
             title="Невозможная операция",
-            command="/operation",
+            command="/game",
             lobby_intro="Штаб собирает профессионалов для абсурдной операции.",
         )
 
@@ -434,7 +434,7 @@ class PitchScenario(GameScenario):
         super().__init__(
             game_type="pitch",
             title="Продай это Бельмондо",
-            command="/pitch",
+            command="/game",
             lobby_intro="Клиент требователен, товар — абсурден. Готовьте питчи.",
         )
 

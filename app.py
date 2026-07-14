@@ -32,11 +32,9 @@ from handlers.content import (
 from handlers.duel import DUEL_CALLBACK_PATTERN, duel, duel_callback, duel_cancel
 from handlers.games import (
     GAME_CALLBACK_PATTERN,
-    alibi,
+    game,
     game_callback,
     game_cancel,
-    operation,
-    pitch,
     process_game_reply,
 )
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
@@ -64,9 +62,7 @@ def _build_handlers() -> list:
         CommandHandler("magic_prediction", magic_prediction),
         CommandHandler("duel", duel),
         CommandHandler("duel_cancel", duel_cancel),
-        CommandHandler("alibi", alibi),
-        CommandHandler("operation", operation),
-        CommandHandler("pitch", pitch),
+        CommandHandler("game", game),
         CommandHandler("game_cancel", game_cancel),
     ]
 
