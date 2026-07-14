@@ -201,12 +201,28 @@ async def test_game_command_shows_menu():
         ("Шпионская операция", "game:select:operation"),
         ("Создай алиби", "game:select:alibi"),
         ("Продай это Бельмондо", "game:select:pitch"),
+        ("Погоня на чём попало", "game:select:chase"),
+        ("Кастинг злодеев", "game:select:villain_casting"),
+        ("Ограбление за 12 франков", "game:select:budget_heist"),
+        ("Объясните прессе", "game:select:press_conference"),
         ("Рулетка", "game:select:roulette"),
     ]
 
 
+@pytest.mark.parametrize(
+    "game_type",
+    [
+        "operation",
+        "alibi",
+        "pitch",
+        "chase",
+        "villain_casting",
+        "budget_heist",
+        "press_conference",
+    ],
+)
 @pytest.mark.asyncio
-async def test_game_menu_selection_creates_lobby(monkeypatch):
+async def test_game_menu_selection_creates_lobby(monkeypatch, game_type):
     monkeypatch.setattr(
         game_handlers, "ensure_master_in_chat_for_ai", AsyncMock(return_value=True)
     )
@@ -214,13 +230,13 @@ async def test_game_menu_selection_creates_lobby(monkeypatch):
     creator = user(1, "Анна")
     menu_message = FakeMessage(10, creator, "/game")
     update, query = callback_update(
-        creator, "game:select:operation", message=menu_message
+        creator, f"game:select:{game_type}", message=menu_message
     )
 
     await game_handlers.game_callback(update, ctx)
 
     game = ctx.chat_data["llm_games"][-100]
-    assert game.game_type == "operation"
+    assert game.game_type == game_type
     assert query.answers[0] == ("Запускаю игру.", {})
     assert menu_message.replies[0].reply_markup.inline_keyboard
 
