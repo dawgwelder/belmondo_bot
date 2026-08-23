@@ -16,6 +16,7 @@ class ChatMessage:
     message_id: int
     sender_name: str
     text: str
+    is_bot: bool = False
 
 
 def parse_limit(args: list[str] | None) -> tuple[int | None, str | None, bool]:
@@ -45,6 +46,8 @@ def filter_text_messages(
     result: list[ChatMessage] = []
     for message in messages:
         if exclude_message_id is not None and message.message_id == exclude_message_id:
+            continue
+        if message.is_bot:
             continue
         if not (message.text or "").strip():
             continue

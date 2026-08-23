@@ -26,6 +26,13 @@ def sender_display_name(sender: Any) -> str:
     return "Кто-то"
 
 
+def is_bot_sender(sender: Any) -> bool:
+    """True when Telethon sender is a User flagged as bot."""
+    if sender is None:
+        return False
+    return bool(getattr(sender, "bot", False))
+
+
 def message_to_chat_message(message: Any) -> ChatMessage | None:
     text = getattr(message, "text", None)
     if text is None or not str(text).strip():
@@ -35,6 +42,7 @@ def message_to_chat_message(message: Any) -> ChatMessage | None:
         message_id=int(getattr(message, "id")),
         sender_name=sender_display_name(sender),
         text=str(text),
+        is_bot=is_bot_sender(sender),
     )
 
 
@@ -79,6 +87,7 @@ async def fetch_chat_text_messages(
                     message_id=int(message.id),
                     sender_name=sender_display_name(sender),
                     text=str(text),
+                    is_bot=is_bot_sender(sender),
                 )
             )
         collected.reverse()
