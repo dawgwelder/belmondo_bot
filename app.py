@@ -40,6 +40,7 @@ from handlers.games import (
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
+from handlers.tldr import tldr
 from horoscope import close_horoscope_http_client
 from state import vars_dict
 
@@ -60,6 +61,7 @@ def _build_handlers() -> list:
         CommandHandler("clear_context", clear_context),
         CommandHandler("tarot", tarot),
         CommandHandler("magic_prediction", magic_prediction),
+        CommandHandler("tldr", tldr),
         CommandHandler("duel", duel),
         CommandHandler("duel_cancel", duel_cancel),
         CommandHandler("game", game),

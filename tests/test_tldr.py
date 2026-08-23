@@ -1,22 +1,4 @@
-import sys
 from types import SimpleNamespace
-from unittest.mock import Mock
-
-sys.modules.setdefault(
-    "config",
-    SimpleNamespace(
-        client=Mock(),
-        logger=Mock(),
-        TELEGRAM_MAX_MESSAGE_LENGTH=4096,
-        config=SimpleNamespace(
-            auth={
-                "phone": "+10000000000",
-                "api_id": "1",
-                "api_hash": "hash",
-            }
-        ),
-    ),
-)
 
 from tldr.history import message_to_chat_message, sender_display_name
 from tldr.summarize import (
