@@ -18,6 +18,7 @@ sys.modules.setdefault(
     ),
 )
 
+from tldr.history import message_to_chat_message, sender_display_name
 from tldr.summarize import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -104,3 +105,20 @@ def test_build_tldr_messages_is_narrative_system_user():
     assert "нарратив" in system or "сцен" in system or "по авторам" in system
     assert "Иван: привет" in messages[1]["content"]
     assert "Артём: скидки" in messages[1]["content"]
+
+
+def test_sender_display_name_prefers_first_last_then_username():
+    assert sender_display_name(SimpleNamespace(first_name="Инара", last_name="К", username="x")) == "Инара К"
+    assert sender_display_name(SimpleNamespace(first_name="Иван", last_name=None, username="ivan")) == "Иван"
+    assert sender_display_name(SimpleNamespace(first_name=None, last_name=None, username="ghost")) == "ghost"
+    assert sender_display_name(None) == "Кто-то"
+    assert sender_display_name(SimpleNamespace(title="Чат ботов")) == "Чат ботов"
+
+
+def test_message_to_chat_message_maps_text_and_skips_empty():
+    sender = SimpleNamespace(first_name="Артём", last_name=None, username=None)
+    msg = SimpleNamespace(id=10, text="скидки", sender=sender)
+    mapped = message_to_chat_message(msg)
+    assert mapped == ChatMessage(10, "Артём", "скидки")
+    assert message_to_chat_message(SimpleNamespace(id=11, text="  ", sender=sender)) is None
+    assert message_to_chat_message(SimpleNamespace(id=12, text=None, sender=sender)) is None
