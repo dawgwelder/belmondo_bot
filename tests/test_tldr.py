@@ -98,9 +98,38 @@ def test_sender_display_name_prefers_first_last_then_username():
 
 
 def test_message_to_chat_message_maps_text_and_skips_empty():
-    sender = SimpleNamespace(first_name="Артём", last_name=None, username=None)
+    sender = SimpleNamespace(first_name="Артём", last_name=None, username=None, bot=False)
     msg = SimpleNamespace(id=10, text="скидки", sender=sender)
     mapped = message_to_chat_message(msg)
-    assert mapped == ChatMessage(10, "Артём", "скидки")
+    assert mapped == ChatMessage(10, "Артём", "скидки", is_bot=False)
     assert message_to_chat_message(SimpleNamespace(id=11, text="  ", sender=sender)) is None
     assert message_to_chat_message(SimpleNamespace(id=12, text=None, sender=sender)) is None
+
+
+def test_message_to_chat_message_marks_bots():
+    bot_sender = SimpleNamespace(first_name="Бельмондо", last_name=None, username="bot", bot=True)
+    mapped = message_to_chat_message(SimpleNamespace(id=20, text="сводка", sender=bot_sender))
+    assert mapped is not None
+    assert mapped.is_bot is True
+
+
+def test_filter_text_messages_excludes_bots():
+    messages = [
+        ChatMessage(1, "Иван", "привет", is_bot=False),
+        ChatMessage(2, "Бельмондо", "суммаризация...", is_bot=True),
+        ChatMessage(3, "Артём", "скидки", is_bot=False),
+    ]
+    result = filter_text_messages(messages)
+    assert [(m.message_id, m.sender_name) for m in result] == [
+        (1, "Иван"),
+        (3, "Артём"),
+    ]
+
+
+def test_is_bot_sender():
+    from tldr.history import is_bot_sender
+
+    assert is_bot_sender(SimpleNamespace(bot=True)) is True
+    assert is_bot_sender(SimpleNamespace(bot=False)) is False
+    assert is_bot_sender(None) is False
+    assert is_bot_sender(SimpleNamespace(title="Channel")) is False
