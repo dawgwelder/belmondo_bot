@@ -89,19 +89,28 @@ def test_build_tldr_messages_is_narrative_system_user():
     assert "Артём: скидки" in messages[1]["content"]
 
 
-def test_sender_display_name_prefers_first_last_then_username():
-    assert sender_display_name(SimpleNamespace(first_name="Инара", last_name="К", username="x")) == "Инара К"
-    assert sender_display_name(SimpleNamespace(first_name="Иван", last_name=None, username="ivan")) == "Иван"
-    assert sender_display_name(SimpleNamespace(first_name=None, last_name=None, username="ghost")) == "ghost"
+def test_sender_display_name_uses_username_not_first_last():
+    assert sender_display_name(
+        SimpleNamespace(first_name="Инара", last_name="К", username="x")
+    ) == "x"
+    assert sender_display_name(
+        SimpleNamespace(first_name="Иван", last_name=None, username="ivan")
+    ) == "ivan"
+    assert sender_display_name(
+        SimpleNamespace(first_name=None, last_name=None, username="ghost")
+    ) == "ghost"
+    assert sender_display_name(
+        SimpleNamespace(first_name="Иван", last_name="Петров", username=None)
+    ) == "Кто-то"
     assert sender_display_name(None) == "Кто-то"
     assert sender_display_name(SimpleNamespace(title="Чат ботов")) == "Чат ботов"
 
 
 def test_message_to_chat_message_maps_text_and_skips_empty():
-    sender = SimpleNamespace(first_name="Артём", last_name=None, username=None, bot=False)
+    sender = SimpleNamespace(first_name="Артём", last_name=None, username="artem", bot=False)
     msg = SimpleNamespace(id=10, text="скидки", sender=sender)
     mapped = message_to_chat_message(msg)
-    assert mapped == ChatMessage(10, "Артём", "скидки", is_bot=False)
+    assert mapped == ChatMessage(10, "artem", "скидки", is_bot=False)
     assert message_to_chat_message(SimpleNamespace(id=11, text="  ", sender=sender)) is None
     assert message_to_chat_message(SimpleNamespace(id=12, text=None, sender=sender)) is None
 

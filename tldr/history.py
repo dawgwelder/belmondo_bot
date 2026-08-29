@@ -12,17 +12,12 @@ from tldr.summarize import ChatMessage, filter_text_messages
 def sender_display_name(sender: Any) -> str:
     if sender is None:
         return "Кто-то"
-    title = getattr(sender, "title", None)
-    if title:
-        return str(title).strip() or "Кто-то"
-    first = (getattr(sender, "first_name", None) or "").strip()
-    last = (getattr(sender, "last_name", None) or "").strip()
-    full = f"{first} {last}".strip()
-    if full:
-        return full
     username = (getattr(sender, "username", None) or "").strip()
     if username:
         return username
+    title = getattr(sender, "title", None)
+    if title:
+        return str(title).strip() or "Кто-то"
     return "Кто-то"
 
 
