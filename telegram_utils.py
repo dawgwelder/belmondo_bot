@@ -2,7 +2,15 @@
 
 import asyncio
 
+import httpx
+
 from config import TELEGRAM_MAX_MESSAGE_LENGTH
+
+TELEGRAM_API_BASE = "https://api.telegram.org"
+
+
+class TelegramAPIError(Exception):
+    """Raised when Telegram Bot API returns ok=false or an unexpected payload."""
 
 
 async def parse_stream(stream):
@@ -12,6 +20,33 @@ async def parse_stream(stream):
         if chunk.choices and chunk.choices[0].delta.content is not None:
             text += chunk.choices[0].delta.content
     return text
+
+
+async def send_rich_message(
+    token: str,
+    chat_id: int,
+    blocks: list[dict],
+    *,
+    base_url: str = TELEGRAM_API_BASE,
+    timeout: float = 60.0,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict:
+    """Send a Rich Message via Bot API sendRichMessage (httpx, not PTB)."""
+    url = f"{base_url}/bot{token}/sendRichMessage"
+    payload = {
+        "chat_id": chat_id,
+        "rich_message": {"blocks": blocks},
+    }
+    client_kwargs: dict = {"timeout": timeout}
+    if transport is not None:
+        client_kwargs["transport"] = transport
+    async with httpx.AsyncClient(**client_kwargs) as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+    if not data.get("ok"):
+        raise TelegramAPIError(data.get("description") or "sendRichMessage failed")
+    return data
 
 
 async def send_long_message(
