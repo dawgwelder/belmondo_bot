@@ -40,8 +40,18 @@ from handlers.games import (
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
+from handlers.spy_game import (
+    SPY_CALLBACK_PATTERN,
+    spy_admin,
+    spy_callback,
+    spy_game_tick,
+    spy_menu,
+    track_spy_activity,
+)
 from handlers.tldr import tldr
 from horoscope import close_horoscope_http_client
+from spy_game import SpyGameService, SpySettings
+from spy_game.narrator import build_narrator
 from state import vars_dict
 
 
@@ -66,6 +76,8 @@ def _build_handlers() -> list:
         CommandHandler("duel_cancel", duel_cancel),
         CommandHandler("game", game),
         CommandHandler("game_cancel", game_cancel),
+        CommandHandler("spy", spy_menu),
+        CommandHandler("spy_admin", spy_admin),
     ]
 
 
@@ -74,6 +86,7 @@ async def main(
 ) -> None:
     """Initialize and run the bot."""
     application = None
+    spy_service = None
     vars_dict["spam_mode"] = spam_mode
 
     if mode not in ["dev", "prod"]:
@@ -95,6 +108,24 @@ async def main(
 
     application.bot_data.update(vars_dict)
 
+    spy_settings = SpySettings.from_env(mode)
+    spy_service = SpyGameService(spy_settings)
+    try:
+        await spy_service.initialize()
+    except Exception:
+        await spy_service.close()
+        raise
+    application.bot_data["spy_game"] = spy_service
+    application.bot_data["spy_narrator"] = build_narrator(spy_settings)
+    logger.info(
+        "Spy game initialized: enabled=%s narrator=%s mode=%s allowed_chats=%s db=%s",
+        spy_settings.enabled,
+        spy_settings.llm_narrator_enabled,
+        mode,
+        len(spy_settings.allowed_chat_ids),
+        spy_settings.database_path,
+    )
+
     try:
         application.bot_data["tarot_deck"] = load_tarot_deck()
         logger.info(
@@ -107,6 +138,11 @@ async def main(
 
     for handler in _build_handlers():
         application.add_handler(handler)
+
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, track_spy_activity),
+        group=-1,
+    )
 
     application.add_handler(MessageHandler(filters.Dice.ALL, delete_dice))
     application.add_handler(
@@ -130,11 +166,26 @@ async def main(
         CallbackQueryHandler(roulette_callback, pattern=ROULETTE_CALLBACK_PATTERN)
     )
     application.add_handler(
+        CallbackQueryHandler(spy_callback, pattern=SPY_CALLBACK_PATTERN)
+    )
+    application.add_handler(
         CallbackQueryHandler(
             magic_prediction_callback, pattern=f"^{MAGIC_PREDICTION_CALLBACK}$"
         )
     )
     application.add_handler(CallbackQueryHandler(button_godnoscope))
+
+    if spy_settings.enabled:
+        if application.job_queue is None:
+            await spy_service.close()
+            raise RuntimeError("Spy Game requires python-telegram-bot JobQueue")
+        application.job_queue.run_repeating(
+            spy_game_tick,
+            interval=spy_settings.tick_seconds,
+            first=1,
+            name="spy-game-tick",
+            job_kwargs={"max_instances": 1, "coalesce": True},
+        )
 
     logger.info("Bot is running... Press Ctrl+C to stop")
 
@@ -162,6 +213,9 @@ async def main(
             logger.info("Bot shutdown complete")
         except Exception:
             logger.exception("Error during shutdown")
+        finally:
+            if spy_service is not None:
+                await spy_service.close()
 
 
 def run_bot(

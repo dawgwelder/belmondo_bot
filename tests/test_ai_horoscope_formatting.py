@@ -124,6 +124,26 @@ async def test_send_rich_message_ok():
 
 
 @pytest.mark.asyncio
+async def test_send_rich_message_accepts_inline_keyboard():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        assert body["reply_markup"] == {
+            "inline_keyboard": [[{"text": "Open", "callback_data": "spy:menu:profile"}]]
+        }
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 2}})
+
+    await send_rich_message(
+        "TEST:TOKEN",
+        42,
+        [{"type": "paragraph", "text": "hi"}],
+        reply_markup={
+            "inline_keyboard": [[{"text": "Open", "callback_data": "spy:menu:profile"}]]
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.asyncio
 async def test_send_rich_message_raises_on_api_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

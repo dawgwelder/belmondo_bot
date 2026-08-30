@@ -27,6 +27,7 @@ async def send_rich_message(
     chat_id: int,
     blocks: list[dict],
     *,
+    reply_markup: dict | None = None,
     base_url: str = TELEGRAM_API_BASE,
     timeout: float = 60.0,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -37,6 +38,8 @@ async def send_rich_message(
         "chat_id": chat_id,
         "rich_message": {"blocks": blocks},
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     client_kwargs: dict = {"timeout": timeout}
     if transport is not None:
         client_kwargs["transport"] = transport

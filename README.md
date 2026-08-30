@@ -12,6 +12,7 @@
 - **Предсказание на день** — `/magic_prediction` (1–2 предложения с французской фразой)
 - **Дуэль профессионалов** — `/duel @user` или `/duel` reply-сообщением: AI создаёт сцену и определяет победителя по тайным ходам игроков
 - **Игровое меню** — `/game`: семь групповых LLM-игр и «Рулетка»
+- **Spy Clicker** — `/spy`: фоновая шпионская сеть, события по активности чата, профиль и агенты через inline-меню
 - **Цитаты** — `/quote`
 - **Кубики** — `/roll` и текстовые фразы с «кубик»
 - **Goblin** — `/goblin` (случайный контент из `img/goblin/`)
@@ -81,6 +82,25 @@ gonoscopes_path = godnoscopes.json
 
 `main.py` — тонкий shim поверх `app.run_bot`; вся логика запуска живёт в `app.py`.
 
+### Spy Clicker
+
+По умолчанию фоновая игра выключена. Для dev/beta задайте allowlist и отдельный
+путь к SQLite:
+
+```bash
+export SPY_GAME_ENABLED=true
+export SPY_GAME_ALLOWED_CHAT_IDS=-1001234567890
+export SPY_GAME_DB_PATH=var/spy-game-dev.sqlite3
+export SPY_GAME_ALLOW_MANUAL_SPAWN=true
+export SPY_GAME_LLM_NARRATOR_ENABLED=true
+export SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS=8
+```
+
+После запуска master включает сеть командой `/spy_admin enable`. В production
+ручной spawn по умолчанию запрещён; глобальный `SPY_GAME_ENABLED=false` служит
+kill switch. LLM Narrator также opt-in: без его flag все события используют
+локальные шаблоны.
+
 ## Структура проекта
 
 ```
@@ -108,6 +128,7 @@ belmondo_bot/
 │   ├── games.py            # LLM group games: lobby, callbacks, reply moves, timeouts
 │   ├── godnoscope.py       # godnoscope, button_godnoscope, get_horoscope
 │   ├── roulette.py         # Рулетка с inline-кнопкой
+│   ├── spy_game.py         # Rich menu, фоновые события, callbacks и master UI
 │   └── messages.py         # parse_message, spam_gif_detector, delete_dice
 ├── games/
 │   ├── engine.py           # GameState, фазы, submit/join/start/timeout lifecycle
@@ -115,6 +136,16 @@ belmondo_bot/
 │   ├── llm.py              # structured JSON requests, retry, untrusted JSON helpers
 │   ├── scenarios.py        # alibi, operation, pitch prompts and formatters
 │   └── base.py             # dict-helpers для сценарных snapshot-структур
+├── spy_game/
+│   ├── service.py          # Telegram-independent use cases
+│   ├── director.py         # RuleBasedDirector event selection
+│   ├── narrator.py         # Structured LLM prose + timeout/template fallback
+│   ├── rewards.py          # Server-side reward resolution
+│   ├── repositories.py     # Atomic SQLite operations
+│   ├── scheduler.py        # Activity decay и интервалы событий
+│   ├── activity.py         # In-memory aggregation с anti-spam debounce
+│   ├── settings.py         # Feature flags, allowlist и typed balance
+│   └── migrations/         # Append-only SQLite migrations
 ├── processors/
 │   ├── bots.py             # process_bot_messages
 │   ├── media.py            # process_media_responses, sticker/zalupa/jackpot
@@ -137,6 +168,7 @@ belmondo_bot/
 - **Process-wide** (`application.bot_data`, инициализируется из `state.vars_dict`): `paused`, `spam_mode`, `master`, `self_id`, `self_id_dev`, загруженная колода `tarot_deck`.
 - **Per-chat** (`context.chat_data`, лениво через `state.ensure_chat_state`): история AI-диалога, антиспам, состояние завода, реестр известных пользователей, текущая дуэль, рулетка и активная LLM-игра.
 - Для LLM-игр отдельно хранятся `llm_games` (`GameState` по chat id), `llm_game_sessions` (имена игроков, контент раундов, operation token) и `llm_game_lock` для сериализации кликов, reply-ответов, таймаутов и фоновых LLM-переходов.
+- **Persistent Spy Clicker**: SQLite хранит пользователей, агентов, состояние чатов, `next_event_at`, события и историю. В памяти остаются только безопасные к потере счётчики свежей активности.
 
 ## Команды бота
 
@@ -152,6 +184,8 @@ belmondo_bot/
 | `/duel_cancel`      | Отменить зависшую дуэль участником или владельцем бота       |
 | `/game`             | Меню игр: семь групповых LLM-игр и рулетка                   |
 | `/game_cancel`      | Отменить активную групповую LLM-игру                         |
+| `/spy`              | Rich-меню Spy Clicker: досье, агенты и таймер события        |
+| `/spy_admin …`      | Управление Spy Clicker; только master                        |
 | `/goblin`           | Случайный goblin-контент                                     |
 | `/oxxxy`            | Случайная ссылка на плейлист                                 |
 | `/day`              | Стикер дня недели (`img/eva/`)                               |
@@ -173,6 +207,40 @@ belmondo_bot/
 fallback, чтобы игра не зависала. Одновременно в чате может идти одна дуэль.
 Участник или владелец бота может принудительно закрыть её через `/duel_cancel`.
 Если вызов не принят за 120 секунд, он автоматически закрывается.
+
+### Spy Clicker
+
+У игроков одна команда — `/spy`. Она отправляет Rich Message с кнопками досье,
+агентов и состояния сети. Обычные сообщения пользователей повышают активность
+чата; повторные сообщения одного пользователя учитываются не чаще раза в 20
+секунд. После 6 очков назначается и сохраняется `next_event_at`:
+
+- 6–14.9 очка: событие через 45–75 минут;
+- 15–29.9 очка: через 25–45 минут;
+- от 30 очков: через 12–25 минут.
+
+Score имеет half-life 30 минут. Уже назначенный таймер не отменяется при тишине:
+это обещанный чату сигнал. После публикации события остаётся 45% накопленной
+активности, поэтому события не появляются серией. Первый атомарно подтверждённый
+клик получает агента; claim, награда и history фиксируются одной SQLite
+transaction.
+
+При `SPY_GAME_LLM_NARRATOR_ENABLED=true` художественная завязка события
+генерируется через существующий structured JSON transport из `games/llm.py`.
+Модель возвращает только поле `body`: заголовок, кнопка, срок и экономика
+формируются сервером. Невалидный текст, API error или timeout автоматически
+заменяется локальным шаблоном и не отменяет событие.
+
+Master использует одну команду с подкомандами:
+
+```text
+/spy_admin status
+/spy_admin enable
+/spy_admin disable
+/spy_admin spawn
+```
+
+`spawn` дополнительно требует `SPY_GAME_ALLOW_MANUAL_SPAWN=true`.
 
 ### Групповые LLM-игры
 
@@ -241,7 +309,7 @@ fallback, чтобы игра не зависала. Одновременно в
 .venv/bin/pytest -q tests/test_games_engine.py tests/test_games_handlers.py tests/test_games_llm.py tests/test_games_scenarios.py
 ```
 
-Текущий полный прогон: `32 passed` (остаётся предупреждение `pytz` о deprecated `utcfromtimestamp`).
+Полный прогон выполняется командой выше; остаётся предупреждение `pytz` о deprecated `utcfromtimestamp`.
 
 ## Устранение неполадок
 
