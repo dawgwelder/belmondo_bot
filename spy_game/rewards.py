@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from .models import Reward
+from .models import ExchangeRecipe, Reward
+from .scheduler import RandomSource
 from .settings import SpySettings
 
 
@@ -15,3 +16,8 @@ class RewardResolver:
             raise ValueError(f"unsupported reward event: {event_type}")
         amount = 1 + min(reputation, self.settings.reputation_reward_cap)
         return Reward(self.settings.recruitment_agent_type, amount)
+
+    @staticmethod
+    def resolve_exchange(recipe: ExchangeRecipe, rng: RandomSource) -> Reward:
+        index = rng.randint(0, len(recipe.reward_pool) - 1)
+        return Reward(recipe.reward_pool[index], recipe.reward_amount)

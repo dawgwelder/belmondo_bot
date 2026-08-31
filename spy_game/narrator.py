@@ -13,10 +13,15 @@ from games.llm import compact, request_json, untrusted_json_block
 from .models import SpawnEvent
 from .settings import SpySettings
 
-_TEMPLATE_BODIES = (
+_RECRUITMENT_TEMPLATE_BODIES = (
     "У служебного входа замечен человек, который слишком старательно не смотрит по сторонам.",
     "В телефонной будке оставлен конверт без адреса. Такие письма долго не ждут.",
     "Связной перепутал условный знак и теперь ищет того, кто поймёт намёк первым.",
+)
+_HANDLER_TEMPLATE_BODIES = (
+    "Куратор занял дальний столик и молча разложил на нём папки с новыми легендами.",
+    "В неприметном кафе появился человек из Центра. Сегодня он готов укрепить вашу сеть.",
+    "Старый связной открыл дипломат и ждёт тех, кому есть что предложить для обмена.",
 )
 _TONES = ("paranoid", "bureaucratic", "absurd")
 _FORBIDDEN_TERMS = (
@@ -49,8 +54,13 @@ class NarrationUnavailable(RuntimeError):
 
 class TemplateNarrator:
     async def narrate(self, event: SpawnEvent) -> EventNarrative:
-        index = sum(event.event_id.encode("utf-8")) % len(_TEMPLATE_BODIES)
-        return EventNarrative(_TEMPLATE_BODIES[index], "template")
+        templates = (
+            _HANDLER_TEMPLATE_BODIES
+            if event.event_type == "handler"
+            else _RECRUITMENT_TEMPLATE_BODIES
+        )
+        index = sum(event.event_id.encode("utf-8")) % len(templates)
+        return EventNarrative(templates[index], "template")
 
 
 RequestJSON = Callable[..., Awaitable[dict[str, Any] | None]]

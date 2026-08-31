@@ -10,13 +10,13 @@ from telegram.ext import ContextTypes
 
 from config import logger
 from guards import pause
-from spy_game.models import ClaimStatus, Profile, SpawnEvent
+from spy_game.models import AgentCost, ClaimStatus, EconomyStatus, Profile, SpawnEvent
 from spy_game.narrator import EventNarrative, Narrator, TemplateNarrator
 from spy_game.service import SpyGameService
-from spy_game.settings import AGENT_TYPES
+from spy_game.settings import AGENT_TYPES, DEFAULT_HANDLER_RECIPES
 from telegram_utils import send_rich_message
 
-SPY_CALLBACK_PATTERN = r"^spy:(?:menu|claim):[a-z0-9_]{1,24}$"
+SPY_CALLBACK_PATTERN = r"^spy:[a-z0-9_]{1,32}:[a-z0-9_]{1,24}$"
 
 
 def _service(context: ContextTypes.DEFAULT_TYPE) -> SpyGameService:
@@ -63,7 +63,7 @@ async def _send_rich(
         return message.message_id
 
 
-def _menu_keyboard() -> InlineKeyboardMarkup:
+def _menu_keyboard(profile: Profile) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
@@ -76,6 +76,12 @@ def _menu_keyboard() -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton("🔄 Обновить", callback_data="spy:menu:refresh"),
             ],
+            [
+                InlineKeyboardButton(
+                    "⭐ Повысить репутацию",
+                    callback_data=f"spy:prestige:{profile.reputation}",
+                )
+            ],
         ]
     )
 
@@ -84,6 +90,24 @@ def _claim_keyboard(event_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("Завербовать", callback_data=f"spy:claim:{event_id}")]]
     )
+
+
+def _event_keyboard(event: SpawnEvent, recipes=DEFAULT_HANDLER_RECIPES):
+    if event.event_type == "recruitment":
+        return _claim_keyboard(event.event_id)
+    if event.event_type == "handler":
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        recipe.display_name,
+                        callback_data=f"spy:exchange_{recipe.id}:{event.event_id}",
+                    )
+                ]
+                for recipe in recipes
+            ]
+        )
+    raise ValueError(f"unsupported event type: {event.event_type}")
 
 
 def _display_name(user) -> str:
@@ -101,6 +125,12 @@ def _countdown(target: datetime | None, now: datetime) -> str:
     if hours:
         return f"примерно через {hours} ч {minutes} мин"
     return f"примерно через {minutes} мин"
+
+
+def _format_costs(costs: tuple[AgentCost, ...]) -> str:
+    return ", ".join(
+        f"{AGENT_TYPES[cost.agent_type].display_name} ×{cost.amount}" for cost in costs
+    )
 
 
 def build_menu_blocks(profile: Profile, status, now: datetime) -> list[dict]:
@@ -222,12 +252,20 @@ def build_event_blocks(
         1,
         math.ceil((event.expires_at - datetime.now(timezone.utc)).total_seconds() / 60),
     )
+    is_handler = event.event_type == "handler"
     return [
-        {"type": "paragraph", "text": "🚨 СИГНАЛ РАЗВЕДСЕТИ"},
+        {
+            "type": "paragraph",
+            "text": "🗂 ВСТРЕЧА С КУРАТОРОМ" if is_handler else "🚨 СИГНАЛ РАЗВЕДСЕТИ",
+        },
         {"type": "paragraph", "text": narrative.body},
         {
             "type": "footer",
-            "text": f"Первый подтверждённый контакт получит агента. Окно: ~{lifetime_minutes} мин.",
+            "text": (
+                f"Первый успешный обмен закроет встречу. Окно: ~{lifetime_minutes} мин."
+                if is_handler
+                else f"Первый подтверждённый контакт получит агента. Окно: ~{lifetime_minutes} мин."
+            ),
         },
     ]
 
@@ -256,7 +294,7 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             f"Активность: {status.activity_score:.1f}\n"
             f"Следующее событие: {_countdown(status.next_event_at, now)}"
         ),
-        reply_markup=_menu_keyboard(),
+        reply_markup=_menu_keyboard(profile),
     )
 
 
@@ -272,15 +310,24 @@ async def publish_spy_event(
     event: SpawnEvent,
 ) -> int:
     narrative = await _narrator(context).narrate(event)
+    service = context.bot_data.get("spy_game")
+    recipes = (
+        service.settings.handler_recipes
+        if isinstance(service, SpyGameService)
+        else DEFAULT_HANDLER_RECIPES
+    )
+    is_handler = event.event_type == "handler"
     message_id = await _send_rich(
         context,
         event.chat_id,
         build_event_blocks(event, narrative),
         fallback_text=(
-            "🚨 Сигнал разведсети\n"
+            "🗂 Встреча с куратором\nПредъявите ресурсы для обмена."
+            if is_handler
+            else "🚨 Сигнал разведсети\n"
             "Замечен потенциальный связной. Первый контакт получает агента."
         ),
-        reply_markup=_claim_keyboard(event.event_id),
+        reply_markup=_event_keyboard(event, recipes),
     )
     logger.info(
         "spy_narrative_selected event_id=%s source=%s",
@@ -354,6 +401,125 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _send_rich(context, chat.id, blocks, fallback_text=fallback)
         return
 
+    if category == "prestige":
+        try:
+            expected_reputation = int(value)
+            if expected_reputation < 0:
+                raise ValueError
+        except ValueError:
+            await query.answer("Некорректный уровень репутации.", show_alert=True)
+            return
+        try:
+            result = await service.increase_reputation(
+                chat_id=chat.id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+                expected_reputation=expected_reputation,
+            )
+        except Exception:
+            logger.exception("spy_game: prestige failed user_id=%s", user.id)
+            await query.answer(
+                "Центр не подтвердил повышение. Попробуйте ещё раз.",
+                show_alert=True,
+            )
+            return
+        if result.status is EconomyStatus.SUCCESS:
+            await query.answer(
+                f"Репутация повышена до {result.reputation}.", show_alert=True
+            )
+            logger.info(
+                "spy_reputation_increased user_id=%s reputation=%s",
+                user.id,
+                result.reputation,
+            )
+            await _send_menu(update, context)
+        elif result.status is EconomyStatus.INSUFFICIENT_RESOURCES:
+            await query.answer(
+                "Для повышения нужно: " + _format_costs(result.required),
+                show_alert=True,
+            )
+        elif result.status is EconomyStatus.STALE:
+            await query.answer(
+                "Досье уже изменилось. Откройте свежее меню.", show_alert=True
+            )
+        else:
+            await query.answer("Повышение сейчас недоступно.", show_alert=True)
+        return
+
+    if category.startswith("exchange_"):
+        recipe_id = category.removeprefix("exchange_")
+        try:
+            result = await service.exchange_with_handler(
+                event_id=value,
+                recipe_id=recipe_id,
+                chat_id=chat.id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+            )
+        except Exception:
+            logger.exception("spy_game: exchange failed event_id=%s", value)
+            await query.answer(
+                "Куратор не подтвердил обмен. Попробуйте ещё раз.", show_alert=True
+            )
+            return
+        if result.status is EconomyStatus.SUCCESS:
+            agent = AGENT_TYPES[result.reward.agent_type]
+            await query.answer(
+                f"Обмен завершён: {agent.display_name} ×{result.reward.amount}",
+                show_alert=True,
+            )
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                logger.warning("spy_game: exchange could not remove event keyboard")
+            logger.info(
+                "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
+                "reward_id=%s reward_amount=%s",
+                result.event_id,
+                chat.id,
+                user.id,
+                result.reward.agent_type,
+                result.reward.amount,
+            )
+            await _send_rich(
+                context,
+                chat.id,
+                [
+                    {"type": "paragraph", "text": "✅ ОБМЕН ЗАВЕРШЁН"},
+                    {
+                        "type": "paragraph",
+                        "text": (
+                            f"{_display_name(user)} первым предъявил ресурсы.\n"
+                            f"Новый агент: {agent.emoji} {agent.display_name} "
+                            f"×{result.reward.amount}"
+                        ),
+                    },
+                    {"type": "footer", "text": "Куратор закрыл дипломат."},
+                ],
+                fallback_text=(
+                    f"✅ {_display_name(user)} завершает обмен: "
+                    f"{agent.display_name} ×{result.reward.amount}."
+                ),
+            )
+        elif result.status is EconomyStatus.INSUFFICIENT_RESOURCES:
+            await query.answer(
+                "Для обмена нужно: " + _format_costs(result.required),
+                show_alert=True,
+            )
+        elif result.status is EconomyStatus.EXPIRED:
+            await query.answer("Куратор уже ушёл.", show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+        elif result.status is EconomyStatus.ALREADY_RESOLVED:
+            await query.answer("Другой агент уже завершил обмен.", show_alert=True)
+        else:
+            await query.answer("Этот обмен недоступен.", show_alert=True)
+        return
+
     if category != "claim":
         await query.answer("Неизвестное действие.", show_alert=True)
         return
@@ -383,6 +549,15 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             logger.warning("spy_game: winner could not remove event keyboard")
+        logger.info(
+            "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
+            "reward_id=%s reward_amount=%s",
+            result.event_id,
+            chat.id,
+            user.id,
+            result.reward.agent_type,
+            result.reward.amount,
+        )
         await _send_rich(
             context,
             chat.id,
@@ -490,11 +665,20 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         result = await service.disable_chat(chat_id)
         await _remove_event_keyboard(context, chat_id, result.message_id_to_close)
     elif action == "spawn":
-        result = await service.manual_spawn(chat_id)
+        event_type = context.args[1].lower() if len(context.args) > 1 else "recruitment"
+        result = await service.manual_spawn(chat_id, event_type=event_type)
         if result.event is not None:
             try:
                 message_id = await publish_spy_event(context, result.event)
                 await service.attach_message(result.event.event_id, message_id)
+                logger.info(
+                    "spy_event_created event_id=%s chat_id=%s event_type=%s "
+                    "expires_at=%s",
+                    result.event.event_id,
+                    result.event.chat_id,
+                    result.event.event_type,
+                    result.event.expires_at.isoformat(),
+                )
             except Exception:
                 logger.exception(
                     "spy_game: manual publication failed event_id=%s",
@@ -538,7 +722,14 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     else:
         await update.effective_message.reply_text(
-            "Использование: /spy_admin enable|disable|spawn|status"
+            "Использование: /spy_admin enable|disable|spawn [recruitment|handler]|status"
         )
         return
+    if result.ok:
+        logger.info(
+            "spy_admin_action action=%s chat_id=%s requested_by=%s",
+            action,
+            chat_id,
+            update.effective_user.id,
+        )
     await update.effective_message.reply_text(result.message)

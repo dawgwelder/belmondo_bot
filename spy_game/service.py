@@ -14,6 +14,9 @@ from .models import (
     ChatStatus,
     ClaimResult,
     ClaimStatus,
+    EconomyStatus,
+    ExchangeResult,
+    PrestigeResult,
     Profile,
     TickResult,
 )
@@ -39,7 +42,7 @@ class SpyGameService:
         self.database = SQLiteDatabase(settings.database_path)
         self.activity = ActivityTracker(settings.activity_user_debounce_seconds)
         self.rng = rng or random.SystemRandom()
-        self.director = director or RuleBasedDirector()
+        self.director = director or RuleBasedDirector(settings, self.rng)
         self.repository = SpyRepository(
             settings,
             ActivityPolicy(settings),
@@ -78,7 +81,6 @@ class SpyGameService:
             return TickResult()
         current = now or utc_now()
         counts = await self.activity.drain()
-        decision = self.director.choose_event()
         try:
             result = await self.database.transaction(
                 lambda connection: self.repository.run_tick(
@@ -86,7 +88,7 @@ class SpyGameService:
                     counts,
                     self.settings.allowed_chat_ids,
                     current,
-                    decision.event_type,
+                    self.director,
                 ),
                 immediate=True,
             )
@@ -137,20 +139,22 @@ class SpyGameService:
         self,
         chat_id: int,
         *,
+        event_type: str = "recruitment",
         now: datetime | None = None,
     ) -> AdminResult:
         if not self.chat_is_available(chat_id):
             return AdminResult(False, "Игра недоступна в этом чате.")
         if not self.settings.allow_manual_spawn:
             return AdminResult(False, "Ручной spawn запрещён конфигурацией.")
+        if event_type not in {"recruitment", "handler"}:
+            return AdminResult(False, "Неизвестный тип события.")
         current = now or utc_now()
-        decision = self.director.choose_event()
         return await self.database.transaction(
             lambda connection: self.repository.manual_spawn(
                 connection,
                 chat_id,
                 current,
-                decision.event_type,
+                event_type,
             ),
             immediate=True,
         )
@@ -201,6 +205,64 @@ class SpyGameService:
                 user_id,
                 username,
                 display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def exchange_with_handler(
+        self,
+        *,
+        event_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> ExchangeResult:
+        if not self.chat_is_available(chat_id):
+            return ExchangeResult(
+                EconomyStatus.DISABLED,
+                event_id,
+                recipe_id,
+            )
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.exchange_with_handler(
+                connection,
+                event_id,
+                recipe_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def increase_reputation(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        expected_reputation: int,
+        now: datetime | None = None,
+    ) -> PrestigeResult:
+        if not self.chat_is_available(chat_id):
+            return PrestigeResult(EconomyStatus.DISABLED, expected_reputation)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.increase_reputation(
+                connection,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                expected_reputation,
                 current,
             ),
             immediate=True,

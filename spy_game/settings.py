@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .models import AgentType
+from .models import AgentCost, AgentType, EventWeight, ExchangeRecipe
 
 
 AGENT_TYPES: dict[str, AgentType] = {
@@ -22,6 +22,54 @@ AGENT_TYPES: dict[str, AgentType] = {
         AgentType("double_agent", 3, "Двойной агент", "🎭"),
     )
 }
+
+DEFAULT_EVENT_WEIGHTS = (
+    EventWeight("recruitment", 4),
+    EventWeight("handler", 1),
+)
+
+DEFAULT_HANDLER_RECIPES = (
+    ExchangeRecipe(
+        id="tier2",
+        display_name="Случайный Tier 2 · 10 осведомителей",
+        costs=(AgentCost("informant", 10),),
+        reward_pool=("operative", "observer", "courier"),
+    ),
+    ExchangeRecipe(
+        id="operative",
+        display_name="Оперативник · 15 осведомителей",
+        costs=(AgentCost("informant", 15),),
+        reward_pool=("operative",),
+    ),
+    ExchangeRecipe(
+        id="observer",
+        display_name="Наблюдатель · 15 осведомителей",
+        costs=(AgentCost("informant", 15),),
+        reward_pool=("observer",),
+    ),
+    ExchangeRecipe(
+        id="courier",
+        display_name="Курьер · 15 осведомителей",
+        costs=(AgentCost("informant", 15),),
+        reward_pool=("courier",),
+    ),
+    ExchangeRecipe(
+        id="tier3",
+        display_name="Случайный Tier 3 · по 2 агента Tier 2",
+        costs=(
+            AgentCost("operative", 2),
+            AgentCost("observer", 2),
+            AgentCost("courier", 2),
+        ),
+        reward_pool=("analyst", "saboteur", "sleeper", "double_agent"),
+    ),
+)
+
+DEFAULT_PRESTIGE_COSTS = (
+    AgentCost("operative", 1),
+    AgentCost("observer", 1),
+    AgentCost("courier", 1),
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +137,15 @@ class SpySettings:
     llm_narrator_timeout_seconds: int = 8
     recruitment_agent_type: str = "informant"
     reputation_reward_cap: int = 5
+    event_weights: tuple[EventWeight, ...] = field(
+        default_factory=lambda: DEFAULT_EVENT_WEIGHTS
+    )
+    handler_recipes: tuple[ExchangeRecipe, ...] = field(
+        default_factory=lambda: DEFAULT_HANDLER_RECIPES
+    )
+    prestige_base_costs: tuple[AgentCost, ...] = field(
+        default_factory=lambda: DEFAULT_PRESTIGE_COSTS
+    )
     activity_bands: tuple[ActivityBand, ...] = field(
         default_factory=lambda: DEFAULT_ACTIVITY_BANDS
     )
@@ -106,11 +163,49 @@ class SpySettings:
             raise ValueError("activity_after_spawn_ratio must be in [0, 1)")
         if self.recruitment_agent_type not in AGENT_TYPES:
             raise ValueError("unknown recruitment agent type")
+        if self.enabled and not self.allowed_chat_ids:
+            raise ValueError("enabled Spy Game requires a non-empty chat allowlist")
+        event_types = {item.event_type for item in self.event_weights}
+        if event_types != {"recruitment", "handler"}:
+            raise ValueError("event weights must configure recruitment and handler")
+        if any(item.weight <= 0 for item in self.event_weights):
+            raise ValueError("event weights must be positive")
+        recipe_ids = [recipe.id for recipe in self.handler_recipes]
+        if not recipe_ids or len(recipe_ids) != len(set(recipe_ids)):
+            raise ValueError("handler recipe IDs must be non-empty and unique")
+        for recipe in self.handler_recipes:
+            self._validate_costs(recipe.costs)
+            if recipe.reward_amount <= 0 or not recipe.reward_pool:
+                raise ValueError("handler recipe rewards must be positive")
+            if any(agent_id not in AGENT_TYPES for agent_id in recipe.reward_pool):
+                raise ValueError("handler recipe contains an unknown reward agent")
+        self._validate_costs(self.prestige_base_costs)
         for band in self.activity_bands:
             if band.minimum_delay_seconds <= 0:
                 raise ValueError("activity band delay must be positive")
             if band.maximum_delay_seconds < band.minimum_delay_seconds:
                 raise ValueError("activity band maximum delay is too small")
+
+    @staticmethod
+    def _validate_costs(costs: tuple[AgentCost, ...]) -> None:
+        if not costs or any(cost.amount <= 0 for cost in costs):
+            raise ValueError("agent costs must be non-empty and positive")
+        ids = [cost.agent_type for cost in costs]
+        if len(ids) != len(set(ids)) or any(item not in AGENT_TYPES for item in ids):
+            raise ValueError("agent costs must contain unique known agent types")
+
+    def handler_recipe(self, recipe_id: str) -> ExchangeRecipe | None:
+        return next(
+            (recipe for recipe in self.handler_recipes if recipe.id == recipe_id),
+            None,
+        )
+
+    def prestige_costs(self, reputation: int) -> tuple[AgentCost, ...]:
+        multiplier = reputation + 1
+        return tuple(
+            AgentCost(cost.agent_type, cost.amount * multiplier)
+            for cost in self.prestige_base_costs
+        )
 
     @classmethod
     def from_env(cls, mode: str) -> "SpySettings":

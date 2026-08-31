@@ -17,6 +17,18 @@ class ClaimStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class EconomyStatus(str, Enum):
+    SUCCESS = "success"
+    INSUFFICIENT_RESOURCES = "insufficient_resources"
+    ALREADY_RESOLVED = "already_resolved"
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    WRONG_CHAT = "wrong_chat"
+    INVALID_RECIPE = "invalid_recipe"
+    STALE = "stale"
+    DISABLED = "disabled"
+
+
 @dataclass(frozen=True)
 class AgentType:
     id: str
@@ -29,6 +41,27 @@ class AgentType:
 class Reward:
     agent_type: str
     amount: int
+
+
+@dataclass(frozen=True)
+class AgentCost:
+    agent_type: str
+    amount: int
+
+
+@dataclass(frozen=True)
+class ExchangeRecipe:
+    id: str
+    display_name: str
+    costs: tuple[AgentCost, ...]
+    reward_pool: tuple[str, ...]
+    reward_amount: int = 1
+
+
+@dataclass(frozen=True)
+class EventWeight:
+    event_type: str
+    weight: int
 
 
 @dataclass(frozen=True)
@@ -58,6 +91,22 @@ class ClaimResult:
     event_id: str
     reward: Reward | None = None
     winner_user_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ExchangeResult:
+    status: EconomyStatus
+    event_id: str
+    recipe_id: str
+    reward: Reward | None = None
+    required: tuple[AgentCost, ...] = ()
+
+
+@dataclass(frozen=True)
+class PrestigeResult:
+    status: EconomyStatus
+    reputation: int
+    required: tuple[AgentCost, ...] = ()
 
 
 @dataclass(frozen=True)

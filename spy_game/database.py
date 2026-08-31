@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import TypeVar
 
 T = TypeVar("T")
+logger = logging.getLogger("Belmondo Logger")
 
 
 def _iter_sql_statements(source: str):
@@ -87,6 +89,7 @@ class SQLiteDatabase:
                         (version,),
                     )
                     connection.commit()
+                    logger.info("spy_migration_applied version=%s", version)
                 except Exception:
                     connection.rollback()
                     raise

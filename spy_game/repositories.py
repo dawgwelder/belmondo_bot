@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from collections.abc import Callable, Mapping
@@ -10,18 +11,26 @@ from datetime import datetime, timedelta, timezone
 
 from .models import (
     AdminResult,
+    AgentCost,
     AgentHolding,
     ChatStatus,
     ClaimResult,
     ClaimStatus,
+    EconomyStatus,
+    ExchangeResult,
     ExpiredEvent,
+    PrestigeResult,
     Profile,
+    Reward,
     SpawnEvent,
     TickResult,
 )
+from .director import GameDirector
 from .rewards import RewardResolver
 from .scheduler import ActivityPolicy, RandomSource
 from .settings import SpySettings
+
+logger = logging.getLogger("Belmondo Logger")
 
 
 def _iso(value: datetime) -> str:
@@ -68,6 +77,49 @@ class SpyRepository:
         expired_events: list[ExpiredEvent] = []
         for row in expired:
             self._expire_row(connection, row, now_value)
+            expired_events.append(
+                ExpiredEvent(row["id"], row["chat_id"], row["message_id"])
+            )
+        active_rows = connection.execute(
+            """
+            SELECT id, chat_id, event_type, message_id, payload_json
+            FROM game_events
+            WHERE status = 'active' AND expires_at > ?
+            """,
+            (now_value,),
+        ).fetchall()
+        for row in active_rows:
+            if self._payload_is_valid(row["event_type"], row["payload_json"]):
+                continue
+            logger.warning(
+                "spy_invalid_persisted_event event_id=%s chat_id=%s event_type=%s",
+                row["id"],
+                row["chat_id"],
+                row["event_type"],
+            )
+            connection.execute(
+                """
+                UPDATE game_events
+                SET status = 'cancelled', resolved_at = ?
+                WHERE id = ? AND status = 'active'
+                """,
+                (now_value, row["id"]),
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO event_history(
+                    idempotency_key, event_id, chat_id, event_type,
+                    outcome, created_at
+                ) VALUES (?, ?, ?, ?, 'invalid_payload', ?)
+                """,
+                (
+                    f"invalid-payload:{row['id']}",
+                    row["id"],
+                    row["chat_id"],
+                    row["event_type"],
+                    now_value,
+                ),
+            )
             expired_events.append(
                 ExpiredEvent(row["id"], row["chat_id"], row["message_id"])
             )
@@ -190,7 +242,7 @@ class SpyRepository:
         activity_counts: Mapping[int, int],
         allowed_chat_ids: frozenset[int],
         now: datetime,
-        event_type: str,
+        director: GameDirector,
     ) -> TickResult:
         now_value = _iso(now)
         self._apply_activity(connection, activity_counts, now, now_value)
@@ -233,6 +285,17 @@ class SpyRepository:
                 ),
             ).fetchall()
             for row in due_rows:
+                previous = connection.execute(
+                    """
+                    SELECT event_type FROM game_events
+                    WHERE chat_id = ?
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (row["chat_id"],),
+                ).fetchone()
+                event_type = director.choose_event(
+                    previous["event_type"] if previous else None
+                ).event_type
                 event = self._insert_event(
                     connection,
                     row["chat_id"],
@@ -337,12 +400,22 @@ class SpyRepository:
             return None
         event_id = self.event_id_factory()
         expires_at = now + timedelta(seconds=self.settings.event_lifetime_seconds)
-        payload = json.dumps(
-            {
+        if event_type == "recruitment":
+            payload_data = {
                 "action": "claim",
                 "reward_pool": "basic_recruitment",
                 "manual": manual,
-            },
+            }
+        elif event_type == "handler":
+            payload_data = {
+                "action": "exchange",
+                "recipe_ids": [recipe.id for recipe in self.settings.handler_recipes],
+                "manual": manual,
+            }
+        else:
+            raise ValueError(f"unsupported event type: {event_type}")
+        payload = json.dumps(
+            payload_data,
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -442,6 +515,8 @@ class SpyRepository:
             return ClaimResult(ClaimStatus.NOT_FOUND, event_id)
         if event["chat_id"] != chat_id:
             return ClaimResult(ClaimStatus.WRONG_CHAT, event_id)
+        if event["event_type"] != "recruitment":
+            return ClaimResult(ClaimStatus.INVALID_ACTION, event_id)
         if event["status"] == "expired":
             return ClaimResult(ClaimStatus.EXPIRED, event_id)
         if event["status"] != "active":
@@ -528,6 +603,179 @@ class SpyRepository:
             winner_user_id=user_id,
         )
 
+    def exchange_with_handler(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> ExchangeResult:
+        recipe = self.settings.handler_recipe(recipe_id)
+        if recipe is None:
+            return ExchangeResult(EconomyStatus.INVALID_RECIPE, event_id, recipe_id)
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return ExchangeResult(EconomyStatus.NOT_FOUND, event_id, recipe_id)
+        if event["chat_id"] != chat_id:
+            return ExchangeResult(EconomyStatus.WRONG_CHAT, event_id, recipe_id)
+        if event["event_type"] != "handler":
+            return ExchangeResult(EconomyStatus.INVALID_RECIPE, event_id, recipe_id)
+        if event["status"] == "expired":
+            return ExchangeResult(EconomyStatus.EXPIRED, event_id, recipe_id)
+        if event["status"] != "active":
+            return ExchangeResult(EconomyStatus.ALREADY_RESOLVED, event_id, recipe_id)
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return ExchangeResult(EconomyStatus.EXPIRED, event_id, recipe_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        if not self._has_costs(connection, user_id, recipe.costs):
+            return ExchangeResult(
+                EconomyStatus.INSUFFICIENT_RESOURCES,
+                event_id,
+                recipe_id,
+                required=recipe.costs,
+            )
+        claimed = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'handler'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if claimed.rowcount != 1:
+            return ExchangeResult(EconomyStatus.ALREADY_RESOLVED, event_id, recipe_id)
+
+        reward = self.reward_resolver.resolve_exchange(recipe, self.rng)
+        self._spend_costs(connection, user_id, recipe.costs)
+        self._add_reward(connection, user_id, reward)
+        metadata = json.dumps(
+            {
+                "recipe_id": recipe.id,
+                "costs": {cost.agent_type: cost.amount for cost in recipe.costs},
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, reward_type, reward_id, reward_amount,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'handler', 'exchanged', 'agent', ?, ?, ?, ?)
+            """,
+            (
+                f"exchange:{event_id}",
+                event_id,
+                chat_id,
+                user_id,
+                reward.agent_type,
+                reward.amount,
+                metadata,
+                now_value,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO economy_history(
+                idempotency_key, user_id, action, source_event_id,
+                recipe_id, metadata_json, created_at
+            ) VALUES (?, ?, 'exchange', ?, ?, ?, ?)
+            """,
+            (
+                f"exchange:{event_id}",
+                user_id,
+                event_id,
+                recipe.id,
+                metadata,
+                now_value,
+            ),
+        )
+        return ExchangeResult(
+            EconomyStatus.SUCCESS,
+            event_id,
+            recipe_id,
+            reward=reward,
+            required=recipe.costs,
+        )
+
+    def increase_reputation(
+        self,
+        connection: sqlite3.Connection,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        expected_reputation: int,
+        now: datetime,
+    ) -> PrestigeResult:
+        now_value = _iso(now)
+        chat = connection.execute(
+            "SELECT enabled FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if chat is None or not chat["enabled"]:
+            return PrestigeResult(EconomyStatus.DISABLED, expected_reputation)
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        current = connection.execute(
+            "SELECT reputation FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
+        if current != expected_reputation:
+            return PrestigeResult(EconomyStatus.STALE, current)
+        required = self.settings.prestige_costs(current)
+        if not self._has_costs(connection, user_id, required):
+            return PrestigeResult(
+                EconomyStatus.INSUFFICIENT_RESOURCES,
+                current,
+                required=required,
+            )
+        self._spend_costs(connection, user_id, required)
+        updated = connection.execute(
+            """
+            UPDATE users SET reputation = reputation + 1, updated_at = ?
+            WHERE user_id = ? AND reputation = ?
+            """,
+            (now_value, user_id, current),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("reputation changed inside serialized transaction")
+        metadata = json.dumps(
+            {
+                "from": current,
+                "to": current + 1,
+                "costs": {cost.agent_type: cost.amount for cost in required},
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO economy_history(
+                idempotency_key, user_id, action, recipe_id,
+                metadata_json, created_at
+            ) VALUES (?, ?, 'prestige', 'reputation', ?, ?)
+            """,
+            (
+                f"prestige:{user_id}:{current}",
+                user_id,
+                metadata,
+                now_value,
+            ),
+        )
+        return PrestigeResult(EconomyStatus.SUCCESS, current + 1, required)
+
     def ensure_user_and_profile(
         self,
         connection: sqlite3.Connection,
@@ -537,18 +785,7 @@ class SpyRepository:
         now: datetime,
     ) -> Profile:
         now_value = _iso(now)
-        connection.execute(
-            """
-            INSERT INTO users(
-                user_id, username, display_name, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                username = excluded.username,
-                display_name = excluded.display_name,
-                updated_at = excluded.updated_at
-            """,
-            (user_id, username, display_name, now_value, now_value),
-        )
+        self._ensure_user(connection, user_id, username, display_name, now_value)
         row = connection.execute(
             """
             SELECT u.*, COALESCE(SUM(a.amount), 0) AS total_agents
@@ -582,6 +819,99 @@ class SpyRepository:
             (user_id,),
         ).fetchall()
         return tuple(AgentHolding(row["agent_type"], row["amount"]) for row in rows)
+
+    @staticmethod
+    def _ensure_user(
+        connection: sqlite3.Connection,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now_value: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO users(
+                user_id, username, display_name, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                display_name = excluded.display_name,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, username, display_name, now_value, now_value),
+        )
+
+    @staticmethod
+    def _has_costs(
+        connection: sqlite3.Connection,
+        user_id: int,
+        costs: tuple[AgentCost, ...],
+    ) -> bool:
+        holdings = {
+            row["agent_type"]: row["amount"]
+            for row in connection.execute(
+                "SELECT agent_type, amount FROM user_agents WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        }
+        return all(holdings.get(cost.agent_type, 0) >= cost.amount for cost in costs)
+
+    @staticmethod
+    def _spend_costs(
+        connection: sqlite3.Connection,
+        user_id: int,
+        costs: tuple[AgentCost, ...],
+    ) -> None:
+        for cost in costs:
+            cursor = connection.execute(
+                """
+                UPDATE user_agents SET amount = amount - ?
+                WHERE user_id = ? AND agent_type = ? AND amount >= ?
+                """,
+                (cost.amount, user_id, cost.agent_type, cost.amount),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(
+                    "agent balance changed inside serialized transaction"
+                )
+
+    @staticmethod
+    def _add_reward(
+        connection: sqlite3.Connection,
+        user_id: int,
+        reward: Reward,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO user_agents(user_id, agent_type, amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, agent_type) DO UPDATE SET
+                amount = amount + excluded.amount
+            """,
+            (user_id, reward.agent_type, reward.amount),
+        )
+
+    def _payload_is_valid(self, event_type: str, raw_payload: str) -> bool:
+        try:
+            payload = json.loads(raw_payload)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if event_type == "recruitment":
+            return (
+                payload.get("action") == "claim"
+                and payload.get("reward_pool") == "basic_recruitment"
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "handler":
+            return (
+                payload.get("action") == "exchange"
+                and payload.get("recipe_ids")
+                == [recipe.id for recipe in self.settings.handler_recipes]
+                and isinstance(payload.get("manual"), bool)
+            )
+        return False
 
     def get_chat_status(
         self,
