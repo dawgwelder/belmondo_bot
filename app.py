@@ -81,9 +81,7 @@ def _build_handlers() -> list:
     ]
 
 
-async def main(
-    mode: str = "dev", spam_mode: str = "medium", token: str = None
-) -> None:
+async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Initialize and run the bot."""
     application = None
     spy_service = None
@@ -116,10 +114,15 @@ async def main(
         await spy_service.close()
         raise
     application.bot_data["spy_game"] = spy_service
-    application.bot_data["spy_narrator"] = build_narrator(spy_settings)
+    application.bot_data["spy_narrator"] = build_narrator(
+        spy_settings,
+        spy_service.database,
+    )
     logger.info(
-        "Spy game initialized: enabled=%s narrator=%s mode=%s allowed_chats=%s db=%s",
+        "Spy game initialized: enabled=%s director=%s narrator=%s mode=%s "
+        "allowed_chats=%s db=%s",
         spy_settings.enabled,
+        spy_settings.llm_director_enabled,
         spy_settings.llm_narrator_enabled,
         mode,
         len(spy_settings.allowed_chat_ids),
@@ -218,9 +221,7 @@ async def main(
                 await spy_service.close()
 
 
-def run_bot(
-    mode: str = "dev", spam_mode: str = "medium", token: str = None
-) -> None:
+def run_bot(mode: str = "dev", spam_mode: str = "medium", token: str = None) -> None:
     """Wrapper that runs the async main function inside asyncio.run."""
     try:
         asyncio.run(main(mode, spam_mode, token))

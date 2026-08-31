@@ -12,10 +12,12 @@ from spy_game.narrator import (
     EventNarrative,
     LLMNarrator,
     NarrationUnavailable,
+    PersistentNarrator,
     ResilientNarrator,
     TemplateNarrator,
     build_narrator,
 )
+from spy_game.database import SQLiteDatabase
 from spy_game.settings import SpySettings
 
 
@@ -47,6 +49,15 @@ async def test_template_narrator_is_deterministic():
 @pytest.mark.asyncio
 async def test_llm_narrator_reuses_structured_games_contract():
     captured = {}
+    event = SpawnEvent(
+        "abcdef123456",
+        -100,
+        "intercept",
+        NOW + timedelta(minutes=3),
+        tone="paranoid",
+        story_hook="section_7",
+        lore_context=("Секция 7 внедряет двойных агентов.",),
+    )
 
     async def request(prompt, validator, *, corrective_hint):
         captured["prompt"] = prompt
@@ -60,11 +71,12 @@ async def test_llm_narrator_reuses_structured_games_contract():
             }
         )
 
-    narrative = await LLMNarrator(request).narrate(EVENT)
+    narrative = await LLMNarrator(request).narrate(event)
 
     assert narrative.source == "llm"
     assert "<untrusted_json>" in captured["prompt"]
-    assert '"event_type": "recruitment"' in captured["prompt"]
+    assert '"event_type": "intercept"' in captured["prompt"]
+    assert "Секция 7 внедряет двойных агентов" in captured["prompt"]
     assert '"body"' in captured["hint"]
 
 
@@ -97,6 +109,31 @@ async def test_resilient_narrator_falls_back_after_timeout():
     assert narrative.source == "template"
 
 
+@pytest.mark.asyncio
+async def test_persistent_narrator_reuses_validated_llm_template(tmp_path):
+    database = SQLiteDatabase(tmp_path / "spy.sqlite3")
+    await database.initialize()
+
+    class GeneratedNarrator:
+        def __init__(self):
+            self.calls = 0
+
+        async def narrate(self, _event):
+            self.calls += 1
+            return EventNarrative("Редкая проверенная вариация события.", "llm")
+
+    generated = GeneratedNarrator()
+    narrator = PersistentNarrator(database, generated)
+    try:
+        first = await narrator.narrate(EVENT)
+        second = await narrator.narrate(EVENT)
+        assert first.source == "llm"
+        assert second == EventNarrative(first.body, "cache")
+        assert generated.calls == 1
+    finally:
+        await database.close()
+
+
 def test_narrator_is_opt_in(tmp_path):
     assert isinstance(
         build_narrator(settings(tmp_path, enabled=False)), TemplateNarrator
@@ -109,9 +146,13 @@ def test_narrator_is_opt_in(tmp_path):
 def test_narrator_settings_are_read_from_environment(monkeypatch):
     monkeypatch.setenv("SPY_GAME_LLM_NARRATOR_ENABLED", "true")
     monkeypatch.setenv("SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS", "11")
+    monkeypatch.setenv("SPY_GAME_LLM_DIRECTOR_ENABLED", "true")
+    monkeypatch.setenv("SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS", "12")
     config = SpySettings.from_env("dev")
     assert config.llm_narrator_enabled is True
     assert config.llm_narrator_timeout_seconds == 11
+    assert config.llm_director_enabled is True
+    assert config.llm_director_timeout_seconds == 12
 
 
 @pytest.mark.asyncio

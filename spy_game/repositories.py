@@ -11,24 +11,46 @@ from datetime import datetime, timedelta, timezone
 
 from .models import (
     AdminResult,
+    AgencyResult,
+    AgencyStatus,
     AgentCost,
     AgentHolding,
     ChatStatus,
+    ChaseResult,
+    ChaseStatus,
     ClaimResult,
     ClaimStatus,
+    CooperativeResult,
+    CooperativeStatus,
+    DeadDropResult,
+    DeathOperationResult,
+    DeathOperationStatus,
+    DirectorState,
+    DropReward,
     EconomyStatus,
+    EquipmentResult,
+    EquipmentStatus,
     ExchangeResult,
+    EquippedItem,
     ExpiredEvent,
+    Inventory,
+    InterceptResult,
+    InterceptStatus,
+    ItemCost,
+    ItemHolding,
+    LeaderboardEntry,
+    NpcResult,
+    NpcStatus,
     PrestigeResult,
+    PreparedTick,
     Profile,
     Reward,
     SpawnEvent,
-    TickResult,
 )
-from .director import GameDirector
+from .director import DirectorDecision
 from .rewards import RewardResolver
 from .scheduler import ActivityPolicy, RandomSource
-from .settings import SpySettings
+from .settings import AGENT_TYPES, ITEM_TYPES, SpySettings
 
 logger = logging.getLogger("Belmondo Logger")
 
@@ -236,14 +258,13 @@ class SpyRepository:
             message_id_to_close=message_id,
         )
 
-    def run_tick(
+    def prepare_tick(
         self,
         connection: sqlite3.Connection,
         activity_counts: Mapping[int, int],
         allowed_chat_ids: frozenset[int],
         now: datetime,
-        director: GameDirector,
-    ) -> TickResult:
+    ) -> PreparedTick:
         now_value = _iso(now)
         self._apply_activity(connection, activity_counts, now, now_value)
 
@@ -260,12 +281,13 @@ class SpyRepository:
             self._expire_row(connection, row, now_value)
             expired.append(ExpiredEvent(row["id"], row["chat_id"], row["message_id"]))
 
-        spawned: list[SpawnEvent] = []
+        due: list[DirectorState] = []
         if allowed_chat_ids:
             placeholders = ",".join("?" for _ in allowed_chat_ids)
             due_rows = connection.execute(
                 f"""
-                SELECT chat_id
+                SELECT chat_id, activity_score, last_event_at,
+                       story_arc, story_stage
                 FROM chat_state
                 WHERE enabled = 1
                   AND next_event_at IS NOT NULL
@@ -285,28 +307,70 @@ class SpyRepository:
                 ),
             ).fetchall()
             for row in due_rows:
-                previous = connection.execute(
+                recent = connection.execute(
                     """
                     SELECT event_type FROM game_events
                     WHERE chat_id = ?
-                    ORDER BY created_at DESC LIMIT 1
+                    ORDER BY created_at DESC LIMIT 5
                     """,
                     (row["chat_id"],),
-                ).fetchone()
-                event_type = director.choose_event(
-                    previous["event_type"] if previous else None
-                ).event_type
-                event = self._insert_event(
-                    connection,
-                    row["chat_id"],
-                    now,
-                    event_type=event_type,
-                    manual=False,
+                ).fetchall()
+                last_event_at = _datetime(row["last_event_at"])
+                minutes_since = (
+                    max(0, int((now - last_event_at).total_seconds() // 60))
+                    if last_event_at
+                    else None
                 )
-                if event is not None:
-                    spawned.append(event)
+                due.append(
+                    DirectorState(
+                        chat_id=row["chat_id"],
+                        activity_score=float(row["activity_score"]),
+                        active_players=activity_counts.get(row["chat_id"], 0),
+                        minutes_since_last_event=minutes_since,
+                        recent_events=tuple(item["event_type"] for item in recent),
+                        story_arc=row["story_arc"],
+                        story_stage=row["story_stage"],
+                        allowed_events=tuple(
+                            item.event_type for item in self.settings.event_weights
+                        ),
+                    )
+                )
 
-        return TickResult(tuple(spawned), tuple(expired))
+        return PreparedTick(tuple(due), tuple(expired))
+
+    def spawn_due(
+        self,
+        connection: sqlite3.Connection,
+        state: DirectorState,
+        now: datetime,
+        decision: DirectorDecision,
+    ) -> SpawnEvent | None:
+        if decision.event_type not in state.allowed_events:
+            raise ValueError("director selected a disallowed event")
+        now_value = _iso(now)
+        due = connection.execute(
+            """
+            SELECT 1 FROM chat_state
+            WHERE chat_id = ? AND enabled = 1
+              AND next_event_at IS NOT NULL AND next_event_at <= ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM game_events
+                  WHERE game_events.chat_id = chat_state.chat_id
+                    AND game_events.status = 'active'
+              )
+            """,
+            (state.chat_id, now_value),
+        ).fetchone()
+        if due is None:
+            return None
+        return self._insert_event(
+            connection,
+            state.chat_id,
+            now,
+            event_type=decision.event_type,
+            manual=False,
+            decision=decision,
+        )
 
     def _apply_activity(
         self,
@@ -385,6 +449,7 @@ class SpyRepository:
         *,
         event_type: str,
         manual: bool,
+        decision: DirectorDecision | None = None,
     ) -> SpawnEvent | None:
         chat = connection.execute(
             "SELECT enabled FROM chat_state WHERE chat_id = ?",
@@ -406,14 +471,79 @@ class SpyRepository:
                 "reward_pool": "basic_recruitment",
                 "manual": manual,
             }
+        elif event_type == "dead_drop":
+            payload_data = {
+                "action": "search",
+                "reward_pool": "basic_dead_drop",
+                "manual": manual,
+            }
         elif event_type == "handler":
             payload_data = {
                 "action": "exchange",
                 "recipe_ids": [recipe.id for recipe in self.settings.handler_recipes],
                 "manual": manual,
             }
+        elif event_type == "death_operation":
+            payload_data = {
+                "action": "death",
+                "config_id": "all_in_v1",
+                "manual": manual,
+            }
+        elif event_type == "intercept":
+            scenario = self.settings.intercept_scenarios[
+                self.rng.randint(0, len(self.settings.intercept_scenarios) - 1)
+            ]
+            payload_data = {
+                "action": "answer",
+                "config_id": scenario.id,
+                "manual": manual,
+            }
+        elif event_type == "cooperative_operation":
+            payload_data = {
+                "action": "contribute",
+                "config_id": "network_sweep_v1",
+                "required_contributions": (
+                    self.settings.cooperative_required_contributions
+                ),
+                "manual": manual,
+            }
+        elif event_type == "chase":
+            payload_data = {
+                "action": "chase",
+                "config_id": "two_stage_v1",
+                "manual": manual,
+            }
+        elif event_type == "npc":
+            npc_id = self.settings.npc_ids[
+                self.rng.randint(0, len(self.settings.npc_ids) - 1)
+            ]
+            payload_data = {
+                "action": "npc_exchange",
+                "config_id": npc_id,
+                "recipe_ids": [
+                    recipe.id for recipe in self.settings.npc_recipes_for(npc_id)
+                ],
+                "manual": manual,
+            }
         else:
             raise ValueError(f"unsupported event type: {event_type}")
+        payload_data["tone"] = decision.tone if decision else "bureaucratic"
+        payload_data["story_hook"] = decision.story_hook if decision else None
+        payload_data["intensity"] = decision.intensity if decision else 1
+        lore_context = ()
+        if payload_data["story_hook"]:
+            lore_rows = connection.execute(
+                """
+                SELECT DISTINCT l.name, l.text
+                FROM lore l
+                LEFT JOIN lore_tags t ON t.lore_id = l.id
+                WHERE l.id = ? OR t.tag = ?
+                ORDER BY l.id
+                LIMIT 3
+                """,
+                (payload_data["story_hook"], payload_data["story_hook"]),
+            ).fetchall()
+            lore_context = tuple(f"{row['name']}: {row['text']}" for row in lore_rows)
         payload = json.dumps(
             payload_data,
             ensure_ascii=False,
@@ -442,7 +572,16 @@ class SpyRepository:
                 chat_id,
             ),
         )
-        return SpawnEvent(event_id, chat_id, event_type, expires_at)
+        return SpawnEvent(
+            event_id,
+            chat_id,
+            event_type,
+            expires_at,
+            payload_data.get("config_id"),
+            payload_data["tone"],
+            payload_data["story_hook"],
+            lore_context,
+        )
 
     def attach_message(
         self,
@@ -569,6 +708,10 @@ class SpyRepository:
             (user_id,),
         ).fetchone()[0]
         reward = self.reward_resolver.resolve(event["event_type"], reputation)
+        if self._item_is_equipped(connection, user_id, "wiretap"):
+            roll = self.rng.randint(1, 100)
+            if roll <= self.settings.wiretap_bonus_chance_percent:
+                reward = Reward(reward.agent_type, reward.amount + 1)
         connection.execute(
             """
             INSERT INTO user_agents(user_id, agent_type, amount)
@@ -601,6 +744,713 @@ class SpyRepository:
             event_id,
             reward=reward,
             winner_user_id=user_id,
+        )
+
+    def claim_dead_drop(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> DeadDropResult:
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return DeadDropResult(ClaimStatus.NOT_FOUND, event_id)
+        if event["chat_id"] != chat_id:
+            return DeadDropResult(ClaimStatus.WRONG_CHAT, event_id)
+        if event["event_type"] != "dead_drop":
+            return DeadDropResult(ClaimStatus.INVALID_ACTION, event_id)
+        if event["status"] == "expired":
+            return DeadDropResult(ClaimStatus.EXPIRED, event_id)
+        if event["status"] != "active":
+            return DeadDropResult(
+                ClaimStatus.ALREADY_RESOLVED,
+                event_id,
+                winner_user_id=event["winner_user_id"],
+            )
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return DeadDropResult(ClaimStatus.EXPIRED, event_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        claimed = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'dead_drop'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if claimed.rowcount != 1:
+            return DeadDropResult(
+                ClaimStatus.ALREADY_RESOLVED,
+                event_id,
+            )
+
+        reward = self.reward_resolver.resolve_dead_drop(self.rng)
+        if reward.reward_type == "item":
+            connection.execute(
+                """
+                INSERT INTO user_items(user_id, item_type, amount)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, item_type) DO UPDATE SET
+                    amount = amount + excluded.amount
+                """,
+                (user_id, reward.reward_id, reward.amount),
+            )
+        elif reward.reward_type == "agent":
+            self._add_reward(
+                connection,
+                user_id,
+                Reward(reward.reward_id, reward.amount),
+            )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, reward_type, reward_id, reward_amount, created_at
+            ) VALUES (?, ?, ?, ?, 'dead_drop', 'searched', ?, ?, ?, ?)
+            """,
+            (
+                f"dead-drop:{event_id}",
+                event_id,
+                chat_id,
+                user_id,
+                reward.reward_type,
+                reward.reward_id,
+                reward.amount,
+                now_value,
+            ),
+        )
+        return DeadDropResult(
+            ClaimStatus.WON,
+            event_id,
+            reward=reward,
+            winner_user_id=user_id,
+        )
+
+    def run_death_operation(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> DeathOperationResult:
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return DeathOperationResult(DeathOperationStatus.NOT_FOUND, event_id)
+        if event["chat_id"] != chat_id:
+            return DeathOperationResult(DeathOperationStatus.WRONG_CHAT, event_id)
+        if event["event_type"] != "death_operation":
+            return DeathOperationResult(
+                DeathOperationStatus.INVALID_ACTION,
+                event_id,
+            )
+        if event["status"] == "expired":
+            return DeathOperationResult(DeathOperationStatus.EXPIRED, event_id)
+        if event["status"] != "active":
+            return DeathOperationResult(
+                DeathOperationStatus.ALREADY_RESOLVED,
+                event_id,
+                winner_user_id=event["winner_user_id"],
+            )
+
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return DeathOperationResult(DeathOperationStatus.EXPIRED, event_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        staked = self.get_agents(connection, user_id)
+        if not staked:
+            return DeathOperationResult(
+                DeathOperationStatus.INSUFFICIENT_AGENTS,
+                event_id,
+            )
+
+        stake_payload = [
+            {"agent_type": holding.agent_type, "amount": holding.amount}
+            for holding in staked
+        ]
+        participant = connection.execute(
+            """
+            SELECT status, payload_json FROM event_participants
+            WHERE event_id = ? AND user_id = ?
+            """,
+            (event_id, user_id),
+        ).fetchone()
+        pending_is_current = False
+        if participant is not None and participant["status"] == "pending":
+            try:
+                pending_payload = json.loads(participant["payload_json"])
+                confirmation_expires_at = _datetime(
+                    pending_payload.get("confirmation_expires_at")
+                )
+                pending_is_current = (
+                    confirmation_expires_at is not None
+                    and confirmation_expires_at > now
+                    and pending_payload.get("staked") == stake_payload
+                )
+            except (AttributeError, TypeError, json.JSONDecodeError, ValueError):
+                pending_is_current = False
+
+        if not pending_is_current:
+            confirmation_expires_at = min(
+                now
+                + timedelta(seconds=self.settings.death_operation_confirmation_seconds),
+                _datetime(event["expires_at"]),
+            )
+            payload = json.dumps(
+                {
+                    "staked": stake_payload,
+                    "confirmation_expires_at": _iso(confirmation_expires_at),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            connection.execute(
+                """
+                INSERT INTO event_participants(
+                    event_id, user_id, status, payload_json, created_at, updated_at
+                ) VALUES (?, ?, 'pending', ?, ?, ?)
+                ON CONFLICT(event_id, user_id) DO UPDATE SET
+                    status = 'pending',
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (event_id, user_id, payload, now_value, now_value),
+            )
+            return DeathOperationResult(
+                DeathOperationStatus.CONFIRMATION_REQUIRED,
+                event_id,
+                staked=staked,
+                confirmation_expires_at=confirmation_expires_at,
+            )
+
+        claimed = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'death_operation'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if claimed.rowcount != 1:
+            current = connection.execute(
+                "SELECT status, winner_user_id FROM game_events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+            status = (
+                DeathOperationStatus.EXPIRED
+                if current["status"] == "expired"
+                else DeathOperationStatus.ALREADY_RESOLVED
+            )
+            return DeathOperationResult(
+                status,
+                event_id,
+                winner_user_id=current["winner_user_id"],
+            )
+
+        connection.execute(
+            "UPDATE user_agents SET amount = 0 WHERE user_id = ? AND amount > 0",
+            (user_id,),
+        )
+        roll = self.rng.randint(1, 100)
+        won = roll <= self.settings.death_operation_success_percent
+        rewards: list[Reward] = []
+        if won:
+            for holding in staked:
+                reward = Reward(
+                    holding.agent_type,
+                    holding.amount * self.settings.death_operation_reward_multiplier,
+                )
+                self._add_reward(connection, user_id, reward)
+                rewards.append(reward)
+            bonus_index = self.rng.randint(
+                0,
+                len(self.settings.death_operation_bonus_pool) - 1,
+            )
+            bonus = Reward(self.settings.death_operation_bonus_pool[bonus_index], 1)
+            self._add_reward(connection, user_id, bonus)
+            rewards.append(bonus)
+
+        outcome = "won" if won else "lost"
+        metadata_data = {
+            "config_id": "all_in_v1",
+            "success_percent": self.settings.death_operation_success_percent,
+            "roll": roll,
+            "staked": stake_payload,
+            "rewards": [
+                {"agent_type": reward.agent_type, "amount": reward.amount}
+                for reward in rewards
+            ],
+        }
+        metadata = json.dumps(
+            metadata_data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, reward_type, reward_id, reward_amount,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'death_operation', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"death-operation:{event_id}",
+                event_id,
+                chat_id,
+                user_id,
+                outcome,
+                "agent_bundle" if won else None,
+                (
+                    f"all_agents_x{self.settings.death_operation_reward_multiplier}"
+                    "+tier3"
+                    if won
+                    else None
+                ),
+                sum(reward.amount for reward in rewards) if won else None,
+                metadata,
+                now_value,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE event_participants
+            SET status = 'resolved', payload_json = ?, updated_at = ?
+            WHERE event_id = ? AND user_id = ?
+            """,
+            (metadata, now_value, event_id, user_id),
+        )
+        return DeathOperationResult(
+            DeathOperationStatus.WON if won else DeathOperationStatus.LOST,
+            event_id,
+            staked=staked,
+            rewards=tuple(rewards),
+            winner_user_id=user_id,
+        )
+
+    def answer_intercept(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        choice_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> InterceptResult:
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return InterceptResult(InterceptStatus.NOT_FOUND, event_id)
+        if event["chat_id"] != chat_id:
+            return InterceptResult(InterceptStatus.WRONG_CHAT, event_id)
+        if event["event_type"] != "intercept":
+            return InterceptResult(InterceptStatus.INVALID_CHOICE, event_id)
+        if event["status"] == "expired":
+            return InterceptResult(InterceptStatus.EXPIRED, event_id)
+        if event["status"] != "active":
+            return InterceptResult(
+                InterceptStatus.ALREADY_RESOLVED,
+                event_id,
+                winner_user_id=event["winner_user_id"],
+            )
+
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return InterceptResult(InterceptStatus.EXPIRED, event_id)
+        try:
+            payload = json.loads(event["payload_json"])
+        except json.JSONDecodeError:
+            return InterceptResult(InterceptStatus.INVALID_CHOICE, event_id)
+        scenario = self.settings.intercept_scenario(payload.get("config_id", ""))
+        if scenario is None or choice_id not in {
+            option.id for option in scenario.options
+        }:
+            return InterceptResult(InterceptStatus.INVALID_CHOICE, event_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        claimed = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'intercept'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if claimed.rowcount != 1:
+            return InterceptResult(InterceptStatus.ALREADY_RESOLVED, event_id)
+
+        correct = choice_id == scenario.correct_option_id
+        reward = None
+        if correct:
+            reward = DropReward(
+                "item",
+                scenario.reward_item,
+                scenario.reward_amount,
+            )
+            connection.execute(
+                """
+                INSERT INTO user_items(user_id, item_type, amount)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, item_type) DO UPDATE SET
+                    amount = amount + excluded.amount
+                """,
+                (user_id, reward.reward_id, reward.amount),
+            )
+        metadata = json.dumps(
+            {
+                "config_id": scenario.id,
+                "choice_id": choice_id,
+                "correct_option_id": scenario.correct_option_id,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, reward_type, reward_id, reward_amount,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'intercept', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"intercept:{event_id}",
+                event_id,
+                chat_id,
+                user_id,
+                "correct" if correct else "incorrect",
+                reward.reward_type if reward else None,
+                reward.reward_id if reward else None,
+                reward.amount if reward else None,
+                metadata,
+                now_value,
+            ),
+        )
+        if correct:
+            self._advance_story(connection, chat_id, "intercept", now_value)
+        return InterceptResult(
+            InterceptStatus.CORRECT if correct else InterceptStatus.INCORRECT,
+            event_id,
+            reward=reward,
+            winner_user_id=user_id,
+        )
+
+    def contribute_cooperative(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> CooperativeResult:
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        required = self.settings.cooperative_required_contributions
+        if event is None:
+            return CooperativeResult(
+                CooperativeStatus.NOT_FOUND,
+                event_id,
+                required_contributions=required,
+            )
+        if event["chat_id"] != chat_id:
+            return CooperativeResult(
+                CooperativeStatus.WRONG_CHAT,
+                event_id,
+                required_contributions=required,
+            )
+        if event["event_type"] != "cooperative_operation":
+            return CooperativeResult(
+                CooperativeStatus.NOT_FOUND,
+                event_id,
+                required_contributions=required,
+            )
+        if event["status"] == "expired":
+            return CooperativeResult(
+                CooperativeStatus.EXPIRED,
+                event_id,
+                required_contributions=required,
+            )
+        if event["status"] != "active":
+            return CooperativeResult(
+                CooperativeStatus.ALREADY_RESOLVED,
+                event_id,
+                required_contributions=required,
+            )
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return CooperativeResult(
+                CooperativeStatus.EXPIRED,
+                event_id,
+                required_contributions=required,
+            )
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        inserted = connection.execute(
+            """
+            INSERT OR IGNORE INTO event_participants(
+                event_id, user_id, status, payload_json, created_at, updated_at
+            ) VALUES (?, ?, 'resolved', '{"contribution":1}', ?, ?)
+            """,
+            (event_id, user_id, now_value, now_value),
+        )
+        participant_rows = connection.execute(
+            """
+            SELECT user_id FROM event_participants
+            WHERE event_id = ? AND status = 'resolved'
+            ORDER BY created_at, user_id
+            """,
+            (event_id,),
+        ).fetchall()
+        participant_ids = tuple(row["user_id"] for row in participant_rows)
+        contributions = len(participant_ids)
+        if inserted.rowcount != 1:
+            return CooperativeResult(
+                CooperativeStatus.ALREADY_CONTRIBUTED,
+                event_id,
+                contributions,
+                required,
+                participant_ids,
+            )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'cooperative_operation',
+                      'contributed', ?, ?)
+            """,
+            (
+                f"coop-contribution:{event_id}:{user_id}",
+                event_id,
+                chat_id,
+                user_id,
+                json.dumps(
+                    {"contributions": contributions, "required": required},
+                    separators=(",", ":"),
+                ),
+                now_value,
+            ),
+        )
+        if contributions < required:
+            return CooperativeResult(
+                CooperativeStatus.CONTRIBUTED,
+                event_id,
+                contributions,
+                required,
+                participant_ids,
+            )
+
+        resolved = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ?
+              AND event_type = 'cooperative_operation'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if resolved.rowcount != 1:
+            return CooperativeResult(
+                CooperativeStatus.ALREADY_RESOLVED,
+                event_id,
+                contributions,
+                required,
+                participant_ids,
+            )
+        reward = Reward(
+            self.settings.cooperative_reward_agent,
+            self.settings.cooperative_reward_amount,
+        )
+        for participant_id in participant_ids:
+            self._add_reward(connection, participant_id, reward)
+            connection.execute(
+                """
+                INSERT INTO event_history(
+                    idempotency_key, event_id, chat_id, user_id, event_type,
+                    outcome, reward_type, reward_id, reward_amount,
+                    metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, 'cooperative_operation', 'rewarded',
+                          'agent', ?, ?, ?, ?)
+                """,
+                (
+                    f"coop-reward:{event_id}:{participant_id}",
+                    event_id,
+                    chat_id,
+                    participant_id,
+                    reward.agent_type,
+                    reward.amount,
+                    json.dumps(
+                        {"participants": participant_ids, "required": required},
+                        separators=(",", ":"),
+                    ),
+                    now_value,
+                ),
+            )
+        self._advance_story(
+            connection,
+            chat_id,
+            "cooperative_operation",
+            now_value,
+        )
+        return CooperativeResult(
+            CooperativeStatus.COMPLETED,
+            event_id,
+            contributions,
+            required,
+            participant_ids,
+            reward,
+        )
+
+    def advance_chase(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> ChaseResult:
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None or event["event_type"] != "chase":
+            return ChaseResult(ChaseStatus.NOT_FOUND, event_id)
+        if event["chat_id"] != chat_id:
+            return ChaseResult(ChaseStatus.WRONG_CHAT, event_id)
+        if event["status"] == "expired":
+            return ChaseResult(ChaseStatus.EXPIRED, event_id)
+        if event["status"] != "active":
+            return ChaseResult(ChaseStatus.ALREADY_RESOLVED, event_id)
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return ChaseResult(ChaseStatus.EXPIRED, event_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        starter = connection.execute(
+            """
+            SELECT user_id FROM event_participants
+            WHERE event_id = ? AND status = 'pending'
+            ORDER BY created_at, user_id LIMIT 1
+            """,
+            (event_id,),
+        ).fetchone()
+        if starter is None:
+            connection.execute(
+                """
+                INSERT INTO event_participants(
+                    event_id, user_id, status, payload_json, created_at, updated_at
+                ) VALUES (?, ?, 'pending', '{"stage":1}', ?, ?)
+                """,
+                (event_id, user_id, now_value, now_value),
+            )
+            connection.execute(
+                """
+                INSERT INTO event_history(
+                    idempotency_key, event_id, chat_id, user_id, event_type,
+                    outcome, created_at
+                ) VALUES (?, ?, ?, ?, 'chase', 'started', ?)
+                """,
+                (f"chase-start:{event_id}", event_id, chat_id, user_id, now_value),
+            )
+            return ChaseResult(
+                ChaseStatus.STARTED,
+                event_id,
+                starter_user_id=user_id,
+            )
+
+        starter_user_id = starter["user_id"]
+        resolved = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'chase'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if resolved.rowcount != 1:
+            return ChaseResult(ChaseStatus.ALREADY_RESOLVED, event_id)
+        connection.execute(
+            """
+            UPDATE event_participants
+            SET status = 'resolved', payload_json = '{"stage":2}', updated_at = ?
+            WHERE event_id = ? AND user_id = ? AND status = 'pending'
+            """,
+            (now_value, event_id, starter_user_id),
+        )
+        starter_reward = Reward(
+            self.settings.chase_starter_reward.agent_type,
+            self.settings.chase_starter_reward.amount,
+        )
+        interceptor_reward = Reward(
+            self.settings.chase_interceptor_reward.agent_type,
+            self.settings.chase_interceptor_reward.amount,
+        )
+        for participant_id, role, reward in (
+            (starter_user_id, "starter", starter_reward),
+            (user_id, "interceptor", interceptor_reward),
+        ):
+            self._add_reward(connection, participant_id, reward)
+            connection.execute(
+                """
+                INSERT INTO event_history(
+                    idempotency_key, event_id, chat_id, user_id, event_type,
+                    outcome, reward_type, reward_id, reward_amount,
+                    metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, 'chase', 'rewarded', 'agent', ?, ?, ?, ?)
+                """,
+                (
+                    f"chase-reward:{event_id}:{role}",
+                    event_id,
+                    chat_id,
+                    participant_id,
+                    reward.agent_type,
+                    reward.amount,
+                    json.dumps({"role": role}, separators=(",", ":")),
+                    now_value,
+                ),
+            )
+        return ChaseResult(
+            ChaseStatus.COMPLETED,
+            event_id,
+            starter_user_id,
+            user_id,
+            starter_reward,
+            interceptor_reward,
         )
 
     def exchange_with_handler(
@@ -702,12 +1552,127 @@ class SpyRepository:
                 now_value,
             ),
         )
+        self._advance_story(connection, chat_id, "handler", now_value)
         return ExchangeResult(
             EconomyStatus.SUCCESS,
             event_id,
             recipe_id,
             reward=reward,
             required=recipe.costs,
+        )
+
+    def interact_with_npc(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> NpcResult:
+        recipe = self.settings.npc_recipe(recipe_id)
+        if recipe is None:
+            return NpcResult(NpcStatus.INVALID_RECIPE, event_id, recipe_id)
+        event = connection.execute(
+            "SELECT * FROM game_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return NpcResult(NpcStatus.NOT_FOUND, event_id, recipe_id)
+        if event["chat_id"] != chat_id:
+            return NpcResult(NpcStatus.WRONG_CHAT, event_id, recipe_id)
+        if event["event_type"] != "npc":
+            return NpcResult(NpcStatus.INVALID_RECIPE, event_id, recipe_id)
+        payload = json.loads(event["payload_json"])
+        if payload.get("config_id") != recipe.npc_id or recipe.id not in payload.get(
+            "recipe_ids", ()
+        ):
+            return NpcResult(NpcStatus.INVALID_RECIPE, event_id, recipe_id)
+        if event["status"] == "expired":
+            return NpcResult(NpcStatus.EXPIRED, event_id, recipe_id)
+        if event["status"] != "active":
+            return NpcResult(NpcStatus.ALREADY_RESOLVED, event_id, recipe_id)
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self._expire_row(connection, event, now_value)
+            return NpcResult(NpcStatus.EXPIRED, event_id, recipe_id)
+
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        if not self._has_costs(connection, user_id, recipe.agent_costs) or not (
+            self._has_item_costs(connection, user_id, recipe.item_costs)
+        ):
+            return NpcResult(
+                NpcStatus.INSUFFICIENT_RESOURCES,
+                event_id,
+                recipe_id,
+                required_agents=recipe.agent_costs,
+                required_items=recipe.item_costs,
+            )
+        claimed = connection.execute(
+            """
+            UPDATE game_events
+            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+            WHERE id = ? AND chat_id = ? AND event_type = 'npc'
+              AND status = 'active' AND expires_at > ?
+            """,
+            (user_id, now_value, event_id, chat_id, now_value),
+        )
+        if claimed.rowcount != 1:
+            return NpcResult(NpcStatus.ALREADY_RESOLVED, event_id, recipe_id)
+
+        agency_level = connection.execute(
+            "SELECT agency_level FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
+        self._spend_costs(connection, user_id, recipe.agent_costs)
+        self._spend_item_costs(connection, user_id, recipe.item_costs)
+        reward = self.reward_resolver.resolve_npc(recipe, agency_level, self.rng)
+        self._add_drop_reward(connection, user_id, reward)
+        metadata = json.dumps(
+            {
+                "npc_id": recipe.npc_id,
+                "recipe_id": recipe.id,
+                "agent_costs": {
+                    cost.agent_type: cost.amount for cost in recipe.agent_costs
+                },
+                "item_costs": {
+                    cost.item_type: cost.amount for cost in recipe.item_costs
+                },
+                "agency_level": agency_level,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO event_history(
+                idempotency_key, event_id, chat_id, user_id, event_type,
+                outcome, reward_type, reward_id, reward_amount,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, 'npc', 'exchanged', ?, ?, ?, ?, ?)
+            """,
+            (
+                f"npc:{event_id}",
+                event_id,
+                chat_id,
+                user_id,
+                reward.reward_type,
+                reward.reward_id,
+                reward.amount,
+                metadata,
+                now_value,
+            ),
+        )
+        self._advance_story(connection, chat_id, "npc", now_value)
+        return NpcResult(
+            NpcStatus.SUCCESS,
+            event_id,
+            recipe_id,
+            reward=reward,
+            required_agents=recipe.agent_costs,
+            required_items=recipe.item_costs,
         )
 
     def increase_reputation(
@@ -776,6 +1741,113 @@ class SpyRepository:
         )
         return PrestigeResult(EconomyStatus.SUCCESS, current + 1, required)
 
+    def found_agency(
+        self,
+        connection: sqlite3.Connection,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        expected_agency_level: int,
+        now: datetime,
+    ) -> AgencyResult:
+        now_value = _iso(now)
+        chat = connection.execute(
+            "SELECT enabled FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        required_reputation = self.settings.agency_reputation_requirement(
+            expected_agency_level
+        )
+        required_agents = self.settings.agency_requirements(expected_agency_level)
+        if chat is None or not chat["enabled"]:
+            return AgencyResult(
+                AgencyStatus.DISABLED,
+                expected_agency_level,
+                required_reputation,
+                required_agents,
+            )
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        user = connection.execute(
+            "SELECT reputation, agency_level FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        current_level = user["agency_level"]
+        if current_level != expected_agency_level:
+            return AgencyResult(
+                AgencyStatus.STALE,
+                current_level,
+                self.settings.agency_reputation_requirement(current_level),
+                self.settings.agency_requirements(current_level),
+            )
+        if current_level >= self.settings.agency_max_level:
+            return AgencyResult(
+                AgencyStatus.MAX_LEVEL,
+                current_level,
+                required_reputation,
+                required_agents,
+            )
+        if user["reputation"] < required_reputation or not self._has_costs(
+            connection,
+            user_id,
+            required_agents,
+        ):
+            return AgencyResult(
+                AgencyStatus.INSUFFICIENT_RESOURCES,
+                current_level,
+                required_reputation,
+                required_agents,
+            )
+
+        self._spend_costs(connection, user_id, required_agents)
+        updated = connection.execute(
+            """
+            UPDATE users
+            SET agency_level = agency_level + 1, reputation = 0, updated_at = ?
+            WHERE user_id = ? AND agency_level = ? AND reputation >= ?
+            """,
+            (now_value, user_id, current_level, required_reputation),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("agency level changed inside serialized transaction")
+        metadata = json.dumps(
+            {
+                "reputation_spent": user["reputation"],
+                "agent_costs": {
+                    cost.agent_type: cost.amount for cost in required_agents
+                },
+                "rare_bonus_percent": min(
+                    (current_level + 1) * self.settings.agency_rare_bonus_percent,
+                    self.settings.agency_max_level
+                    * self.settings.agency_rare_bonus_percent,
+                ),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO agency_history(
+                idempotency_key, user_id, from_level, to_level,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"agency:{user_id}:{current_level}",
+                user_id,
+                current_level,
+                current_level + 1,
+                metadata,
+                now_value,
+            ),
+        )
+        return AgencyResult(
+            AgencyStatus.SUCCESS,
+            current_level + 1,
+            self.settings.agency_reputation_requirement(current_level + 1),
+            self.settings.agency_requirements(current_level + 1),
+        )
+
     def ensure_user_and_profile(
         self,
         connection: sqlite3.Connection,
@@ -819,6 +1891,194 @@ class SpyRepository:
             (user_id,),
         ).fetchall()
         return tuple(AgentHolding(row["agent_type"], row["amount"]) for row in rows)
+
+    def get_inventory(
+        self,
+        connection: sqlite3.Connection,
+        user_id: int,
+    ) -> Inventory:
+        item_rows = connection.execute(
+            """
+            SELECT item_type, amount FROM user_items
+            WHERE user_id = ? AND amount > 0
+            ORDER BY item_type
+            """,
+            (user_id,),
+        ).fetchall()
+        equipped_rows = connection.execute(
+            """
+            SELECT slot, item_type FROM equipped_items
+            WHERE user_id = ?
+            ORDER BY slot
+            """,
+            (user_id,),
+        ).fetchall()
+        items = tuple(
+            ItemHolding(row["item_type"], row["amount"])
+            for row in item_rows
+            if row["item_type"] in ITEM_TYPES
+        )
+        equipped = tuple(
+            EquippedItem(row["slot"], row["item_type"])
+            for row in equipped_rows
+            if row["item_type"] in ITEM_TYPES
+        )
+        return Inventory(items, equipped, self.settings.equipment_slots)
+
+    def get_leaderboard(
+        self,
+        connection: sqlite3.Connection,
+        limit: int,
+    ) -> tuple[LeaderboardEntry, ...]:
+        rare_agents = tuple(
+            agent_id for agent_id, agent in AGENT_TYPES.items() if agent.tier >= 3
+        )
+        placeholders = ",".join("?" for _ in rare_agents)
+        rows = connection.execute(
+            f"""
+            SELECT
+                u.user_id,
+                COALESCE(NULLIF(u.display_name, ''),
+                         NULLIF(u.username, ''), CAST(u.user_id AS TEXT)) AS name,
+                u.reputation,
+                u.agency_level,
+                COALESCE(SUM(a.amount), 0) AS total_agents,
+                COALESCE(SUM(
+                    CASE WHEN a.agent_type IN ({placeholders})
+                         THEN a.amount ELSE 0 END
+                ), 0) AS rare_agents
+            FROM users u
+            LEFT JOIN user_agents a ON a.user_id = u.user_id
+            GROUP BY u.user_id
+            ORDER BY u.agency_level DESC, u.reputation DESC,
+                     rare_agents DESC, total_agents DESC, u.user_id
+            LIMIT ?
+            """,
+            (*rare_agents, limit),
+        ).fetchall()
+        return tuple(
+            LeaderboardEntry(
+                rank=index,
+                user_id=row["user_id"],
+                display_name=row["name"],
+                total_agents=row["total_agents"],
+                rare_agents=row["rare_agents"],
+                reputation=row["reputation"],
+                agency_level=row["agency_level"],
+            )
+            for index, row in enumerate(rows, start=1)
+        )
+
+    def equip_item(
+        self,
+        connection: sqlite3.Connection,
+        chat_id: int,
+        user_id: int,
+        item_type: str,
+    ) -> EquipmentResult:
+        chat = connection.execute(
+            "SELECT enabled FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if chat is None or not chat["enabled"]:
+            return EquipmentResult(EquipmentStatus.DISABLED, item_type)
+        item = ITEM_TYPES.get(item_type)
+        if item is None or item.category.value != "equipment":
+            return EquipmentResult(EquipmentStatus.NOT_EQUIPMENT, item_type)
+        owned = connection.execute(
+            """
+            SELECT amount FROM user_items
+            WHERE user_id = ? AND item_type = ?
+            """,
+            (user_id, item_type),
+        ).fetchone()
+        if owned is None or owned["amount"] <= 0:
+            return EquipmentResult(EquipmentStatus.NOT_OWNED, item_type)
+        existing = connection.execute(
+            """
+            SELECT slot FROM equipped_items
+            WHERE user_id = ? AND item_type = ?
+            """,
+            (user_id, item_type),
+        ).fetchone()
+        if existing is not None:
+            return EquipmentResult(
+                EquipmentStatus.ALREADY_EQUIPPED,
+                item_type,
+                existing["slot"],
+            )
+        occupied = {
+            row["slot"]
+            for row in connection.execute(
+                "SELECT slot FROM equipped_items WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        }
+        slot = next(
+            (
+                candidate
+                for candidate in range(1, self.settings.equipment_slots + 1)
+                if candidate not in occupied
+            ),
+            None,
+        )
+        if slot is None:
+            return EquipmentResult(EquipmentStatus.NO_FREE_SLOT, item_type)
+        connection.execute(
+            """
+            INSERT INTO equipped_items(user_id, slot, item_type)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, slot, item_type),
+        )
+        return EquipmentResult(EquipmentStatus.SUCCESS, item_type, slot)
+
+    def unequip_item(
+        self,
+        connection: sqlite3.Connection,
+        chat_id: int,
+        user_id: int,
+        slot: int,
+    ) -> EquipmentResult:
+        chat = connection.execute(
+            "SELECT enabled FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if chat is None or not chat["enabled"]:
+            return EquipmentResult(EquipmentStatus.DISABLED, slot=slot)
+        if slot <= 0:
+            return EquipmentResult(EquipmentStatus.INVALID_SLOT, slot=slot)
+        row = connection.execute(
+            """
+            SELECT item_type FROM equipped_items
+            WHERE user_id = ? AND slot = ?
+            """,
+            (user_id, slot),
+        ).fetchone()
+        if row is None:
+            return EquipmentResult(EquipmentStatus.NOT_EQUIPPED, slot=slot)
+        connection.execute(
+            "DELETE FROM equipped_items WHERE user_id = ? AND slot = ?",
+            (user_id, slot),
+        )
+        return EquipmentResult(EquipmentStatus.SUCCESS, row["item_type"], slot)
+
+    @staticmethod
+    def _item_is_equipped(
+        connection: sqlite3.Connection,
+        user_id: int,
+        item_type: str,
+    ) -> bool:
+        return (
+            connection.execute(
+                """
+                SELECT 1 FROM equipped_items
+                WHERE user_id = ? AND item_type = ?
+                """,
+                (user_id, item_type),
+            ).fetchone()
+            is not None
+        )
 
     @staticmethod
     def _ensure_user(
@@ -876,6 +2136,38 @@ class SpyRepository:
                 )
 
     @staticmethod
+    def _has_item_costs(
+        connection: sqlite3.Connection,
+        user_id: int,
+        costs: tuple[ItemCost, ...],
+    ) -> bool:
+        holdings = {
+            row["item_type"]: row["amount"]
+            for row in connection.execute(
+                "SELECT item_type, amount FROM user_items WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        }
+        return all(holdings.get(cost.item_type, 0) >= cost.amount for cost in costs)
+
+    @staticmethod
+    def _spend_item_costs(
+        connection: sqlite3.Connection,
+        user_id: int,
+        costs: tuple[ItemCost, ...],
+    ) -> None:
+        for cost in costs:
+            cursor = connection.execute(
+                """
+                UPDATE user_items SET amount = amount - ?
+                WHERE user_id = ? AND item_type = ? AND amount >= ?
+                """,
+                (cost.amount, user_id, cost.item_type, cost.amount),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("item balance changed inside serialized transaction")
+
+    @staticmethod
     def _add_reward(
         connection: sqlite3.Connection,
         user_id: int,
@@ -891,6 +2183,30 @@ class SpyRepository:
             (user_id, reward.agent_type, reward.amount),
         )
 
+    @classmethod
+    def _add_drop_reward(
+        cls,
+        connection: sqlite3.Connection,
+        user_id: int,
+        reward: DropReward,
+    ) -> None:
+        if reward.reward_type == "agent":
+            cls._add_reward(
+                connection,
+                user_id,
+                Reward(reward.reward_id, reward.amount),
+            )
+        elif reward.reward_type == "item":
+            connection.execute(
+                """
+                INSERT INTO user_items(user_id, item_type, amount)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, item_type) DO UPDATE SET
+                    amount = amount + excluded.amount
+                """,
+                (user_id, reward.reward_id, reward.amount),
+            )
+
     def _payload_is_valid(self, event_type: str, raw_payload: str) -> bool:
         try:
             payload = json.loads(raw_payload)
@@ -904,11 +2220,53 @@ class SpyRepository:
                 and payload.get("reward_pool") == "basic_recruitment"
                 and isinstance(payload.get("manual"), bool)
             )
+        if event_type == "dead_drop":
+            return (
+                payload.get("action") == "search"
+                and payload.get("reward_pool") == "basic_dead_drop"
+                and isinstance(payload.get("manual"), bool)
+            )
         if event_type == "handler":
             return (
                 payload.get("action") == "exchange"
                 and payload.get("recipe_ids")
                 == [recipe.id for recipe in self.settings.handler_recipes]
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "death_operation":
+            return (
+                payload.get("action") == "death"
+                and payload.get("config_id") == "all_in_v1"
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "intercept":
+            return (
+                payload.get("action") == "answer"
+                and self.settings.intercept_scenario(payload.get("config_id", ""))
+                is not None
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "cooperative_operation":
+            return (
+                payload.get("action") == "contribute"
+                and payload.get("config_id") == "network_sweep_v1"
+                and payload.get("required_contributions")
+                == self.settings.cooperative_required_contributions
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "chase":
+            return (
+                payload.get("action") == "chase"
+                and payload.get("config_id") == "two_stage_v1"
+                and isinstance(payload.get("manual"), bool)
+            )
+        if event_type == "npc":
+            npc_id = payload.get("config_id")
+            return (
+                payload.get("action") == "npc_exchange"
+                and npc_id in self.settings.npc_ids
+                and payload.get("recipe_ids")
+                == [recipe.id for recipe in self.settings.npc_recipes_for(npc_id)]
                 and isinstance(payload.get("manual"), bool)
             )
         return False
@@ -930,6 +2288,10 @@ class SpyRepository:
             """,
             (chat_id,),
         ).fetchone()
+        summary = connection.execute(
+            "SELECT summary FROM story_summary WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
         return ChatStatus(
             chat_id=chat_id,
             enabled=bool(chat["enabled"]) if chat else False,
@@ -937,6 +2299,75 @@ class SpyRepository:
             next_event_at=_datetime(chat["next_event_at"]) if chat else None,
             active_event_id=active["id"] if active else None,
             active_event_expires_at=_datetime(active["expires_at"]) if active else None,
+            story_arc=chat["story_arc"] if chat else None,
+            story_stage=chat["story_stage"] if chat else 0,
+            story_summary=summary["summary"] if summary else None,
+        )
+
+    @staticmethod
+    def _advance_story(
+        connection: sqlite3.Connection,
+        chat_id: int,
+        resolved_event_type: str,
+        now_value: str,
+    ) -> None:
+        state = connection.execute(
+            "SELECT story_arc, story_stage FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if state is None:
+            return
+        arc = state["story_arc"]
+        stage = state["story_stage"]
+        next_stage = None
+        summary = None
+        if resolved_event_type == "intercept" and arc is None:
+            arc = "mole_hunt"
+            next_stage = 1
+            summary = (
+                "Перехваченный шифр связал активность Секции 7 с исчезновением "
+                "полковника Вяземского. Сеть начала поиск крота."
+            )
+        elif (
+            resolved_event_type == "cooperative_operation"
+            and arc == "mole_hunt"
+            and stage == 1
+        ):
+            next_stage = 2
+            summary = (
+                "Участники совместно восстановили маршрут внедрения. След ведёт "
+                "к куратору, владеющему архивом Секции 7."
+            )
+        elif resolved_event_type == "handler" and arc == "mole_hunt" and stage == 2:
+            next_stage = 3
+            summary = (
+                "Куратор подтвердил происхождение архива. Ячейка крота раскрыта, "
+                "но полковник Вяземский всё ещё не найден."
+            )
+        elif resolved_event_type == "npc" and arc == "mole_hunt" and stage == 3:
+            next_stage = 4
+            summary = (
+                "Контакт среди специальных кураторов вывел сеть на полковника "
+                "Вяземского. Поиск крота завершён, архив Секции 7 сохранён."
+            )
+        if next_stage is None or summary is None:
+            return
+        connection.execute(
+            """
+            UPDATE chat_state SET story_arc = ?, story_stage = ?, updated_at = ?
+            WHERE chat_id = ?
+            """,
+            (arc, next_stage, now_value, chat_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO story_summary(chat_id, summary, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                summary = excluded.summary,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, summary, now_value),
         )
 
     @staticmethod

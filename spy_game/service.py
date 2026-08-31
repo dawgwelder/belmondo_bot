@@ -7,15 +7,32 @@ from datetime import datetime, timezone
 
 from .activity import ActivityTracker
 from .database import SQLiteDatabase
-from .director import GameDirector, RuleBasedDirector
+from .director import GameDirector, build_director
 from .models import (
     AdminResult,
+    AgencyResult,
+    AgencyStatus,
     AgentHolding,
     ChatStatus,
+    ChaseResult,
+    ChaseStatus,
     ClaimResult,
     ClaimStatus,
+    CooperativeResult,
+    CooperativeStatus,
+    DeadDropResult,
+    DeathOperationResult,
+    DeathOperationStatus,
     EconomyStatus,
+    EquipmentResult,
+    EquipmentStatus,
     ExchangeResult,
+    Inventory,
+    InterceptResult,
+    InterceptStatus,
+    LeaderboardEntry,
+    NpcResult,
+    NpcStatus,
     PrestigeResult,
     Profile,
     TickResult,
@@ -42,7 +59,7 @@ class SpyGameService:
         self.database = SQLiteDatabase(settings.database_path)
         self.activity = ActivityTracker(settings.activity_user_debounce_seconds)
         self.rng = rng or random.SystemRandom()
-        self.director = director or RuleBasedDirector(settings, self.rng)
+        self.director = director or build_director(settings, self.rng)
         self.repository = SpyRepository(
             settings,
             ActivityPolicy(settings),
@@ -82,16 +99,32 @@ class SpyGameService:
         current = now or utc_now()
         counts = await self.activity.drain()
         try:
-            result = await self.database.transaction(
-                lambda connection: self.repository.run_tick(
+            prepared = await self.database.transaction(
+                lambda connection: self.repository.prepare_tick(
                     connection,
                     counts,
                     self.settings.allowed_chat_ids,
                     current,
-                    self.director,
                 ),
                 immediate=True,
             )
+            spawned = []
+            for state in prepared.due:
+                decision = await self.director.choose_event(state)
+                event = await self.database.transaction(
+                    lambda connection, state=state, decision=decision: (
+                        self.repository.spawn_due(
+                            connection,
+                            state,
+                            current,
+                            decision,
+                        )
+                    ),
+                    immediate=True,
+                )
+                if event is not None:
+                    spawned.append(event)
+            result = TickResult(tuple(spawned), prepared.expired)
             if self._startup_expired:
                 result = TickResult(
                     spawned=result.spawned,
@@ -146,7 +179,16 @@ class SpyGameService:
             return AdminResult(False, "Игра недоступна в этом чате.")
         if not self.settings.allow_manual_spawn:
             return AdminResult(False, "Ручной spawn запрещён конфигурацией.")
-        if event_type not in {"recruitment", "handler"}:
+        if event_type not in {
+            "recruitment",
+            "dead_drop",
+            "handler",
+            "death_operation",
+            "intercept",
+            "cooperative_operation",
+            "chase",
+            "npc",
+        }:
             return AdminResult(False, "Неизвестный тип события.")
         current = now or utc_now()
         return await self.database.transaction(
@@ -242,6 +284,172 @@ class SpyGameService:
             immediate=True,
         )
 
+    async def search_dead_drop(
+        self,
+        *,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> DeadDropResult:
+        if not self.chat_is_available(chat_id):
+            return DeadDropResult(ClaimStatus.DISABLED, event_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.claim_dead_drop(
+                connection,
+                event_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def run_death_operation(
+        self,
+        *,
+        event_id: str,
+        action: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> DeathOperationResult:
+        if action != "death":
+            return DeathOperationResult(
+                DeathOperationStatus.INVALID_ACTION,
+                event_id,
+            )
+        if not self.chat_is_available(chat_id):
+            return DeathOperationResult(DeathOperationStatus.DISABLED, event_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.run_death_operation(
+                connection,
+                event_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def answer_intercept(
+        self,
+        *,
+        event_id: str,
+        choice_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> InterceptResult:
+        if not self.chat_is_available(chat_id):
+            return InterceptResult(InterceptStatus.DISABLED, event_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.answer_intercept(
+                connection,
+                event_id,
+                choice_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def contribute_cooperative(
+        self,
+        *,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> CooperativeResult:
+        if not self.chat_is_available(chat_id):
+            return CooperativeResult(CooperativeStatus.DISABLED, event_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.contribute_cooperative(
+                connection,
+                event_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def advance_chase(
+        self,
+        *,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> ChaseResult:
+        if not self.chat_is_available(chat_id):
+            return ChaseResult(ChaseStatus.DISABLED, event_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.advance_chase(
+                connection,
+                event_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def interact_with_npc(
+        self,
+        *,
+        event_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> NpcResult:
+        if not self.chat_is_available(chat_id):
+            return NpcResult(NpcStatus.DISABLED, event_id, recipe_id)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.interact_with_npc(
+                connection,
+                event_id,
+                recipe_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
     async def increase_reputation(
         self,
         *,
@@ -263,6 +471,41 @@ class SpyGameService:
                 username,
                 display_name,
                 expected_reputation,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def found_agency(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        expected_agency_level: int,
+        now: datetime | None = None,
+    ) -> AgencyResult:
+        required_reputation = self.settings.agency_reputation_requirement(
+            expected_agency_level
+        )
+        required_agents = self.settings.agency_requirements(expected_agency_level)
+        if not self.chat_is_available(chat_id):
+            return AgencyResult(
+                AgencyStatus.DISABLED,
+                expected_agency_level,
+                required_reputation,
+                required_agents,
+            )
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.found_agency(
+                connection,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                expected_agency_level,
                 current,
             ),
             immediate=True,
@@ -291,6 +534,58 @@ class SpyGameService:
     async def get_agents(self, user_id: int) -> tuple[AgentHolding, ...]:
         return await self.database.read(
             lambda connection: self.repository.get_agents(connection, user_id)
+        )
+
+    async def get_inventory(self, user_id: int) -> Inventory:
+        return await self.database.read(
+            lambda connection: self.repository.get_inventory(connection, user_id)
+        )
+
+    async def get_leaderboard(self, limit: int = 10) -> tuple[LeaderboardEntry, ...]:
+        bounded_limit = max(1, min(limit, 25))
+        return await self.database.read(
+            lambda connection: self.repository.get_leaderboard(
+                connection,
+                bounded_limit,
+            )
+        )
+
+    async def equip_item(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        item_type: str,
+    ) -> EquipmentResult:
+        if not self.chat_is_available(chat_id):
+            return EquipmentResult(EquipmentStatus.DISABLED, item_type)
+        return await self.database.transaction(
+            lambda connection: self.repository.equip_item(
+                connection,
+                chat_id,
+                user_id,
+                item_type,
+            ),
+            immediate=True,
+        )
+
+    async def unequip_item(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        slot: int,
+    ) -> EquipmentResult:
+        if not self.chat_is_available(chat_id):
+            return EquipmentResult(EquipmentStatus.DISABLED, slot=slot)
+        return await self.database.transaction(
+            lambda connection: self.repository.unequip_item(
+                connection,
+                chat_id,
+                user_id,
+                slot,
+            ),
+            immediate=True,
         )
 
     async def get_chat_status(self, chat_id: int) -> ChatStatus:

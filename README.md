@@ -94,12 +94,14 @@ export SPY_GAME_DB_PATH=var/spy-game-dev.sqlite3
 export SPY_GAME_ALLOW_MANUAL_SPAWN=true
 export SPY_GAME_LLM_NARRATOR_ENABLED=true
 export SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS=8
+export SPY_GAME_LLM_DIRECTOR_ENABLED=false
+export SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS=8
 ```
 
 После запуска master включает сеть командой `/spy_admin enable`. В production
 ручной spawn по умолчанию запрещён; глобальный `SPY_GAME_ENABLED=false` служит
-kill switch. LLM Narrator также opt-in: без его flag все события используют
-локальные шаблоны.
+kill switch. LLM Narrator и LLM Director включаются независимо; при любой
+ошибке используются локальные шаблоны и RuleBasedDirector.
 
 ## Структура проекта
 
@@ -138,8 +140,8 @@ belmondo_bot/
 │   └── base.py             # dict-helpers для сценарных snapshot-структур
 ├── spy_game/
 │   ├── service.py          # Telegram-independent use cases
-│   ├── director.py         # RuleBasedDirector event selection
-│   ├── narrator.py         # Structured LLM prose + timeout/template fallback
+│   ├── director.py         # RuleBased/LLM Director + strict fallback
+│   ├── narrator.py         # Structured LLM prose + persistent cache/fallback
 │   ├── rewards.py          # Server-side reward resolution
 │   ├── repositories.py     # Atomic SQLite operations
 │   ├── scheduler.py        # Activity decay и интервалы событий
@@ -168,7 +170,7 @@ belmondo_bot/
 - **Process-wide** (`application.bot_data`, инициализируется из `state.vars_dict`): `paused`, `spam_mode`, `master`, `self_id`, `self_id_dev`, загруженная колода `tarot_deck`.
 - **Per-chat** (`context.chat_data`, лениво через `state.ensure_chat_state`): история AI-диалога, антиспам, состояние завода, реестр известных пользователей, текущая дуэль, рулетка и активная LLM-игра.
 - Для LLM-игр отдельно хранятся `llm_games` (`GameState` по chat id), `llm_game_sessions` (имена игроков, контент раундов, operation token) и `llm_game_lock` для сериализации кликов, reply-ответов, таймаутов и фоновых LLM-переходов.
-- **Persistent Spy Clicker**: SQLite хранит пользователей, агентов, состояние чатов, `next_event_at`, события и историю. В памяти остаются только безопасные к потере счётчики свежей активности.
+- **Persistent Spy Clicker**: SQLite хранит пользователей, агентов, предметы, уровень службы, состояние чатов, `next_event_at`, события, сюжет и историю. В памяти остаются только безопасные к потере счётчики свежей активности.
 
 ## Команды бота
 
@@ -210,8 +212,8 @@ fallback, чтобы игра не зависала. Одновременно в
 
 ### Spy Clicker
 
-У игроков одна команда — `/spy`. Она отправляет Rich Message с кнопками досье,
-агентов и состояния сети. Обычные сообщения пользователей повышают активность
+У игроков одна команда — `/spy`. Она отправляет Rich Message с досье, агентами,
+инвентарём, рейтингом, сюжетом и учреждением собственной службы. Обычные сообщения пользователей повышают активность
 чата; повторные сообщения одного пользователя учитываются не чаще раза в 20
 секунд. После 6 очков назначается и сохраняется `next_event_at`:
 
@@ -223,7 +225,8 @@ Score имеет half-life 30 минут. Уже назначенный тайм
 это обещанный чату сигнал. После публикации события остаётся 45% накопленной
 активности, поэтому события не появляются серией. Первый атомарно подтверждённый
 клик получает агента; claim, награда и history фиксируются одной SQLite
-transaction.
+transaction. Registry также включает Dead Drop, Intercept, Chase, cooperative
+operation, Handler, три типа NPC и двухшаговую «Смертельную операцию».
 
 При `SPY_GAME_LLM_NARRATOR_ENABLED=true` художественная завязка события
 генерируется через существующий structured JSON transport из `games/llm.py`.
@@ -231,13 +234,18 @@ transaction.
 формируются сервером. Невалидный текст, API error или timeout автоматически
 заменяется локальным шаблоном и не отменяет событие.
 
+При `SPY_GAME_LLM_DIRECTOR_ENABLED=true` модель выбирает только event type,
+tone, известный story hook и intensity из серверного allowlist. Невалидный
+ответ или timeout автоматически передаёт выбор `RuleBasedDirector`. Экономика,
+победители и SQL недоступны обоим LLM-слоям.
+
 Master использует одну команду с подкомандами:
 
 ```text
 /spy_admin status
 /spy_admin enable
 /spy_admin disable
-/spy_admin spawn
+/spy_admin spawn [recruitment|dead_drop|intercept|cooperative_operation|chase|handler|npc|death_operation]
 ```
 
 `spawn` дополнительно требует `SPY_GAME_ALLOW_MANUAL_SPAWN=true`.

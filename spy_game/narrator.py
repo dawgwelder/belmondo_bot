@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from config import logger
 from games.llm import compact, request_json, untrusted_json_block
 
+from .database import SQLiteDatabase
 from .models import SpawnEvent
 from .settings import SpySettings
 
@@ -23,7 +24,37 @@ _HANDLER_TEMPLATE_BODIES = (
     "В неприметном кафе появился человек из Центра. Сегодня он готов укрепить вашу сеть.",
     "Старый связной открыл дипломат и ждёт тех, кому есть что предложить для обмена.",
 )
-_TONES = ("paranoid", "bureaucratic", "absurd")
+_DEAD_DROP_TEMPLATE_BODIES = (
+    "Под скамейкой обнаружен контейнер с потёртой меткой Центра. Содержимое ещё можно забрать.",
+    "В камере хранения осталась бесхозная ячейка. Код нацарапан прямо на жетоне.",
+    "За водосточной трубой спрятан неприметный свёрток. Возможно, внутри есть что-то полезное.",
+)
+_DEATH_OPERATION_TEMPLATE_BODIES = (
+    "Центр открыл досье с чёрной печатью. Вернуться с этой операции удавалось немногим.",
+    "На закрытом канале прозвучал приказ, после которого эфир сразу замолчал.",
+    "На стол легла карта без маршрута отхода. Центр ждёт решение того, кто готов рискнуть сетью.",
+)
+_INTERCEPT_TEMPLATE_BODIES = (
+    "Приёмник поймал короткую передачу на закрытой частоте. До смены канала осталось совсем немного.",
+    "Среди радиопомех прозвучала условная фраза. Центр требует немедленной расшифровки.",
+    "Перехваченный сигнал выглядит бессмысленным, но одна деталь выдаёт маршрут связного.",
+)
+_COOPERATIVE_TEMPLATE_BODIES = (
+    "Центр разворачивает сеть наблюдения сразу в нескольких кварталах. Одному агенту периметр не удержать.",
+    "Операция требует синхронной работы нескольких независимых ячеек разведсети.",
+    "Цель появилась сразу на трёх камерах. Центр собирает общую группу сопровождения.",
+)
+_CHASE_TEMPLATE_BODIES = (
+    "Цель заметила хвост и растворяется в вечернем потоке. Центру нужны быстрые решения.",
+    "Чёрный седан сорвался с места раньше сигнала. Маршрут отхода ещё можно перекрыть.",
+    "Наблюдатель передал последнее направление цели и умолк. Погоня уже началась.",
+)
+_NPC_TEMPLATE_BODIES = (
+    "Редкий специалист Центра открыл временный канал и ждёт тех, кто готов предъявить ресурсы.",
+    "В условленном месте появился куратор с доступом к закрытым программам подготовки.",
+    "На служебной частоте объявлено короткое окно для особой сделки с Центром.",
+)
+_TONES = ("serious", "paranoid", "bureaucratic", "absurd")
 _FORBIDDEN_TERMS = (
     "награ",
     "кноп",
@@ -54,12 +85,18 @@ class NarrationUnavailable(RuntimeError):
 
 class TemplateNarrator:
     async def narrate(self, event: SpawnEvent) -> EventNarrative:
-        templates = (
-            _HANDLER_TEMPLATE_BODIES
-            if event.event_type == "handler"
-            else _RECRUITMENT_TEMPLATE_BODIES
-        )
-        index = sum(event.event_id.encode("utf-8")) % len(templates)
+        templates = {
+            "handler": _HANDLER_TEMPLATE_BODIES,
+            "dead_drop": _DEAD_DROP_TEMPLATE_BODIES,
+            "death_operation": _DEATH_OPERATION_TEMPLATE_BODIES,
+            "intercept": _INTERCEPT_TEMPLATE_BODIES,
+            "cooperative_operation": _COOPERATIVE_TEMPLATE_BODIES,
+            "chase": _CHASE_TEMPLATE_BODIES,
+            "npc": _NPC_TEMPLATE_BODIES,
+        }.get(event.event_type, _RECRUITMENT_TEMPLATE_BODIES)
+        index = (
+            sum(event.event_id.encode("utf-8")) + sum(event.tone.encode("utf-8"))
+        ) % len(templates)
         return EventNarrative(templates[index], "template")
 
 
@@ -73,10 +110,11 @@ class LLMNarrator:
         self._request = request
 
     async def narrate(self, event: SpawnEvent) -> EventNarrative:
-        tone = _TONES[sum(event.event_id.encode("utf-8")) % len(_TONES)]
         snapshot = {
             "event_type": event.event_type,
-            "tone": tone,
+            "tone": event.tone if event.tone in _TONES else "bureaucratic",
+            "story_hook": event.story_hook,
+            "lore": event.lore_context,
             "constraints": {
                 "language": "ru",
                 "sentences": "1-3",
@@ -151,12 +189,69 @@ class ResilientNarrator:
             return await self.fallback.narrate(event)
 
 
-def build_narrator(settings: SpySettings) -> Narrator:
+class PersistentNarrator:
+    """Reuse validated LLM prose and persist new variants in SQLite."""
+
+    def __init__(self, database: SQLiteDatabase, primary: Narrator) -> None:
+        self.database = database
+        self.primary = primary
+
+    async def narrate(self, event: SpawnEvent) -> EventNarrative:
+        cached = await self.database.transaction(
+            lambda connection: self._take_cached(connection, event),
+            immediate=True,
+        )
+        if cached is not None:
+            return EventNarrative(cached, "cache")
+        narrative = await self.primary.narrate(event)
+        if narrative.source == "llm":
+            await self.database.transaction(
+                lambda connection: connection.execute(
+                    """
+                    INSERT INTO event_templates(event_type, tone, text)
+                    VALUES (?, ?, ?)
+                    """,
+                    (event.event_type, event.tone, narrative.body),
+                ),
+                immediate=True,
+            )
+        return narrative
+
+    @staticmethod
+    def _take_cached(connection, event: SpawnEvent) -> str | None:
+        row = connection.execute(
+            """
+            SELECT id, text FROM event_templates
+            WHERE event_type = ? AND tone = ?
+            ORDER BY usage_count, id
+            LIMIT 1
+            """,
+            (event.event_type, event.tone),
+        ).fetchone()
+        if row is None:
+            return None
+        connection.execute(
+            """
+            UPDATE event_templates
+            SET usage_count = usage_count + 1,
+                last_used_at = strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')
+            WHERE id = ?
+            """,
+            (row["id"],),
+        )
+        return row["text"]
+
+
+def build_narrator(
+    settings: SpySettings,
+    database: SQLiteDatabase | None = None,
+) -> Narrator:
     fallback = TemplateNarrator()
     if not settings.llm_narrator_enabled:
         return fallback
-    return ResilientNarrator(
+    narrator: Narrator = ResilientNarrator(
         LLMNarrator(),
         fallback,
         settings.llm_narrator_timeout_seconds,
     )
+    return PersistentNarrator(database, narrator) if database is not None else narrator
