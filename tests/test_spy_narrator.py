@@ -176,5 +176,5 @@ async def test_event_publisher_uses_narrator_body_in_rich_message(monkeypatch):
         "type": "paragraph",
         "text": "Сгенерированная кинематографичная завязка.",
     }
-    assert "Первый подтверждённый контакт" in blocks[-1]["text"]
+    assert "Первые 3 разных пользователя" in blocks[-1]["text"]
     assert send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]

@@ -504,6 +504,7 @@ def build_event_blocks(
     death_reward_multiplier: int = 2,
     intercept_prompt: str | None = None,
     cooperative_required: int = 3,
+    recruitment_required: int = 3,
 ) -> list[dict]:
     lifetime_minutes = max(
         1,
@@ -573,7 +574,8 @@ def build_event_blocks(
                 if is_handler
                 else f"Первый обыскавший забирает содержимое. Окно: ~{lifetime_minutes} мин."
                 if is_dead_drop
-                else f"Первый подтверждённый контакт получит агента. Окно: ~{lifetime_minutes} мин."
+                else f"Первые {recruitment_required} разных пользователя получат "
+                f"по агенту. Окно: ~{lifetime_minutes} мин."
             ),
         },
     ]
@@ -659,6 +661,11 @@ async def publish_spy_event(
         if isinstance(service, SpyGameService)
         else 3
     )
+    recruitment_required = (
+        service.settings.recruitment_winner_count
+        if isinstance(service, SpyGameService)
+        else 3
+    )
     message_id = await _send_rich(
         context,
         event.chat_id,
@@ -669,6 +676,7 @@ async def publish_spy_event(
             death_reward_multiplier=death_reward_multiplier,
             intercept_prompt=scenario.prompt if scenario else None,
             cooperative_required=cooperative_required,
+            recruitment_required=recruitment_required,
         ),
         fallback_text=(
             "💀 Смертельная операция\n"
@@ -688,7 +696,8 @@ async def publish_spy_event(
             else "📦 Тайник разведсети\nПервый обыскавший забирает содержимое."
             if is_dead_drop
             else "🚨 Сигнал разведсети\n"
-            "Замечен потенциальный связной. Первый контакт получает агента."
+            f"Замечены потенциальные связные. Первые {recruitment_required} "
+            "разных пользователя получают агентов."
         ),
         reply_markup=_event_keyboard(
             event,
@@ -1200,10 +1209,10 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             starter_agent = AGENT_TYPES[result.starter_reward.agent_type]
             interceptor_agent = AGENT_TYPES[result.interceptor_reward.agent_type]
             body = (
-                f"Первый этап: пользователь {result.starter_user_id} получает "
+                f"Первый этап: {result.starter_name} получает "
                 f"{starter_agent.emoji} {starter_agent.display_name} "
                 f"×{result.starter_reward.amount}.\n"
-                f"Перехват: {_display_name(user)} получает "
+                f"Перехват: {result.interceptor_name} получает "
                 f"{interceptor_agent.emoji} {interceptor_agent.display_name} "
                 f"×{result.interceptor_reward.amount}."
             )
@@ -1524,13 +1533,16 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if result.status is ClaimStatus.WON:
         agent = AGENT_TYPES[result.reward.agent_type]
         await query.answer(
-            f"Контакт установлен: {agent.display_name} ×{result.reward.amount}",
+            f"Контакт {result.claims}/{result.required_claims}: "
+            f"{agent.display_name} ×{result.reward.amount}",
             show_alert=True,
         )
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: winner could not remove event keyboard")
+        completed = result.claims >= result.required_claims
+        if completed:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                logger.warning("spy_game: winner could not remove event keyboard")
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_id=%s reward_amount=%s",
@@ -1544,23 +1556,40 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             context,
             chat.id,
             [
-                {"type": "paragraph", "text": "✅ КОНТАКТ УСТАНОВЛЕН"},
                 {
                     "type": "paragraph",
                     "text": (
-                        f"{_display_name(user)} первым вышел на связного.\n"
+                        "✅ НАБОР ЗАВЕРШЁН"
+                        if completed
+                        else f"✅ КОНТАКТ {result.claims}/{result.required_claims}"
+                    ),
+                },
+                {
+                    "type": "paragraph",
+                    "text": (
+                        f"{_display_name(user)} вышел на связного.\n"
                         f"Награда: {agent.emoji} {agent.display_name} ×{result.reward.amount}"
                     ),
                 },
                 {
                     "type": "footer",
-                    "text": "Операция закрыта. Следующий сигнал придёт позже.",
+                    "text": (
+                        "Набор закрыт. Следующий сигнал придёт позже."
+                        if completed
+                        else "Свободных контактов: "
+                        f"{result.required_claims - result.claims}."
+                    ),
                 },
             ],
             fallback_text=(
                 f"✅ {_display_name(user)} получает: "
                 f"{agent.display_name} ×{result.reward.amount}."
             ),
+        )
+    elif result.status is ClaimStatus.ALREADY_CLAIMED:
+        await query.answer(
+            "Вы уже получили агента в этом наборе.",
+            show_alert=True,
         )
     elif result.status is ClaimStatus.EXPIRED:
         await query.answer("Окно контакта уже закрылось.", show_alert=True)

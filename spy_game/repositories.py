@@ -469,6 +469,7 @@ class SpyRepository:
             payload_data = {
                 "action": "claim",
                 "reward_pool": "basic_recruitment",
+                "required_claims": self.settings.recruitment_winner_count,
                 "manual": manual,
             }
         elif event_type == "dead_drop":
@@ -669,38 +670,27 @@ class SpyRepository:
             self._expire_row(connection, event, now_value)
             return ClaimResult(ClaimStatus.EXPIRED, event_id)
 
-        connection.execute(
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        required_claims = self.settings.recruitment_winner_count
+        participant = connection.execute(
             """
-            INSERT INTO users(
-                user_id, username, display_name, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                username = excluded.username,
-                display_name = excluded.display_name,
-                updated_at = excluded.updated_at
+            INSERT OR IGNORE INTO event_participants(
+                event_id, user_id, status, payload_json, created_at, updated_at
+            ) VALUES (?, ?, 'resolved', '{"role":"recruit"}', ?, ?)
             """,
-            (user_id, username, display_name, now_value, now_value),
+            (event_id, user_id, now_value, now_value),
         )
-        claimed = connection.execute(
-            """
-            UPDATE game_events
-            SET status = 'resolved', winner_user_id = ?, resolved_at = ?
-            WHERE id = ? AND chat_id = ? AND status = 'active' AND expires_at > ?
-            """,
-            (user_id, now_value, event_id, chat_id, now_value),
-        )
-        if claimed.rowcount != 1:
-            current = connection.execute(
-                "SELECT status, winner_user_id FROM game_events WHERE id = ?",
+        if participant.rowcount != 1:
+            claims = connection.execute(
+                "SELECT COUNT(*) FROM event_participants WHERE event_id = ?",
                 (event_id,),
-            ).fetchone()
-            status = (
-                ClaimStatus.EXPIRED
-                if current["status"] == "expired"
-                else ClaimStatus.ALREADY_RESOLVED
-            )
+            ).fetchone()[0]
             return ClaimResult(
-                status, event_id, winner_user_id=current["winner_user_id"]
+                ClaimStatus.ALREADY_CLAIMED,
+                event_id,
+                winner_user_id=user_id,
+                claims=claims,
+                required_claims=required_claims,
             )
 
         reputation = connection.execute(
@@ -729,7 +719,7 @@ class SpyRepository:
             ) VALUES (?, ?, ?, ?, ?, 'won', 'agent', ?, ?, ?)
             """,
             (
-                f"claim:{event_id}",
+                f"claim:{event_id}:{user_id}",
                 event_id,
                 chat_id,
                 user_id,
@@ -739,11 +729,29 @@ class SpyRepository:
                 now_value,
             ),
         )
+        claims = connection.execute(
+            "SELECT COUNT(*) FROM event_participants WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()[0]
+        if claims >= required_claims:
+            resolved = connection.execute(
+                """
+                UPDATE game_events
+                SET status = 'resolved', winner_user_id = ?, resolved_at = ?
+                WHERE id = ? AND chat_id = ? AND event_type = 'recruitment'
+                  AND status = 'active' AND expires_at > ?
+                """,
+                (user_id, now_value, event_id, chat_id, now_value),
+            )
+            if resolved.rowcount != 1:
+                raise RuntimeError("recruitment changed inside serialized transaction")
         return ClaimResult(
             ClaimStatus.WON,
             event_id,
             reward=reward,
             winner_user_id=user_id,
+            claims=claims,
+            required_claims=required_claims,
         )
 
     def claim_dead_drop(
@@ -1362,9 +1370,11 @@ class SpyRepository:
         self._ensure_user(connection, user_id, username, display_name, now_value)
         starter = connection.execute(
             """
-            SELECT user_id FROM event_participants
-            WHERE event_id = ? AND status = 'pending'
-            ORDER BY created_at, user_id LIMIT 1
+            SELECT p.user_id, u.username, u.display_name
+            FROM event_participants p
+            JOIN users u ON u.user_id = p.user_id
+            WHERE p.event_id = ? AND p.status = 'pending'
+            ORDER BY p.created_at, p.user_id LIMIT 1
             """,
             (event_id,),
         ).fetchone()
@@ -1390,9 +1400,15 @@ class SpyRepository:
                 ChaseStatus.STARTED,
                 event_id,
                 starter_user_id=user_id,
+                starter_name=self._user_label(username, display_name),
             )
 
         starter_user_id = starter["user_id"]
+        starter_name = self._user_label(
+            starter["username"],
+            starter["display_name"],
+        )
+        interceptor_name = self._user_label(username, display_name)
         resolved = connection.execute(
             """
             UPDATE game_events
@@ -1445,12 +1461,14 @@ class SpyRepository:
                 ),
             )
         return ChaseResult(
-            ChaseStatus.COMPLETED,
-            event_id,
-            starter_user_id,
-            user_id,
-            starter_reward,
-            interceptor_reward,
+            status=ChaseStatus.COMPLETED,
+            event_id=event_id,
+            starter_user_id=starter_user_id,
+            interceptor_user_id=user_id,
+            starter_reward=starter_reward,
+            interceptor_reward=interceptor_reward,
+            starter_name=starter_name,
+            interceptor_name=interceptor_name,
         )
 
     def exchange_with_handler(
@@ -2102,6 +2120,12 @@ class SpyRepository:
         )
 
     @staticmethod
+    def _user_label(username: str | None, display_name: str | None) -> str:
+        if username:
+            return f"@{username.lstrip('@')}"
+        return display_name or "Агент"
+
+    @staticmethod
     def _has_costs(
         connection: sqlite3.Connection,
         user_id: int,
@@ -2218,6 +2242,11 @@ class SpyRepository:
             return (
                 payload.get("action") == "claim"
                 and payload.get("reward_pool") == "basic_recruitment"
+                and payload.get(
+                    "required_claims",
+                    self.settings.recruitment_winner_count,
+                )
+                == self.settings.recruitment_winner_count
                 and isinstance(payload.get("manual"), bool)
             )
         if event_type == "dead_drop":

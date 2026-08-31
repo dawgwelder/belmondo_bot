@@ -281,6 +281,7 @@ class SpySettings:
     llm_director_enabled: bool = False
     llm_director_timeout_seconds: int = 8
     recruitment_agent_type: str = "informant"
+    recruitment_winner_count: int = 3
     reputation_reward_cap: int = 5
     equipment_slots: int = 3
     wiretap_bonus_chance_percent: int = 20
@@ -342,6 +343,8 @@ class SpySettings:
             raise ValueError("activity_after_spawn_ratio must be in [0, 1)")
         if self.recruitment_agent_type not in AGENT_TYPES:
             raise ValueError("unknown recruitment agent type")
+        if self.recruitment_winner_count <= 0:
+            raise ValueError("recruitment winner count must be positive")
         if self.enabled and not self.allowed_chat_ids:
             raise ValueError("enabled Spy Game requires a non-empty chat allowlist")
         event_types = {item.event_type for item in self.event_weights}

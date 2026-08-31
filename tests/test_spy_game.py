@@ -250,7 +250,7 @@ async def test_story_hook_loads_matching_lore_for_narrator(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_claim_has_one_winner_and_one_reward(tmp_path):
+async def test_concurrent_claim_has_three_winners_and_one_reward_each(tmp_path):
     service = await initialized_service(tmp_path)
     try:
         spawned = await service.manual_spawn(CHAT_ID, now=NOW)
@@ -269,24 +269,76 @@ async def test_concurrent_claim_has_one_winner_and_one_reward(tmp_path):
 
         results = await asyncio.gather(*(claim(user_id) for user_id in range(1, 51)))
         winners = [result for result in results if result.status is ClaimStatus.WON]
-        assert len(winners) == 1
+        assert len(winners) == 3
         assert (
             sum(result.status is ClaimStatus.ALREADY_RESOLVED for result in results)
-            == 49
+            == 47
         )
 
-        winner_id = winners[0].winner_user_id
-        holdings = await service.get_agents(winner_id)
-        assert [(item.agent_type, item.amount) for item in holdings] == [
-            ("informant", 1)
-        ]
-        history_count = await service.database.read(
-            lambda connection: connection.execute(
-                "SELECT COUNT(*) FROM event_history WHERE event_id = ?",
-                (event_id,),
-            ).fetchone()[0]
+        assert sorted(result.claims for result in winners) == [1, 2, 3]
+        for winner in winners:
+            holdings = await service.get_agents(winner.winner_user_id)
+            assert [(item.agent_type, item.amount) for item in holdings] == [
+                ("informant", 1)
+            ]
+        state = await service.database.read(
+            lambda connection: (
+                connection.execute(
+                    "SELECT status FROM game_events WHERE id = ?",
+                    (event_id,),
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM event_history WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM event_participants WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()[0],
+            )
         )
-        assert history_count == 1
+        assert state == ("resolved", 3, 3)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_recruitment_counts_each_user_only_once_and_closes_on_third(tmp_path):
+    service = await initialized_service(tmp_path)
+    try:
+        event = (await service.manual_spawn(CHAT_ID, now=NOW)).event
+
+        async def claim(user_id, second):
+            return await service.claim_event(
+                event_id=event.event_id,
+                action="claim",
+                chat_id=CHAT_ID,
+                user_id=user_id,
+                username=f"u{user_id}",
+                display_name=f"User {user_id}",
+                now=NOW + timedelta(seconds=second),
+            )
+
+        first = await claim(1, 1)
+        duplicate = await claim(1, 2)
+        second = await claim(2, 3)
+        assert (first.claims, second.claims) == (1, 2)
+        assert duplicate.status is ClaimStatus.ALREADY_CLAIMED
+        assert (
+            await service.get_chat_status(CHAT_ID)
+        ).active_event_id == event.event_id
+
+        third = await claim(3, 4)
+        assert (third.status, third.claims, third.required_claims) == (
+            ClaimStatus.WON,
+            3,
+            3,
+        )
+        assert (await service.get_chat_status(CHAT_ID)).active_event_id is None
+        assert [
+            (holding.agent_type, holding.amount)
+            for holding in await service.get_agents(1)
+        ] == [("informant", 1)]
     finally:
         await service.close()
 
@@ -333,9 +385,13 @@ async def test_reward_failure_rolls_back_claim_and_user(tmp_path):
                     "SELECT COUNT(*) FROM event_history WHERE event_id = ?",
                     (event_id,),
                 ).fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM event_participants WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()[0],
             )
         )
-        assert state == ("active", 0, 0)
+        assert state == ("active", 0, 0, 0)
     finally:
         await service.close()
 
@@ -1049,24 +1105,29 @@ async def test_chase_rewards_starter_and_interceptor_in_two_atomic_stages(tmp_pa
             event_id=event.event_id,
             chat_id=CHAT_ID,
             user_id=1,
-            username=None,
+            username="starter_agent",
             display_name="Starter",
             now=NOW + timedelta(seconds=1),
         )
         assert started.status is ChaseStatus.STARTED
         assert started.starter_user_id == 1
+        assert started.starter_name == "@starter_agent"
         assert await service.get_agents(1) == ()
 
         completed = await service.advance_chase(
             event_id=event.event_id,
             chat_id=CHAT_ID,
             user_id=2,
-            username=None,
+            username="interceptor_agent",
             display_name="Interceptor",
             now=NOW + timedelta(seconds=2),
         )
         assert completed.status is ChaseStatus.COMPLETED
         assert (completed.starter_user_id, completed.interceptor_user_id) == (1, 2)
+        assert (completed.starter_name, completed.interceptor_name) == (
+            "@starter_agent",
+            "@interceptor_agent",
+        )
         assert (
             completed.starter_reward.agent_type,
             completed.starter_reward.amount,

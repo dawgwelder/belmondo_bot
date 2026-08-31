@@ -9,6 +9,7 @@ from enum import Enum
 
 class ClaimStatus(str, Enum):
     WON = "won"
+    ALREADY_CLAIMED = "already_claimed"
     ALREADY_RESOLVED = "already_resolved"
     EXPIRED = "expired"
     NOT_FOUND = "not_found"
@@ -248,6 +249,8 @@ class ClaimResult:
     event_id: str
     reward: Reward | None = None
     winner_user_id: int | None = None
+    claims: int = 0
+    required_claims: int = 0
 
 
 @dataclass(frozen=True)
@@ -294,6 +297,8 @@ class ChaseResult:
     interceptor_user_id: int | None = None
     starter_reward: Reward | None = None
     interceptor_reward: Reward | None = None
+    starter_name: str | None = None
+    interceptor_name: str | None = None
 
 
 @dataclass(frozen=True)
