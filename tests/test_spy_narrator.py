@@ -156,25 +156,25 @@ def test_narrator_settings_are_read_from_environment(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_event_publisher_uses_narrator_body_in_rich_message(monkeypatch):
+async def test_recruitment_publisher_uses_editable_plain_message(monkeypatch):
     class FakeNarrator:
         async def narrate(self, _event):
             return EventNarrative("Сгенерированная кинематографичная завязка.", "llm")
 
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 55}})
     monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    send_message = AsyncMock(return_value=SimpleNamespace(message_id=55))
     context = SimpleNamespace(
         bot_data={"spy_narrator": FakeNarrator()},
-        bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
+        bot=SimpleNamespace(token="TOKEN", send_message=send_message),
     )
 
     message_id = await spy_handlers.publish_spy_event(context, EVENT)
 
     assert message_id == 55
-    blocks = send_rich.await_args.args[2]
-    assert blocks[1] == {
-        "type": "paragraph",
-        "text": "Сгенерированная кинематографичная завязка.",
-    }
-    assert "Первые 3 разных пользователя" in blocks[-1]["text"]
-    assert send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+    text = send_message.await_args.kwargs["text"]
+    assert "Сгенерированная кинематографичная завязка." in text
+    assert "Первые 3 разных пользователя" in text
+    assert "Контакты: 0/3" in text
+    assert send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    send_rich.assert_not_awaited()

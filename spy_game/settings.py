@@ -215,20 +215,6 @@ DEFAULT_NPC_RECIPES = (
 )
 
 
-@dataclass(frozen=True)
-class ActivityBand:
-    minimum_score: float
-    minimum_delay_seconds: int
-    maximum_delay_seconds: int
-
-
-DEFAULT_ACTIVITY_BANDS = (
-    ActivityBand(30.0, 12 * 60, 25 * 60),
-    ActivityBand(15.0, 25 * 60, 45 * 60),
-    ActivityBand(6.0, 45 * 60, 75 * 60),
-)
-
-
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -271,6 +257,11 @@ class SpySettings:
     event_lifetime_seconds: int = 3 * 60
     activity_half_life_seconds: int = 30 * 60
     activity_threshold: float = 6.0
+    activity_peak_messages: int = 4
+    activity_inertia_window_seconds: int = 2 * 60
+    activity_inertia_one_in: int = 3
+    activity_random_average_seconds: int = 2 * 60 * 60
+    activity_event_cooldown_seconds: int = 12 * 60
     activity_message_points: float = 1.0
     activity_user_debounce_seconds: int = 20
     activity_after_spawn_ratio: float = 0.45
@@ -323,9 +314,6 @@ class SpySettings:
     intercept_scenarios: tuple[InterceptScenario, ...] = field(
         default_factory=lambda: DEFAULT_INTERCEPT_SCENARIOS
     )
-    activity_bands: tuple[ActivityBand, ...] = field(
-        default_factory=lambda: DEFAULT_ACTIVITY_BANDS
-    )
 
     def __post_init__(self) -> None:
         if self.mode not in {"dev", "prod"}:
@@ -334,6 +322,14 @@ class SpySettings:
             raise ValueError("tick and event lifetime must be positive")
         if self.activity_half_life_seconds <= 0 or self.activity_threshold <= 0:
             raise ValueError("activity settings must be positive")
+        if (
+            self.activity_peak_messages <= 0
+            or self.activity_inertia_window_seconds <= 0
+            or self.activity_inertia_one_in <= 0
+            or self.activity_random_average_seconds <= 0
+            or self.activity_event_cooldown_seconds < 0
+        ):
+            raise ValueError("activity trigger settings are invalid")
         if (
             self.llm_narrator_timeout_seconds <= 0
             or self.llm_director_timeout_seconds <= 0
@@ -446,11 +442,6 @@ class SpySettings:
             raise ValueError("dead drop registry must not be empty")
         for entry in self.dead_drop_entries:
             self._validate_drop_entry(entry, "dead drop")
-        for band in self.activity_bands:
-            if band.minimum_delay_seconds <= 0:
-                raise ValueError("activity band delay must be positive")
-            if band.maximum_delay_seconds < band.minimum_delay_seconds:
-                raise ValueError("activity band maximum delay is too small")
 
     @staticmethod
     def _validate_costs(costs: tuple[AgentCost, ...]) -> None:

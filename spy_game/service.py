@@ -35,6 +35,7 @@ from .models import (
     NpcStatus,
     PrestigeResult,
     Profile,
+    RecruitmentProgress,
     TickResult,
 )
 from .repositories import SpyRepository
@@ -250,6 +251,17 @@ class SpyGameService:
                 current,
             ),
             immediate=True,
+        )
+
+    async def get_recruitment_progress(
+        self,
+        event_id: str,
+    ) -> RecruitmentProgress | None:
+        return await self.database.read(
+            lambda connection: self.repository.get_recruitment_progress(
+                connection,
+                event_id,
+            )
         )
 
     async def exchange_with_handler(

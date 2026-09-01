@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import datetime, timezone
 
@@ -23,6 +24,7 @@ from spy_game.models import (
     InterceptStatus,
     NpcStatus,
     Profile,
+    RecruitmentProgress,
     SpawnEvent,
 )
 from spy_game.narrator import EventNarrative, Narrator, TemplateNarrator
@@ -37,6 +39,7 @@ from spy_game.settings import (
 from telegram_utils import send_rich_message
 
 SPY_CALLBACK_PATTERN = r"^spy:[a-z0-9_]{1,32}:[a-z0-9_]{1,24}$"
+RECRUITMENT_PROGRESS_MARKER = "📡 ПРОГРЕСС НАБОРА"
 
 
 def _service(context: ContextTypes.DEFAULT_TYPE) -> SpyGameService:
@@ -96,7 +99,7 @@ def _menu_keyboard(profile: Profile) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    "⏱ Следующее событие", callback_data="spy:menu:status"
+                    "⏱ Состояние сети", callback_data="spy:menu:status"
                 ),
                 InlineKeyboardButton("🔄 Обновить", callback_data="spy:menu:refresh"),
             ],
@@ -230,6 +233,81 @@ def _display_name(user) -> str:
     return user.full_name or (f"@{user.username}" if user.username else str(user.id))
 
 
+def _public_username(user) -> str | None:
+    if not user.username or not user.username.strip("@"):
+        return None
+    return f"@{user.username.lstrip('@')}"
+
+
+def _public_label(user) -> str:
+    return _public_username(user) or "Скрытый агент"
+
+
+def _recruitment_message_text(
+    narrative_or_current_text: str,
+    progress: RecruitmentProgress,
+) -> str:
+    marker = f"\n\n{RECRUITMENT_PROGRESS_MARKER}"
+    if marker in narrative_or_current_text:
+        intro = narrative_or_current_text.split(marker, 1)[0]
+    else:
+        intro = (
+            "🚨 СИГНАЛ РАЗВЕДСЕТИ\n\n"
+            f"{narrative_or_current_text}\n\n"
+            f"Первые {progress.required_claims} разных пользователя "
+            "получат по агенту."
+        )
+    lines = [
+        intro,
+        RECRUITMENT_PROGRESS_MARKER,
+        f"Контакты: {progress.claims}/{progress.required_claims}",
+    ]
+    if progress.usernames:
+        lines.append("Подтверждены: " + ", ".join(progress.usernames))
+    if progress.completed:
+        lines.append("✅ Набор завершён.")
+    else:
+        lines.append(
+            f"Свободных контактов: {progress.required_claims - progress.claims}."
+        )
+    return "\n".join(lines)
+
+
+async def _edit_recruitment_progress(
+    context: ContextTypes.DEFAULT_TYPE,
+    query,
+    service: SpyGameService,
+    event_id: str,
+) -> None:
+    locks = context.bot_data.setdefault("spy_recruitment_edit_locks", {})
+    lock = locks.setdefault(event_id, asyncio.Lock())
+    async with lock:
+        progress = await service.get_recruitment_progress(event_id)
+        if progress is None:
+            return
+        current_text = getattr(getattr(query, "message", None), "text", None)
+        source = current_text or "Обнаружены потенциальные связные."
+        reply_markup = None if progress.completed else _claim_keyboard(event_id)
+        try:
+            await query.edit_message_text(
+                text=_recruitment_message_text(source, progress),
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            logger.warning(
+                "spy_game: recruitment progress edit failed event_id=%s",
+                event_id,
+            )
+            if progress.completed:
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    logger.warning(
+                        "spy_game: recruitment keyboard remained event_id=%s",
+                        event_id,
+                    )
+
+
 def _countdown(target: datetime | None, now: datetime) -> str:
     if target is None:
         return "таймер ещё не назначен"
@@ -259,7 +337,7 @@ def build_menu_blocks(profile: Profile, status, now: datetime) -> list[dict]:
     if status.active_event_id:
         event_line = "В чате уже идёт операция — ищите сообщение с кнопкой."
     elif status.enabled:
-        event_line = f"Следующий сигнал: {_countdown(status.next_event_at, now)}."
+        event_line = "Сигнал может прийти на пике, по инерции или случайно."
     else:
         event_line = "В этом чате сеть пока не активирована."
     return [
@@ -284,13 +362,17 @@ def build_menu_blocks(profile: Profile, status, now: datetime) -> list[dict]:
         },
         {
             "type": "footer",
-            "text": "Сеть просыпается от разговоров. Чем живее чат, тем ближе событие.",
+            "text": "Пик срабатывает сразу; инерция живёт недолго после беседы.",
         },
     ]
 
 
 def build_profile_blocks(profile: Profile) -> list[dict]:
-    name = profile.display_name or profile.username or str(profile.user_id)
+    name = (
+        f"@{profile.username.lstrip('@')}"
+        if profile.username and profile.username.strip("@")
+        else "СКРЫТЫЙ АГЕНТ"
+    )
     return [
         {"type": "paragraph", "text": f"🪪 ДОСЬЕ · {name}"},
         {
@@ -441,7 +523,7 @@ def build_status_blocks(status, now: datetime) -> list[dict]:
         timer = f"Окно закроется: {_countdown(status.active_event_expires_at, now)}"
     elif status.enabled:
         state = "Сеть активна"
-        timer = f"Следующий сигнал: {_countdown(status.next_event_at, now)}"
+        timer = "Триггеры: пик · инерция · случайный сигнал"
     else:
         state = "Сеть не активирована в этом чате"
         timer = "Таймер остановлен"
@@ -603,7 +685,7 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "🕵️ Spy Clicker\n"
             f"Агентов: {profile.total_agents}\n"
             f"Активность: {status.activity_score:.1f}\n"
-            f"Следующее событие: {_countdown(status.next_event_at, now)}"
+            "Сигнал может прийти на пике, по инерции или случайно."
         ),
         reply_markup=_menu_keyboard(profile),
     )
@@ -666,6 +748,23 @@ async def publish_spy_event(
         if isinstance(service, SpyGameService)
         else 3
     )
+    if event.event_type == "recruitment":
+        progress = RecruitmentProgress(
+            event_id=event.event_id,
+            claims=0,
+            required_claims=recruitment_required,
+        )
+        message = await context.bot.send_message(
+            chat_id=event.chat_id,
+            text=_recruitment_message_text(narrative.body, progress),
+            reply_markup=_claim_keyboard(event.event_id),
+        )
+        logger.info(
+            "spy_narrative_selected event_id=%s source=%s",
+            event.event_id,
+            narrative.source,
+        )
+        return message.message_id
     message_id = await _send_rich(
         context,
         event.chat_id,
@@ -810,7 +909,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             blocks = build_status_blocks(status, now)
             fallback = (
                 f"Активность: {status.activity_score:.1f}. "
-                f"Следующее событие: {_countdown(status.next_event_at, now)}."
+                "Триггеры: пик, инерция, случайный сигнал."
             )
         await _send_rich(
             context,
@@ -928,13 +1027,13 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     {
                         "type": "paragraph",
                         "text": (
-                            f"{_display_name(user)} создал разведслужбу уровня "
+                            f"{_public_label(user)} создал разведслужбу уровня "
                             f"{result.agency_level}."
                         ),
                     },
                 ],
                 fallback_text=(
-                    f"🏛 {_display_name(user)} создал разведслужбу уровня "
+                    f"🏛 {_public_label(user)} создал разведслужбу уровня "
                     f"{result.agency_level}."
                 ),
             )
@@ -1039,10 +1138,10 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     {"type": "paragraph", "text": "✅ ТАЙНИК ВСКРЫТ"},
                     {
                         "type": "paragraph",
-                        "text": f"{_display_name(user)} нашёл: {reward_text}.",
+                        "text": f"{_public_label(user)} нашёл: {reward_text}.",
                     },
                 ],
-                fallback_text=f"✅ {_display_name(user)} нашёл: {reward_text}.",
+                fallback_text=f"✅ {_public_label(user)} нашёл: {reward_text}.",
             )
         elif result.status is ClaimStatus.EXPIRED:
             await query.answer("Тайник уже изъят Центром.", show_alert=True)
@@ -1080,13 +1179,13 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 answer = f"Верно: {item.display_name} зачислен."
                 title = "✅ ШИФР РАСКРЫТ"
                 body = (
-                    f"{_display_name(user)} перехватил канал и получил "
+                    f"{_public_label(user)} перехватил канал и получил "
                     f"{item.emoji} {item.display_name} ×{result.reward.amount}."
                 )
             else:
                 answer = "Неверная расшифровка. Канал сменил частоту."
                 title = "❌ КАНАЛ ПОТЕРЯН"
-                body = f"Ответ {_display_name(user)} оказался ложным следом."
+                body = f"Ответ {_public_label(user)} оказался ложным следом."
             await query.answer(answer, show_alert=True)
             await _send_rich(
                 context,
@@ -1275,11 +1374,11 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     {"type": "paragraph", "text": "✅ СПЕЦИАЛЬНАЯ СДЕЛКА"},
                     {
                         "type": "paragraph",
-                        "text": f"{_display_name(user)} получил: {reward_text}.",
+                        "text": f"{_public_label(user)} получил: {reward_text}.",
                     },
                 ],
                 fallback_text=(
-                    f"✅ {_display_name(user)} завершил сделку: {reward_text}."
+                    f"✅ {_public_label(user)} завершил сделку: {reward_text}."
                 ),
             )
         elif result.status is NpcStatus.INSUFFICIENT_RESOURCES:
@@ -1347,7 +1446,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 bonus = AGENT_TYPES[result.rewards[-1].agent_type]
                 title = "✅ НЕВОЗМОЖНОЕ ВЫПОЛНЕНО"
                 body = (
-                    f"{_display_name(user)} вернул сеть из {total_staked} агентов "
+                    f"{_public_label(user)} вернул сеть из {total_staked} агентов "
                     "в составе "
                     f"×{service.settings.death_operation_reward_multiplier} "
                     "и получил бонус: "
@@ -1357,7 +1456,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             else:
                 title = "☠️ СВЯЗЬ ПОТЕРЯНА"
                 body = (
-                    f"{_display_name(user)} отправил на задание всю сеть — "
+                    f"{_public_label(user)} отправил на задание всю сеть — "
                     f"{total_staked} агентов. Никто не вернулся."
                 )
                 answer = "Операция провалена. Все поставленные агенты потеряны."
@@ -1482,7 +1581,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     {
                         "type": "paragraph",
                         "text": (
-                            f"{_display_name(user)} первым предъявил ресурсы.\n"
+                            f"{_public_label(user)} первым предъявил ресурсы.\n"
                             f"Новый агент: {agent.emoji} {agent.display_name} "
                             f"×{result.reward.amount}"
                         ),
@@ -1490,7 +1589,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     {"type": "footer", "text": "Куратор закрыл дипломат."},
                 ],
                 fallback_text=(
-                    f"✅ {_display_name(user)} завершает обмен: "
+                    f"✅ {_public_label(user)} завершает обмен: "
                     f"{agent.display_name} ×{result.reward.amount}."
                 ),
             )
@@ -1537,12 +1636,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"{agent.display_name} ×{result.reward.amount}",
             show_alert=True,
         )
-        completed = result.claims >= result.required_claims
-        if completed:
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except Exception:
-                logger.warning("spy_game: winner could not remove event keyboard")
+        await _edit_recruitment_progress(context, query, service, value)
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_id=%s reward_amount=%s",
@@ -1551,40 +1645,6 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             user.id,
             result.reward.agent_type,
             result.reward.amount,
-        )
-        await _send_rich(
-            context,
-            chat.id,
-            [
-                {
-                    "type": "paragraph",
-                    "text": (
-                        "✅ НАБОР ЗАВЕРШЁН"
-                        if completed
-                        else f"✅ КОНТАКТ {result.claims}/{result.required_claims}"
-                    ),
-                },
-                {
-                    "type": "paragraph",
-                    "text": (
-                        f"{_display_name(user)} вышел на связного.\n"
-                        f"Награда: {agent.emoji} {agent.display_name} ×{result.reward.amount}"
-                    ),
-                },
-                {
-                    "type": "footer",
-                    "text": (
-                        "Набор закрыт. Следующий сигнал придёт позже."
-                        if completed
-                        else "Свободных контактов: "
-                        f"{result.required_claims - result.claims}."
-                    ),
-                },
-            ],
-            fallback_text=(
-                f"✅ {_display_name(user)} получает: "
-                f"{agent.display_name} ×{result.reward.amount}."
-            ),
         )
     elif result.status is ClaimStatus.ALREADY_CLAIMED:
         await query.answer(

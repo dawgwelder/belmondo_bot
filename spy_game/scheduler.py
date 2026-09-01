@@ -1,10 +1,10 @@
-"""Pure activity decay and event-delay policy."""
+"""Pure activity decay and composite trigger policy."""
 
 from __future__ import annotations
 
 import math
-from datetime import datetime
-from typing import Protocol
+from datetime import datetime, timedelta
+from typing import Literal, Protocol
 
 from .settings import SpySettings
 
@@ -30,15 +30,42 @@ class ActivityPolicy:
         updated = score * decay + message_count * self.settings.activity_message_points
         return min(self.settings.max_activity_score, max(0.0, updated))
 
-    def event_delay_seconds(self, score: float, rng: RandomSource) -> int | None:
-        for band in sorted(
-            self.settings.activity_bands,
-            key=lambda item: item.minimum_score,
-            reverse=True,
+    def trigger_reason(
+        self,
+        score: float,
+        recent_message_count: int,
+        activity_updated_at: datetime,
+        last_event_at: datetime | None,
+        now: datetime,
+        rng: RandomSource,
+    ) -> Literal["peak", "inertia", "random"] | None:
+        """Choose one trigger channel, preferring current activity over chance."""
+        cooldown = timedelta(seconds=self.settings.activity_event_cooldown_seconds)
+        if last_event_at is not None and now < last_event_at + cooldown:
+            return None
+
+        if (
+            score >= self.settings.activity_threshold
+            and recent_message_count >= self.settings.activity_peak_messages
         ):
-            if score >= band.minimum_score:
-                return rng.randint(
-                    band.minimum_delay_seconds,
-                    band.maximum_delay_seconds,
-                )
+            return "peak"
+
+        activity_age = max(0.0, (now - activity_updated_at).total_seconds())
+        if (
+            score >= self.settings.activity_threshold
+            and activity_age <= self.settings.activity_inertia_window_seconds
+            and rng.randint(1, self.settings.activity_inertia_one_in)
+            == self.settings.activity_inertia_one_in
+        ):
+            return "inertia"
+
+        random_one_in = max(
+            1,
+            math.ceil(
+                self.settings.activity_random_average_seconds
+                / self.settings.tick_seconds
+            ),
+        )
+        if rng.randint(1, random_one_in) == random_one_in:
+            return "random"
         return None

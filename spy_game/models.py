@@ -210,6 +210,7 @@ class SpawnEvent:
     tone: str = "bureaucratic"
     story_hook: str | None = None
     lore_context: tuple[str, ...] = ()
+    trigger_reason: str = "manual"
 
 
 @dataclass(frozen=True)
@@ -235,6 +236,7 @@ class DirectorState:
     story_arc: str | None
     story_stage: int
     allowed_events: tuple[str, ...]
+    trigger_reason: str = "peak"
 
 
 @dataclass(frozen=True)
@@ -251,6 +253,15 @@ class ClaimResult:
     winner_user_id: int | None = None
     claims: int = 0
     required_claims: int = 0
+
+
+@dataclass(frozen=True)
+class RecruitmentProgress:
+    event_id: str
+    claims: int
+    required_claims: int
+    usernames: tuple[str, ...] = ()
+    completed: bool = False
 
 
 @dataclass(frozen=True)

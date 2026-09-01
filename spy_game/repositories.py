@@ -44,6 +44,7 @@ from .models import (
     PrestigeResult,
     PreparedTick,
     Profile,
+    RecruitmentProgress,
     Reward,
     SpawnEvent,
 )
@@ -266,7 +267,20 @@ class SpyRepository:
         now: datetime,
     ) -> PreparedTick:
         now_value = _iso(now)
+        # Trigger candidates are intentionally valid for one scheduler window only.
+        # This also drops timers created by the former delayed scheduling policy.
+        connection.execute(
+            "UPDATE chat_state SET next_event_at = NULL "
+            "WHERE next_event_at IS NOT NULL"
+        )
         self._apply_activity(connection, activity_counts, now, now_value)
+        trigger_reasons = self._arm_triggers(
+            connection,
+            activity_counts,
+            allowed_chat_ids,
+            now,
+            now_value,
+        )
 
         expired_rows = connection.execute(
             """
@@ -333,6 +347,7 @@ class SpyRepository:
                         allowed_events=tuple(
                             item.event_type for item in self.settings.event_weights
                         ),
+                        trigger_reason=trigger_reasons[row["chat_id"]],
                     )
                 )
 
@@ -370,6 +385,7 @@ class SpyRepository:
             event_type=decision.event_type,
             manual=False,
             decision=decision,
+            trigger_reason=state.trigger_reason,
         )
 
     def _apply_activity(
@@ -384,7 +400,7 @@ class SpyRepository:
                 continue
             row = connection.execute(
                 """
-                SELECT activity_score, activity_updated_at, next_event_at
+                SELECT activity_score, activity_updated_at
                 FROM chat_state
                 WHERE chat_id = ? AND enabled = 1
                 """,
@@ -398,12 +414,68 @@ class SpyRepository:
                 message_count,
                 now,
             )
-            next_event_at = _datetime(row["next_event_at"])
-            delay = self.activity_policy.event_delay_seconds(score, self.rng)
-            if delay is not None:
-                proposed = now + timedelta(seconds=delay)
-                if next_event_at is None or proposed < next_event_at:
-                    next_event_at = proposed
+            connection.execute(
+                """
+                UPDATE chat_state
+                SET activity_score = ?, activity_updated_at = ?,
+                    updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (
+                    score,
+                    now_value,
+                    now_value,
+                    chat_id,
+                ),
+            )
+
+    def _arm_triggers(
+        self,
+        connection: sqlite3.Connection,
+        activity_counts: Mapping[int, int],
+        allowed_chat_ids: frozenset[int],
+        now: datetime,
+        now_value: str,
+    ) -> dict[int, str]:
+        if not allowed_chat_ids:
+            return {}
+        placeholders = ",".join("?" for _ in allowed_chat_ids)
+        rows = connection.execute(
+            f"""
+            SELECT chat_id, activity_score, activity_updated_at, last_event_at
+            FROM chat_state
+            WHERE enabled = 1
+              AND chat_id IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1 FROM game_events
+                  WHERE game_events.chat_id = chat_state.chat_id
+                    AND game_events.status = 'active'
+                    AND game_events.expires_at > ?
+              )
+            ORDER BY chat_id
+            """,
+            (*sorted(allowed_chat_ids), now_value),
+        ).fetchall()
+        reasons: dict[int, str] = {}
+        for row in rows:
+            activity_updated_at = _datetime(row["activity_updated_at"])
+            score = self.activity_policy.update_score(
+                row["activity_score"],
+                activity_updated_at,
+                0,
+                now,
+            )
+            reason = self.activity_policy.trigger_reason(
+                score,
+                activity_counts.get(row["chat_id"], 0),
+                activity_updated_at,
+                _datetime(row["last_event_at"]),
+                now,
+                self.rng,
+            )
+            if reason is None:
+                continue
+            reasons[row["chat_id"]] = reason
             connection.execute(
                 """
                 UPDATE chat_state
@@ -411,14 +483,9 @@ class SpyRepository:
                     next_event_at = ?, updated_at = ?
                 WHERE chat_id = ?
                 """,
-                (
-                    score,
-                    now_value,
-                    _iso(next_event_at) if next_event_at else None,
-                    now_value,
-                    chat_id,
-                ),
+                (score, now_value, now_value, now_value, row["chat_id"]),
             )
+        return reasons
 
     def manual_spawn(
         self,
@@ -450,6 +517,7 @@ class SpyRepository:
         event_type: str,
         manual: bool,
         decision: DirectorDecision | None = None,
+        trigger_reason: str = "manual",
     ) -> SpawnEvent | None:
         chat = connection.execute(
             "SELECT enabled FROM chat_state WHERE chat_id = ?",
@@ -531,6 +599,7 @@ class SpyRepository:
         payload_data["tone"] = decision.tone if decision else "bureaucratic"
         payload_data["story_hook"] = decision.story_hook if decision else None
         payload_data["intensity"] = decision.intensity if decision else 1
+        payload_data["trigger_reason"] = trigger_reason
         lore_context = ()
         if payload_data["story_hook"]:
             lore_rows = connection.execute(
@@ -574,14 +643,15 @@ class SpyRepository:
             ),
         )
         return SpawnEvent(
-            event_id,
-            chat_id,
-            event_type,
-            expires_at,
-            payload_data.get("config_id"),
-            payload_data["tone"],
-            payload_data["story_hook"],
-            lore_context,
+            event_id=event_id,
+            chat_id=chat_id,
+            event_type=event_type,
+            expires_at=expires_at,
+            config_id=payload_data.get("config_id"),
+            tone=payload_data["tone"],
+            story_hook=payload_data["story_hook"],
+            lore_context=lore_context,
+            trigger_reason=trigger_reason,
         )
 
     def attach_message(
@@ -752,6 +822,45 @@ class SpyRepository:
             winner_user_id=user_id,
             claims=claims,
             required_claims=required_claims,
+        )
+
+    def get_recruitment_progress(
+        self,
+        connection: sqlite3.Connection,
+        event_id: str,
+    ) -> RecruitmentProgress | None:
+        event = connection.execute(
+            """
+            SELECT status FROM game_events
+            WHERE id = ? AND event_type = 'recruitment'
+            """,
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return None
+        rows = connection.execute(
+            """
+            SELECT u.username
+            FROM event_participants p
+            JOIN users u ON u.user_id = p.user_id
+            WHERE p.event_id = ?
+            ORDER BY p.created_at, p.user_id
+            """,
+            (event_id,),
+        ).fetchall()
+        usernames = tuple(
+            f"@{row['username'].lstrip('@')}"
+            for row in rows
+            if row["username"] and row["username"].strip("@")
+        )
+        claims = len(rows)
+        required = self.settings.recruitment_winner_count
+        return RecruitmentProgress(
+            event_id=event_id,
+            claims=claims,
+            required_claims=required,
+            usernames=usernames,
+            completed=event["status"] != "active" or claims >= required,
         )
 
     def claim_dead_drop(
@@ -1956,8 +2065,7 @@ class SpyRepository:
             f"""
             SELECT
                 u.user_id,
-                COALESCE(NULLIF(u.display_name, ''),
-                         NULLIF(u.username, ''), CAST(u.user_id AS TEXT)) AS name,
+                u.username,
                 u.reputation,
                 u.agency_level,
                 COALESCE(SUM(a.amount), 0) AS total_agents,
@@ -1978,7 +2086,7 @@ class SpyRepository:
             LeaderboardEntry(
                 rank=index,
                 user_id=row["user_id"],
-                display_name=row["name"],
+                display_name=self._user_label(row["username"], None),
                 total_agents=row["total_agents"],
                 rare_agents=row["rare_agents"],
                 reputation=row["reputation"],
@@ -2120,10 +2228,10 @@ class SpyRepository:
         )
 
     @staticmethod
-    def _user_label(username: str | None, display_name: str | None) -> str:
-        if username:
+    def _user_label(username: str | None, _display_name: str | None) -> str:
+        if username and username.strip("@"):
             return f"@{username.lstrip('@')}"
-        return display_name or "Агент"
+        return "Скрытый агент"
 
     @staticmethod
     def _has_costs(

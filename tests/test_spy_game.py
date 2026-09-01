@@ -20,11 +20,12 @@ from spy_game.models import (
     EquipmentStatus,
     InterceptStatus,
     NpcStatus,
+    RecruitmentProgress,
 )
 from spy_game.rewards import RewardResolver
 from spy_game.scheduler import ActivityPolicy
 from spy_game.service import SpyGameService
-from spy_game.settings import ActivityBand, SpySettings
+from spy_game.settings import SpySettings
 
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
@@ -47,8 +48,22 @@ class SequenceRandom:
         return next(self.values)
 
 
+class EndRandom:
+    def randint(self, start, end):
+        return end
+
+
 def settings(
-    tmp_path: Path, *, debounce=0, lifetime=60, equipment_slots=3
+    tmp_path: Path,
+    *,
+    debounce=0,
+    lifetime=60,
+    equipment_slots=3,
+    peak_messages=2,
+    cooldown=60,
+    inertia_window=120,
+    inertia_one_in=3,
+    random_average=6 * 60 * 60,
 ) -> SpySettings:
     return SpySettings(
         mode="dev",
@@ -57,9 +72,13 @@ def settings(
         allowed_chat_ids=frozenset({CHAT_ID}),
         event_lifetime_seconds=lifetime,
         activity_threshold=2,
+        activity_peak_messages=peak_messages,
+        activity_inertia_window_seconds=inertia_window,
+        activity_inertia_one_in=inertia_one_in,
+        activity_random_average_seconds=random_average,
+        activity_event_cooldown_seconds=cooldown,
         activity_user_debounce_seconds=debounce,
         activity_half_life_seconds=100,
-        activity_bands=(ActivityBand(2, 10, 10),),
         allow_manual_spawn=True,
         equipment_slots=equipment_slots,
     )
@@ -170,35 +189,27 @@ async def test_director_and_reward_resolver_keep_economy_server_side(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_activity_assigns_persisted_timer_and_spawns_when_due(tmp_path):
+async def test_fresh_activity_peak_spawns_in_the_same_tick(tmp_path):
     service = await initialized_service(tmp_path)
     try:
         assert await service.record_activity(CHAT_ID, 1, now=NOW)
         assert await service.record_activity(CHAT_ID, 2, now=NOW)
 
         first_tick = await service.tick(now=NOW)
-        assert first_tick.spawned == ()
+        assert len(first_tick.spawned) == 1
+        assert first_tick.spawned[0].chat_id == CHAT_ID
+        assert first_tick.spawned[0].trigger_reason == "peak"
         status = await service.get_chat_status(CHAT_ID)
-        assert status.activity_score == 2
-        assert status.next_event_at == NOW + timedelta(seconds=10)
-
-        early = await service.tick(now=NOW + timedelta(seconds=9))
-        assert early.spawned == ()
-        due = await service.tick(now=NOW + timedelta(seconds=10))
-        assert len(due.spawned) == 1
-        assert due.spawned[0].chat_id == CHAT_ID
-
-        after = await service.get_chat_status(CHAT_ID)
-        assert after.next_event_at is None
-        assert after.active_event_id == due.spawned[0].event_id
-        assert after.activity_score == pytest.approx(0.9)
+        assert status.next_event_at is None
+        assert status.active_event_id == first_tick.spawned[0].event_id
+        assert status.activity_score == pytest.approx(0.9)
     finally:
         await service.close()
 
 
 @pytest.mark.asyncio
 async def test_activity_debounce_and_decay_are_deterministic(tmp_path):
-    config = settings(tmp_path, debounce=20)
+    config = settings(tmp_path, debounce=20, peak_messages=3)
     policy = ActivityPolicy(config)
     assert policy.update_score(8, NOW, 0, NOW + timedelta(seconds=100)) == 4
 
@@ -216,6 +227,134 @@ async def test_activity_debounce_and_decay_are_deterministic(tmp_path):
         await service.tick(now=NOW + timedelta(seconds=20))
         status = await service.get_chat_status(CHAT_ID)
         assert status.activity_score == 2
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_accumulated_score_cannot_spawn_after_chat_goes_quiet(tmp_path):
+    service = await initialized_service(tmp_path, peak_messages=3)
+    try:
+        await service.record_activity(CHAT_ID, 1, now=NOW)
+        await service.record_activity(CHAT_ID, 2, now=NOW)
+        active = await service.tick(now=NOW)
+        assert active.spawned == ()
+
+        status = await service.get_chat_status(CHAT_ID)
+        assert status.activity_score == 2
+        assert status.next_event_at is None
+
+        quiet = await service.tick(now=NOW + timedelta(minutes=30))
+        assert quiet.spawned == ()
+        assert (await service.get_chat_status(CHAT_ID)).next_event_at is None
+
+        new_peak_at = NOW + timedelta(minutes=30, seconds=1)
+        for user_id in (3, 4, 5):
+            await service.record_activity(CHAT_ID, user_id, now=new_peak_at)
+        new_peak = await service.tick(now=new_peak_at)
+        assert len(new_peak.spawned) == 1
+    finally:
+        await service.close()
+
+
+def test_policy_prioritizes_peak_and_respects_common_cooldown(tmp_path):
+    policy = ActivityPolicy(settings(tmp_path, peak_messages=3, cooldown=60))
+    rng = FixedRandom()
+
+    assert policy.trigger_reason(20, 2, NOW, None, NOW, rng) is None
+    assert policy.trigger_reason(20, 3, NOW, None, NOW, rng) == "peak"
+    assert (
+        policy.trigger_reason(
+            20,
+            3,
+            NOW,
+            NOW,
+            NOW + timedelta(seconds=59),
+            rng,
+        )
+        is None
+    )
+    assert (
+        policy.trigger_reason(
+            20,
+            3,
+            NOW,
+            NOW,
+            NOW + timedelta(seconds=60),
+            rng,
+        )
+        == "peak"
+    )
+
+
+def test_policy_supports_inertia_and_random_channels(tmp_path):
+    policy = ActivityPolicy(settings(tmp_path, peak_messages=3))
+    winning_roll = EndRandom()
+
+    assert (
+        policy.trigger_reason(
+            20,
+            1,
+            NOW,
+            None,
+            NOW + timedelta(seconds=30),
+            winning_roll,
+        )
+        == "inertia"
+    )
+    assert (
+        policy.trigger_reason(
+            0,
+            0,
+            NOW,
+            None,
+            NOW + timedelta(minutes=10),
+            winning_roll,
+        )
+        == "random"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inertia_channel_spawns_in_short_activity_tail(tmp_path):
+    config = settings(
+        tmp_path,
+        peak_messages=4,
+        inertia_one_in=2,
+    )
+    rng = SequenceRandom(1, 1, 2, 1)
+    service = SpyGameService(config, rng=rng)
+    await service.initialize(now=NOW)
+    await service.enable_chat(CHAT_ID, now=NOW)
+    try:
+        for user_id in (1, 2, 3):
+            await service.record_activity(CHAT_ID, user_id, now=NOW)
+        assert (await service.tick(now=NOW)).spawned == ()
+
+        result = await service.tick(now=NOW + timedelta(seconds=30))
+        assert len(result.spawned) == 1
+        assert result.spawned[0].trigger_reason == "inertia"
+        payload = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT payload_json FROM game_events WHERE id = ?",
+                (result.spawned[0].event_id,),
+            ).fetchone()[0]
+        )
+        assert '"trigger_reason":"inertia"' in payload
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_random_channel_can_spawn_without_activity(tmp_path):
+    config = settings(tmp_path, random_average=30)
+    service = SpyGameService(config, rng=FixedRandom())
+    await service.initialize(now=NOW)
+    await service.enable_chat(CHAT_ID, now=NOW)
+    try:
+        result = await service.tick(now=NOW)
+        assert len(result.spawned) == 1
+        assert result.spawned[0].trigger_reason == "random"
     finally:
         await service.close()
 
@@ -241,8 +380,7 @@ async def test_story_hook_loads_matching_lore_for_narrator(tmp_path):
     try:
         await service.record_activity(CHAT_ID, 1, now=NOW)
         await service.record_activity(CHAT_ID, 2, now=NOW)
-        await service.tick(now=NOW)
-        result = await service.tick(now=NOW + timedelta(seconds=10))
+        result = await service.tick(now=NOW)
         assert result.spawned[0].story_hook == "section_7"
         assert any("Секция 7" in text for text in result.spawned[0].lore_context)
     finally:
@@ -1428,6 +1566,7 @@ async def test_leaderboard_has_deterministic_progress_order(tmp_path):
         )
         entries = await service.get_leaderboard()
         assert [(entry.user_id, entry.rank) for entry in entries] == [(2, 1), (1, 2)]
+        assert [entry.display_name for entry in entries] == ["@u2", "@u1"]
         assert (entries[0].rare_agents, entries[0].total_agents) == (2, 2)
     finally:
         await service.close()
@@ -1638,7 +1777,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 6
+        assert migration_count == 7
     finally:
         await second.close()
 
@@ -1662,6 +1801,20 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
         connection.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)",
             (NOW.isoformat(),),
+        )
+        connection.execute(
+            """
+            INSERT INTO chat_state(
+                chat_id, enabled, activity_score, activity_updated_at,
+                next_event_at, updated_at
+            ) VALUES (?, 1, 10, ?, ?, ?)
+            """,
+            (
+                CHAT_ID,
+                NOW.isoformat(),
+                (NOW + timedelta(hours=1)).isoformat(),
+                NOW.isoformat(),
+            ),
         )
 
     service = SpyGameService(config, rng=FixedRandom())
@@ -1699,10 +1852,14 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                 connection.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agency_history'"
                 ).fetchone()[0],
+                connection.execute(
+                    "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
+                    (CHAT_ID,),
+                ).fetchone()[0],
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6],
+            [1, 2, 3, 4, 5, 6, 7],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -1711,6 +1868,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "lore",
             "event_templates",
             "agency_history",
+            None,
         )
     finally:
         await service.close()
@@ -1797,7 +1955,7 @@ async def test_restart_cancels_invalid_persisted_event_payload(tmp_path):
         await second.close()
 
 
-def test_rich_menu_contains_profile_and_countdown():
+def test_rich_menu_explains_composite_trigger():
     profile = SimpleNamespace(total_agents=3, reputation=1, agency_level=0)
     status = SimpleNamespace(
         active_event_id=None,
@@ -1807,8 +1965,27 @@ def test_rich_menu_contains_profile_and_countdown():
     )
     blocks = spy_handlers.build_menu_blocks(profile, status, NOW)
     assert blocks[0]["text"] == "🕵️ SPY CLICKER · ОПЕРАТИВНЫЙ ЦЕНТР"
-    assert "примерно через 12 мин" in blocks[2]["text"]
+    assert "на пике, по инерции или случайно" in blocks[2]["text"]
     assert blocks[-1]["type"] == "footer"
+
+
+def test_profile_header_uses_only_username():
+    profile = SimpleNamespace(
+        user_id=1,
+        username="bond",
+        display_name="James Bond",
+        reputation=1,
+        agency_level=0,
+        total_agents=3,
+    )
+    blocks = spy_handlers.build_profile_blocks(profile)
+    assert blocks[0]["text"] == "🪪 ДОСЬЕ · @bond"
+    assert "James Bond" not in str(blocks)
+
+    profile.username = None
+    hidden_blocks = spy_handlers.build_profile_blocks(profile)
+    assert hidden_blocks[0]["text"] == "🪪 ДОСЬЕ · СКРЫТЫЙ АГЕНТ"
+    assert "James Bond" not in str(hidden_blocks)
 
 
 @pytest.mark.asyncio
@@ -1842,6 +2019,65 @@ async def test_player_has_one_menu_command_with_inline_navigation(
             "spy:prestige:0",
             "spy:agency:status",
         ]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_recruitment_clicks_edit_original_message_without_public_names(
+    tmp_path,
+    monkeypatch,
+):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, now=datetime.now(timezone.utc))).event
+    send_rich = AsyncMock()
+    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    send_message = AsyncMock()
+    context = SimpleNamespace(
+        bot_data={"spy_game": service, "paused": False},
+        bot=SimpleNamespace(token="TOKEN", send_message=send_message),
+    )
+    progress = RecruitmentProgress(event.event_id, 0, 3)
+    current_text = spy_handlers._recruitment_message_text("Завязка.", progress)
+
+    users = (
+        SimpleNamespace(id=1, username="bond", full_name="James Bond", is_bot=False),
+        SimpleNamespace(id=2, username=None, full_name="Real Name", is_bot=False),
+        SimpleNamespace(id=3, username="moneypenny", full_name="Eve", is_bot=False),
+    )
+    try:
+        edited_texts = []
+        for user in users:
+            edit_message_text = AsyncMock()
+            query = SimpleNamespace(
+                data=f"spy:claim:{event.event_id}",
+                answer=AsyncMock(),
+                edit_message_text=edit_message_text,
+                edit_message_reply_markup=AsyncMock(),
+                message=SimpleNamespace(text=current_text),
+            )
+            update = SimpleNamespace(
+                callback_query=query,
+                effective_user=user,
+                effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+            )
+            await spy_handlers.spy_callback(update, context)
+            edit_message_text.assert_awaited_once()
+            current_text = edit_message_text.await_args.kwargs["text"]
+            edited_texts.append(current_text)
+
+        assert "Контакты: 1/3" in edited_texts[0]
+        assert "Подтверждены: @bond" in edited_texts[0]
+        assert "Контакты: 2/3" in edited_texts[1]
+        assert "Real Name" not in edited_texts[1]
+        assert "Контакты: 3/3" in edited_texts[2]
+        assert "Подтверждены: @bond, @moneypenny" in edited_texts[2]
+        assert "James Bond" not in edited_texts[2]
+        assert "Eve" not in edited_texts[2]
+        assert "✅ Набор завершён." in edited_texts[2]
+        assert edit_message_text.await_args.kwargs["reply_markup"] is None
+        send_rich.assert_not_awaited()
+        send_message.assert_not_awaited()
     finally:
         await service.close()
 
@@ -1893,7 +2129,7 @@ async def test_npc_event_publishes_only_selected_server_side_recipes(
         assert [row[0]["callback_data"] for row in buttons] == [
             f"spy:npc_recruiter_network:{event.event_id}"
         ]
-        assert "20" not in buttons[0][0]["callback_data"]
+        assert "20" not in buttons[0][0]["callback_data"].split(":")[1]
         assert "РЕКРУТЕР" in send_rich.await_args.args[2][0]["text"]
     finally:
         await service.close()
