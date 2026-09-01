@@ -2075,6 +2075,12 @@ async def test_recruitment_clicks_edit_original_message_without_public_names(
         assert "James Bond" not in edited_texts[2]
         assert "Eve" not in edited_texts[2]
         assert "✅ Набор завершён." in edited_texts[2]
+        assert edited_texts[2].count("🚨 СИГНАЛ РАЗВЕДСЕТИ") == 1
+        assert edited_texts[2].count("Первые 3 разных пользователя") == 1
+        assert edited_texts[2].count("📡 ПРОГРЕСС НАБОРА") == 1
+        assert "Контакты: 0/3" not in edited_texts[2]
+        assert "Контакты: 1/3" not in edited_texts[2]
+        assert "Контакты: 2/3" not in edited_texts[2]
         assert edit_message_text.await_args.kwargs["reply_markup"] is None
         send_rich.assert_not_awaited()
         send_message.assert_not_awaited()

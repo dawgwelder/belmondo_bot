@@ -247,9 +247,10 @@ def _recruitment_message_text(
     narrative_or_current_text: str,
     progress: RecruitmentProgress,
 ) -> str:
-    marker = f"\n\n{RECRUITMENT_PROGRESS_MARKER}"
-    if marker in narrative_or_current_text:
-        intro = narrative_or_current_text.split(marker, 1)[0]
+    if RECRUITMENT_PROGRESS_MARKER in narrative_or_current_text:
+        intro = narrative_or_current_text.split(RECRUITMENT_PROGRESS_MARKER, 1)[
+            0
+        ].rstrip()
     else:
         intro = (
             "🚨 СИГНАЛ РАЗВЕДСЕТИ\n\n"
@@ -257,20 +258,19 @@ def _recruitment_message_text(
             f"Первые {progress.required_claims} разных пользователя "
             "получат по агенту."
         )
-    lines = [
-        intro,
+    progress_lines = [
         RECRUITMENT_PROGRESS_MARKER,
         f"Контакты: {progress.claims}/{progress.required_claims}",
     ]
     if progress.usernames:
-        lines.append("Подтверждены: " + ", ".join(progress.usernames))
+        progress_lines.append("Подтверждены: " + ", ".join(progress.usernames))
     if progress.completed:
-        lines.append("✅ Набор завершён.")
+        progress_lines.append("✅ Набор завершён.")
     else:
-        lines.append(
+        progress_lines.append(
             f"Свободных контактов: {progress.required_claims - progress.claims}."
         )
-    return "\n".join(lines)
+    return f"{intro}\n\n" + "\n".join(progress_lines)
 
 
 async def _edit_recruitment_progress(
