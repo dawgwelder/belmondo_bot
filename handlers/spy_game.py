@@ -15,6 +15,7 @@ from spy_game.models import (
     AgentCost,
     AgencyStatus,
     ChaseStatus,
+    ChatStatus,
     ClaimStatus,
     CooperativeStatus,
     DeathOperationStatus,
@@ -28,6 +29,7 @@ from spy_game.models import (
     SpawnEvent,
 )
 from spy_game.narrator import EventNarrative, Narrator, TemplateNarrator
+from spy_game.scheduler import ActivityTriggerSettings
 from spy_game.service import SpyGameService
 from spy_game.settings import (
     AGENT_TYPES,
@@ -40,6 +42,19 @@ from telegram_utils import send_rich_message
 
 SPY_CALLBACK_PATTERN = r"^spy:[a-z0-9_]{1,32}:[a-z0-9_]{1,24}$"
 RECRUITMENT_PROGRESS_MARKER = "📡 ПРОГРЕСС НАБОРА"
+ACTIVITY_PROFILE_LABELS = {
+    "calm": "спокойный",
+    "balanced": "сбалансированный",
+    "aggressive": "агрессивный",
+}
+ACTIVITY_PROFILE_ALIASES = {
+    "calm": "calm",
+    "balanced": "balanced",
+    "aggressive": "aggressive",
+    "редко": "calm",
+    "норма": "balanced",
+    "часто": "aggressive",
+}
 
 
 def _service(context: ContextTypes.DEFAULT_TYPE) -> SpyGameService:
@@ -1713,6 +1728,27 @@ async def spy_game_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             await service.cancel_publication(event.event_id)
 
 
+def build_activity_admin_text(
+    status: ChatStatus,
+    trigger: ActivityTriggerSettings,
+) -> str:
+    label = ACTIVITY_PROFILE_LABELS[trigger.profile]
+    return (
+        "⚙️ ЧАСТОТА СОБЫТИЙ\n"
+        f"Профиль: {label} ({trigger.profile})\n"
+        f"Текущий score: {status.activity_score:.1f}\n"
+        f"Peak: score ≥ {trigger.threshold:g} и сообщений за tick ≥ "
+        f"{trigger.peak_messages}\n"
+        f"Inertia: 1/{trigger.inertia_one_in} за tick в течение "
+        f"{math.ceil(trigger.inertia_window_seconds / 60)} мин.\n"
+        f"Случайный сигнал: в среднем раз в "
+        f"{math.ceil(trigger.random_average_seconds / 60)} мин.\n"
+        f"Cooldown: {math.ceil(trigger.event_cooldown_seconds / 60)} мин.\n\n"
+        "Переключение: /spy_admin activity "
+        "calm|balanced|aggressive"
+    )
+
+
 async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user is None or update.effective_chat is None:
         return
@@ -1722,7 +1758,7 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     service = _service(context)
     action = context.args[0].lower() if context.args else "status"
     chat_id = update.effective_chat.id
-    if action in {"enable", "spawn"} and update.effective_chat.type not in {
+    if action in {"enable", "spawn", "activity"} and update.effective_chat.type not in {
         "group",
         "supergroup",
     }:
@@ -1757,6 +1793,31 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 await service.cancel_publication(result.event.event_id)
                 result = type(result)(False, "Не удалось опубликовать событие.")
+    elif action == "activity":
+        if len(context.args) > 1:
+            requested = ACTIVITY_PROFILE_ALIASES.get(context.args[1].lower())
+            if requested is None:
+                await update.effective_message.reply_text(
+                    "Неизвестный профиль. Используйте calm, balanced или aggressive."
+                )
+                return
+            result = await service.set_activity_profile(chat_id, requested)
+            if not result.ok:
+                await update.effective_message.reply_text(result.message)
+                return
+            logger.info(
+                "spy_admin_action action=activity profile=%s chat_id=%s "
+                "requested_by=%s",
+                requested,
+                chat_id,
+                update.effective_user.id,
+            )
+        status = await service.get_chat_status(chat_id)
+        trigger = service.activity_trigger_settings(status.activity_profile)
+        await update.effective_message.reply_text(
+            build_activity_admin_text(status, trigger)
+        )
+        return
     elif action == "status":
         status = await service.get_chat_status(chat_id)
         now = datetime.now(timezone.utc)
@@ -1776,6 +1837,7 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                 if service.settings.llm_narrator_enabled
                                 else "template"
                             )
+                            + f"\nActivity profile: {status.activity_profile}"
                         ),
                     }
                 ],
@@ -1787,7 +1849,8 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             blocks,
             fallback_text=(
                 f"enabled={status.enabled}, activity={status.activity_score:.1f}, "
-                f"next={status.next_event_at}, active={status.active_event_id}"
+                f"profile={status.activity_profile}, next={status.next_event_at}, "
+                f"active={status.active_event_id}"
             ),
         )
         return
@@ -1795,7 +1858,8 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
             "Использование: /spy_admin enable|disable|spawn "
             "[recruitment|dead_drop|intercept|cooperative_operation|chase|"
-            "handler|npc|death_operation]|status"
+            "handler|npc|death_operation]|activity "
+            "[calm|balanced|aggressive]|status"
         )
         return
     if result.ok:

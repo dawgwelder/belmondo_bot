@@ -40,8 +40,8 @@ from .models import (
 )
 from .repositories import SpyRepository
 from .rewards import RewardResolver
-from .scheduler import ActivityPolicy, RandomSource
-from .settings import SpySettings
+from .scheduler import ActivityPolicy, ActivityTriggerSettings, RandomSource
+from .settings import ACTIVITY_PROFILES, SpySettings
 
 
 def utc_now() -> datetime:
@@ -165,6 +165,39 @@ class SpyGameService:
         return await self.database.transaction(
             lambda connection: self.repository.disable_chat(
                 connection, chat_id, current
+            ),
+            immediate=True,
+        )
+
+    def activity_trigger_settings(
+        self,
+        profile: str | None = None,
+    ) -> ActivityTriggerSettings:
+        return self.repository.activity_policy.trigger_settings(profile)
+
+    async def set_activity_profile(
+        self,
+        chat_id: int,
+        profile: str,
+        *,
+        now: datetime | None = None,
+    ) -> AdminResult:
+        if not self.settings.enabled:
+            return AdminResult(False, "Глобальный SPY_GAME_ENABLED выключен.")
+        if not self.settings.chat_is_allowed(chat_id):
+            return AdminResult(False, "Этот чат отсутствует в beta allowlist.")
+        if profile not in ACTIVITY_PROFILES:
+            return AdminResult(
+                False,
+                "Неизвестный профиль. Доступны: calm, balanced, aggressive.",
+            )
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.set_activity_profile(
+                connection,
+                chat_id,
+                profile,
+                current,
             ),
             immediate=True,
         )

@@ -315,6 +315,86 @@ def test_policy_supports_inertia_and_random_channels(tmp_path):
     )
 
 
+def test_activity_profiles_resolve_to_distinct_trigger_settings(tmp_path):
+    config = SpySettings(
+        mode="dev",
+        enabled=True,
+        database_path=tmp_path / "profiles.sqlite3",
+        allowed_chat_ids=frozenset({CHAT_ID}),
+    )
+    policy = ActivityPolicy(config)
+
+    balanced = policy.trigger_settings("balanced")
+    assert (
+        balanced.threshold,
+        balanced.peak_messages,
+        balanced.inertia_one_in,
+        balanced.random_average_seconds,
+        balanced.event_cooldown_seconds,
+    ) == (5.5, 3, 2, 90 * 60, 10 * 60)
+
+    calm = policy.trigger_settings("calm")
+    assert (
+        calm.threshold,
+        calm.peak_messages,
+        calm.inertia_one_in,
+        calm.random_average_seconds,
+        calm.event_cooldown_seconds,
+    ) == (6.0, 4, 3, 2 * 60 * 60, 12 * 60)
+
+    aggressive = policy.trigger_settings("aggressive")
+    assert (
+        aggressive.threshold,
+        aggressive.peak_messages,
+        aggressive.inertia_window_seconds,
+        aggressive.inertia_one_in,
+        aggressive.random_average_seconds,
+        aggressive.event_cooldown_seconds,
+    ) == (4.5, 2, 3 * 60, 2, 45 * 60, 8 * 60)
+
+
+@pytest.mark.asyncio
+async def test_activity_profile_is_persisted_and_controls_chat_trigger(tmp_path):
+    config = settings(tmp_path, peak_messages=3)
+    first = SpyGameService(config, rng=FixedRandom())
+    await first.initialize(now=NOW)
+    await first.enable_chat(CHAT_ID, now=NOW)
+    try:
+        for user_id in (1, 2):
+            await first.record_activity(CHAT_ID, user_id, now=NOW)
+        assert (await first.tick(now=NOW)).spawned == ()
+        assert (await first.get_chat_status(CHAT_ID)).activity_score == 2
+
+        result = await first.set_activity_profile(
+            CHAT_ID,
+            "aggressive",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert result.ok
+        status = await first.get_chat_status(CHAT_ID)
+        assert status.activity_profile == "aggressive"
+        assert status.activity_score == 2
+
+        for user_id in (3, 4):
+            await first.record_activity(
+                CHAT_ID,
+                user_id,
+                now=NOW + timedelta(seconds=30),
+            )
+        tick = await first.tick(now=NOW + timedelta(seconds=30))
+        assert len(tick.spawned) == 1
+        assert tick.spawned[0].trigger_reason == "peak"
+    finally:
+        await first.close()
+
+    second = SpyGameService(config, rng=FixedRandom())
+    await second.initialize(now=NOW + timedelta(seconds=31))
+    try:
+        assert (await second.get_chat_status(CHAT_ID)).activity_profile == "aggressive"
+    finally:
+        await second.close()
+
+
 @pytest.mark.asyncio
 async def test_inertia_channel_spawns_in_short_activity_tail(tmp_path):
     config = settings(
@@ -1777,7 +1857,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 7
+        assert migration_count == 8
     finally:
         await second.close()
 
@@ -1856,10 +1936,14 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
+                connection.execute(
+                    "SELECT activity_profile FROM chat_state WHERE chat_id = ?",
+                    (CHAT_ID,),
+                ).fetchone()[0],
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7],
+            [1, 2, 3, 4, 5, 6, 7, 8],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -1869,6 +1953,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "event_templates",
             "agency_history",
             None,
+            "balanced",
         )
     finally:
         await service.close()
@@ -2214,3 +2299,29 @@ async def test_spy_admin_rejects_non_master_without_touching_service():
     await spy_handlers.spy_admin(update, context)
 
     reply_text.assert_awaited_once_with("Команда доступна только master.")
+
+
+@pytest.mark.asyncio
+async def test_spy_admin_activity_switches_profile_and_reports_settings(tmp_path):
+    service = await initialized_service(tmp_path)
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=999),
+        effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+        effective_message=SimpleNamespace(reply_text=reply_text),
+    )
+    context = SimpleNamespace(
+        bot_data={"master": 999, "spy_game": service},
+        args=["activity", "aggressive"],
+    )
+    try:
+        await spy_handlers.spy_admin(update, context)
+
+        status = await service.get_chat_status(CHAT_ID)
+        assert status.activity_profile == "aggressive"
+        message = reply_text.await_args.args[0]
+        assert "агрессивный (aggressive)" in message
+        assert "Peak: score ≥ 1" in message
+        assert "Cooldown: 1 мин." in message
+    finally:
+        await service.close()

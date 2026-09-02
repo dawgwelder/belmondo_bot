@@ -190,13 +190,19 @@ class SpyRepository:
         connection.execute(
             """
             INSERT INTO chat_state(
-                chat_id, enabled, activity_score, activity_updated_at, updated_at
-            ) VALUES (?, 1, 0, ?, ?)
+                chat_id, enabled, activity_score, activity_updated_at,
+                activity_profile, updated_at
+            ) VALUES (?, 1, 0, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 enabled = 1,
                 updated_at = excluded.updated_at
             """,
-            (chat_id, now_value, now_value),
+            (
+                chat_id,
+                now_value,
+                self.settings.default_activity_profile,
+                now_value,
+            ),
         )
         return AdminResult(True, "Spy Clicker включён в этом чате.")
 
@@ -210,14 +216,20 @@ class SpyRepository:
         connection.execute(
             """
             INSERT INTO chat_state(
-                chat_id, enabled, activity_score, activity_updated_at, updated_at
-            ) VALUES (?, 0, 0, ?, ?)
+                chat_id, enabled, activity_score, activity_updated_at,
+                activity_profile, updated_at
+            ) VALUES (?, 0, 0, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 enabled = 0,
                 next_event_at = NULL,
                 updated_at = excluded.updated_at
             """,
-            (chat_id, now_value, now_value),
+            (
+                chat_id,
+                now_value,
+                self.settings.default_activity_profile,
+                now_value,
+            ),
         )
         active = connection.execute(
             """
@@ -258,6 +270,28 @@ class SpyRepository:
             "Spy Clicker выключен. Новые события не появятся.",
             message_id_to_close=message_id,
         )
+
+    def set_activity_profile(
+        self,
+        connection: sqlite3.Connection,
+        chat_id: int,
+        profile: str,
+        now: datetime,
+    ) -> AdminResult:
+        now_value = _iso(now)
+        connection.execute(
+            """
+            INSERT INTO chat_state(
+                chat_id, enabled, activity_score, activity_updated_at,
+                activity_profile, updated_at
+            ) VALUES (?, 0, 0, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                activity_profile = excluded.activity_profile,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, now_value, profile, now_value),
+        )
+        return AdminResult(True, f"Профиль активности переключён на {profile}.")
 
     def prepare_tick(
         self,
@@ -442,7 +476,8 @@ class SpyRepository:
         placeholders = ",".join("?" for _ in allowed_chat_ids)
         rows = connection.execute(
             f"""
-            SELECT chat_id, activity_score, activity_updated_at, last_event_at
+            SELECT chat_id, activity_score, activity_updated_at, last_event_at,
+                   activity_profile
             FROM chat_state
             WHERE enabled = 1
               AND chat_id IN ({placeholders})
@@ -472,6 +507,7 @@ class SpyRepository:
                 _datetime(row["last_event_at"]),
                 now,
                 self.rng,
+                profile=row["activity_profile"],
             )
             if reason is None:
                 continue
@@ -2436,6 +2472,11 @@ class SpyRepository:
             next_event_at=_datetime(chat["next_event_at"]) if chat else None,
             active_event_id=active["id"] if active else None,
             active_event_expires_at=_datetime(active["expires_at"]) if active else None,
+            activity_profile=(
+                chat["activity_profile"]
+                if chat
+                else self.settings.default_activity_profile
+            ),
             story_arc=chat["story_arc"] if chat else None,
             story_stage=chat["story_stage"] if chat else 0,
             story_summary=summary["summary"] if summary else None,

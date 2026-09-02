@@ -62,6 +62,8 @@ DEFAULT_EVENT_WEIGHTS = (
     EventWeight("death_operation", 1),
 )
 
+ACTIVITY_PROFILES = ("calm", "balanced", "aggressive")
+
 DEFAULT_INTERCEPT_SCENARIOS = (
     InterceptScenario(
         id="midnight_frequency",
@@ -256,16 +258,17 @@ class SpySettings:
     tick_seconds: int = 30
     event_lifetime_seconds: int = 3 * 60
     activity_half_life_seconds: int = 30 * 60
-    activity_threshold: float = 6.0
-    activity_peak_messages: int = 4
+    activity_threshold: float = 5.5
+    activity_peak_messages: int = 3
     activity_inertia_window_seconds: int = 2 * 60
-    activity_inertia_one_in: int = 3
-    activity_random_average_seconds: int = 2 * 60 * 60
-    activity_event_cooldown_seconds: int = 12 * 60
+    activity_inertia_one_in: int = 2
+    activity_random_average_seconds: int = 90 * 60
+    activity_event_cooldown_seconds: int = 10 * 60
     activity_message_points: float = 1.0
     activity_user_debounce_seconds: int = 20
     activity_after_spawn_ratio: float = 0.45
     max_activity_score: float = 100.0
+    default_activity_profile: str = "balanced"
     allow_manual_spawn: bool = False
     llm_narrator_enabled: bool = False
     llm_narrator_timeout_seconds: int = 8
@@ -337,6 +340,8 @@ class SpySettings:
             raise ValueError("LLM timeouts must be positive")
         if not 0 <= self.activity_after_spawn_ratio < 1:
             raise ValueError("activity_after_spawn_ratio must be in [0, 1)")
+        if self.default_activity_profile not in ACTIVITY_PROFILES:
+            raise ValueError("unknown default activity profile")
         if self.recruitment_agent_type not in AGENT_TYPES:
             raise ValueError("unknown recruitment agent type")
         if self.recruitment_winner_count <= 0:

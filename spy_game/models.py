@@ -407,6 +407,7 @@ class ChatStatus:
     next_event_at: datetime | None
     active_event_id: str | None
     active_event_expires_at: datetime | None
+    activity_profile: str = "balanced"
     story_arc: str | None = None
     story_stage: int = 0
     story_summary: str | None = None
