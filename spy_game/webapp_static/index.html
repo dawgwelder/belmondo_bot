@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
+    <title>Spy Clicker</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">ОПЕРАТИВНЫЙ ЦЕНТР</p>
+          <h1>Spy Clicker</h1>
+          <p id="identity" class="identity">Установка защищённого канала…</p>
+        </div>
+        <div class="seal" aria-hidden="true">B</div>
+      </header>
+
+      <div id="notice" class="notice hidden" role="status"></div>
+      <div id="loading" class="loading">
+        <span></span><span></span><span></span>
+      </div>
+
+      <main id="content" class="hidden">
+        <section id="overview" class="panel active" aria-label="Досье">
+          <div class="metric-grid">
+            <article class="metric">
+              <span>Агенты</span>
+              <strong id="total-agents">0</strong>
+            </article>
+            <article class="metric">
+              <span>Репутация</span>
+              <strong id="reputation">0</strong>
+            </article>
+            <article class="metric">
+              <span>Служба</span>
+              <strong id="agency-level">0/5</strong>
+            </article>
+          </div>
+
+          <article class="card network-card">
+            <div class="card-heading">
+              <div>
+                <p class="eyebrow">КОНТЕКСТ ОПЕРАЦИИ</p>
+                <h2 id="network-title">Личное досье</h2>
+              </div>
+              <span id="network-light" class="status-light"></span>
+            </div>
+            <p id="network-copy" class="muted"></p>
+          </article>
+
+          <article class="card action-card">
+            <p class="eyebrow">ПОВЫШЕНИЕ РЕПУТАЦИИ</p>
+            <h2>Соберите оперативную группу</h2>
+            <div id="prestige-costs" class="costs"></div>
+            <button id="prestige-button" class="primary" type="button">
+              Повысить репутацию
+            </button>
+          </article>
+
+          <article class="card action-card">
+            <p class="eyebrow">СОБСТВЕННАЯ СЛУЖБА</p>
+            <h2 id="agency-title">Следующий уровень</h2>
+            <p id="agency-copy" class="muted"></p>
+            <div id="agency-costs" class="costs"></div>
+            <button id="agency-button" class="primary" type="button">
+              Учредить службу
+            </button>
+          </article>
+        </section>
+
+        <section id="agents" class="panel" aria-label="Агенты">
+          <div class="section-heading">
+            <p class="eyebrow">АГЕНТУРНАЯ СЕТЬ</p>
+            <h2>Состав по уровням</h2>
+          </div>
+          <div id="agent-list" class="stack"></div>
+        </section>
+
+        <section id="inventory" class="panel" aria-label="Инвентарь">
+          <div class="section-heading">
+            <p class="eyebrow">СНАРЯЖЕНИЕ</p>
+            <h2 id="slot-summary">Инвентарь</h2>
+          </div>
+          <div id="inventory-list" class="stack"></div>
+        </section>
+
+        <section id="leaderboard" class="panel" aria-label="Рейтинг">
+          <div class="section-heading">
+            <p class="eyebrow">АРХИВ ЦЕНТРА</p>
+            <h2>Рейтинг разведсетей</h2>
+          </div>
+          <div id="leaderboard-list" class="stack"></div>
+        </section>
+      </main>
+
+      <nav id="navigation" class="navigation hidden" aria-label="Разделы">
+        <button class="nav-button active" data-target="overview" type="button">
+          <span>⌾</span>Досье
+        </button>
+        <button class="nav-button" data-target="agents" type="button">
+          <span>♟</span>Агенты
+        </button>
+        <button class="nav-button" data-target="inventory" type="button">
+          <span>▣</span>Инвентарь
+        </button>
+        <button class="nav-button" data-target="leaderboard" type="button">
+          <span>◇</span>Рейтинг
+        </button>
+      </nav>
+    </div>
+  </body>
+</html>

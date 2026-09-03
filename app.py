@@ -35,7 +35,6 @@ from handlers.games import (
     game,
     game_callback,
     game_cancel,
-    process_game_reply,
 )
 from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
@@ -52,6 +51,7 @@ from handlers.tldr import tldr
 from horoscope import close_horoscope_http_client
 from spy_game import SpyGameService, SpySettings
 from spy_game.narrator import build_narrator
+from spy_game.webapp import SpyWebAppServer, SpyWebAppSettings
 from state import vars_dict
 
 
@@ -85,6 +85,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     """Initialize and run the bot."""
     application = None
     spy_service = None
+    spy_webapp = None
     vars_dict["spam_mode"] = spam_mode
 
     if mode not in ["dev", "prod"]:
@@ -113,17 +114,30 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     except Exception:
         await spy_service.close()
         raise
-    application.bot_data["spy_game"] = spy_service
-    application.bot_data["spy_narrator"] = build_narrator(
-        spy_settings,
-        spy_service.database,
-    )
+    try:
+        application.bot_data["spy_game"] = spy_service
+        application.bot_data["spy_narrator"] = build_narrator(
+            spy_settings,
+            spy_service.database,
+        )
+        spy_webapp_settings = SpyWebAppSettings.from_env()
+        if spy_webapp_settings.enabled:
+            spy_webapp = SpyWebAppServer(
+                spy_service,
+                token,
+                spy_webapp_settings,
+            )
+            application.bot_data["spy_webapp"] = spy_webapp
+    except Exception:
+        await spy_service.close()
+        raise
     logger.info(
-        "Spy game initialized: enabled=%s director=%s narrator=%s mode=%s "
-        "allowed_chats=%s db=%s",
+        "Spy game initialized: enabled=%s director=%s narrator=%s webapp=%s "
+        "mode=%s allowed_chats=%s db=%s",
         spy_settings.enabled,
         spy_settings.llm_director_enabled,
         spy_settings.llm_narrator_enabled,
+        spy_webapp_settings.enabled,
         mode,
         len(spy_settings.allowed_chat_ids),
         spy_settings.database_path,
@@ -195,6 +209,8 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     try:
         await application.initialize()
         await application.start()
+        if spy_webapp is not None:
+            await spy_webapp.start()
 
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
@@ -206,6 +222,11 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     except KeyboardInterrupt:
         logger.info("Shutting down bot...")
     finally:
+        if spy_webapp is not None:
+            try:
+                await spy_webapp.close()
+            except Exception:
+                logger.exception("Error while stopping Spy Game Web App")
         try:
             await application.stop()
         except Exception:

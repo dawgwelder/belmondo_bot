@@ -101,8 +101,16 @@ async def _send_rich(
         return message.message_id
 
 
-def _menu_keyboard(profile: Profile) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+def _menu_keyboard(
+    profile: Profile,
+    webapp_url: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+    if webapp_url:
+        rows.append(
+            [InlineKeyboardButton("🗄 Открыть оперативный центр", url=webapp_url)]
+        )
+    rows.extend(
         [
             [
                 InlineKeyboardButton("🪪 Досье", callback_data="spy:menu:profile"),
@@ -130,6 +138,7 @@ def _menu_keyboard(profile: Profile) -> InlineKeyboardMarkup:
             ],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def _claim_keyboard(event_id: str) -> InlineKeyboardMarkup:
@@ -691,6 +700,12 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     service = _service(context)
     profile = await _profile_for_update(update, service)
     status = await service.get_chat_status(update.effective_chat.id)
+    webapp = context.bot_data.get("spy_webapp")
+    launch_url = (
+        webapp.launch_url(update.effective_chat.id, update.effective_user.id)
+        if webapp is not None
+        else None
+    )
     now = datetime.now(timezone.utc)
     await _send_rich(
         context,
@@ -702,7 +717,7 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             f"Активность: {status.activity_score:.1f}\n"
             "Сигнал может прийти на пике, по инерции или случайно."
         ),
-        reply_markup=_menu_keyboard(profile),
+        reply_markup=_menu_keyboard(profile, launch_url),
     )
 
 

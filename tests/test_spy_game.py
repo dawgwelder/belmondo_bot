@@ -2109,6 +2109,39 @@ async def test_player_has_one_menu_command_with_inline_navigation(
 
 
 @pytest.mark.asyncio
+async def test_spy_menu_adds_webapp_launch_and_keeps_telegram_fallback(
+    tmp_path, monkeypatch
+):
+    service = await initialized_service(tmp_path)
+    send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 44}})
+    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    user = SimpleNamespace(id=1, username="bond", full_name="James", is_bot=False)
+    update = SimpleNamespace(
+        effective_user=user,
+        effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+    )
+    webapp = SimpleNamespace(
+        launch_url=lambda chat_id, user_id: (
+            f"https://t.me/bot/app?startapp={chat_id}_{user_id}"
+        )
+    )
+    context = SimpleNamespace(
+        bot_data={"spy_game": service, "spy_webapp": webapp, "paused": False},
+        bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
+    )
+    try:
+        await spy_handlers.spy_menu(update, context)
+        buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert buttons[0][0] == {
+            "text": "🗄 Открыть оперативный центр",
+            "url": f"https://t.me/bot/app?startapp={CHAT_ID}_1",
+        }
+        assert buttons[1][0]["callback_data"] == "spy:menu:profile"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_recruitment_clicks_edit_original_message_without_public_names(
     tmp_path,
     monkeypatch,
