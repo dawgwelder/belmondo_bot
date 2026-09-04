@@ -73,11 +73,12 @@
     });
   }
 
-  function row(icon, title, meta, side) {
+  function row(icon, title, meta, side, modifier) {
     const wrapper = element("article", "list-row");
+    if (modifier) wrapper.classList.add(modifier);
     const main = element("div", "row-main");
     main.append(element("span", "row-icon", icon));
-    const labels = element("div");
+    const labels = element("div", "row-copy");
     labels.append(element("span", "row-title", title));
     labels.append(element("span", "row-meta", meta));
     main.append(labels);
@@ -211,7 +212,7 @@
           () => mutate(
             "contacts/exchange",
             { recipe_id: contact.id, operation_id: operationId() },
-            `Получено: ${rewardText(contact.reward)}.`
+            (result) => `Получено: ${rewardText(result.reward)}.`
           )
         );
       });
@@ -222,8 +223,9 @@
       target.append(row(
         contact.reward.emoji,
         contact.name,
-        `${contact.npc_name} · ${costs} → ${rewardText(contact.reward)}`,
-        button
+        `${contact.npc_name}\nСтоимость: ${costs}\nРезультат: ${rewardText(contact.reward)}`,
+        button,
+        "contact-row"
       ));
     });
   }
@@ -251,7 +253,11 @@
         showNotice(statusMessages[result.status] || "Центр отклонил операцию.", true);
       } else {
         tg?.HapticFeedback?.notificationOccurred("success");
-        showNotice(successMessage);
+        showNotice(
+          typeof successMessage === "function"
+            ? successMessage(result)
+            : successMessage
+        );
       }
       await reload();
     } catch (error) {

@@ -345,7 +345,7 @@ async def test_webapp_prestige_and_agency_keep_stale_checks_server_side(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webapp_exposes_permanent_contacts_and_keeps_recruiter_event_only(
+async def test_webapp_exposes_all_npc_exchanges_as_permanent_contacts(
     tmp_path,
 ):
     service = SpyGameService(game_settings(tmp_path))
@@ -363,6 +363,10 @@ async def test_webapp_exposes_permanent_contacts_and_keeps_recruiter_event_only(
                 (USER_ID, "operative", 1),
             ),
             connection.execute(
+                "INSERT INTO user_agents(user_id, agent_type, amount) VALUES (?, ?, ?)",
+                (USER_ID, "informant", 30),
+            ),
+            connection.execute(
                 "INSERT INTO user_items(user_id, item_type, amount) VALUES (?, ?, ?)",
                 (USER_ID, "fake_passport", 1),
             ),
@@ -377,14 +381,30 @@ async def test_webapp_exposes_permanent_contacts_and_keeps_recruiter_event_only(
     try:
         response = await server.state(request(headers))
         state = json.loads(response.text)
-        assert len(state["contacts"]) == 6
+        assert len(state["contacts"]) == 12
         assert {contact["npc_id"] for contact in state["contacts"]} == {
+            "handler",
+            "recruiter",
             "operations_chief",
             "counterintelligence",
         }
-        assert "recruiter_network" not in {
-            contact["id"] for contact in state["contacts"]
+        recruiter = next(
+            contact
+            for contact in state["contacts"]
+            if contact["id"] == "recruiter_network"
+        )
+        assert recruiter["reward"] == {
+            "type": "random",
+            "id": None,
+            "name": "Случайный агент Tier 2–4",
+            "emoji": "🎲",
+            "amount": 1,
         }
+        handler = next(
+            contact for contact in state["contacts"] if contact["id"] == "handler_tier2"
+        )
+        assert handler["npc_name"] == "Куратор"
+        assert handler["reward"]["name"] == "Случайный агент Tier 2"
         chief = next(
             contact for contact in state["contacts"] if contact["id"] == "chief_illegal"
         )
@@ -411,16 +431,28 @@ async def test_webapp_exposes_permanent_contacts_and_keeps_recruiter_event_only(
         )
         assert json.loads(duplicate.text) == result
 
-        recruiter = await server.contact_exchange(
+        handler_exchange = await server.contact_exchange(
+            request(
+                headers,
+                {"recipe_id": "handler_tier2", "operation_id": "web-operation-2"},
+            )
+        )
+        handler_result = json.loads(handler_exchange.text)
+        assert handler_result["status"] == "success"
+        assert handler_result["reward"]["amount"] == 1
+
+        recruiter_exchange = await server.contact_exchange(
             request(
                 headers,
                 {
                     "recipe_id": "recruiter_network",
-                    "operation_id": "web-operation-2",
+                    "operation_id": "web-operation-3",
                 },
             )
         )
-        assert json.loads(recruiter.text)["status"] == "invalid_recipe"
+        recruiter_result = json.loads(recruiter_exchange.text)
+        assert recruiter_result["status"] == "success"
+        assert recruiter_result["reward"]["amount"] == 1
     finally:
         await service.close()
 
@@ -436,6 +468,8 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
         assert "Spy Clicker" in (server.ASSETS / "index.html").read_text()
         assert "contact-list" in (server.ASSETS / "index.html").read_text()
         assert '"contacts/exchange"' in (server.ASSETS / "app.js").read_text()
+        assert '"contact-row"' in (server.ASSETS / "app.js").read_text()
+        assert "@media (max-width: 480px)" in (server.ASSETS / "styles.css").read_text()
         assert "Content-Security-Policy" in index.headers
 
         health = await server.health(request())

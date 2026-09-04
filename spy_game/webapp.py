@@ -405,6 +405,8 @@ class SpyWebAppServer:
             else self.service.settings.agency_requirements(profile.agency_level)
         )
         contact_names = {
+            "handler": "Куратор",
+            "recruiter": "Рекрутер",
             "operations_chief": "Начальник операций",
             "counterintelligence": "Контрразведка",
         }
@@ -494,7 +496,7 @@ class SpyWebAppServer:
                     "name": recipe.display_name,
                     "agent_costs": self._agent_costs(recipe.agent_costs),
                     "item_costs": self._item_costs(recipe.item_costs),
-                    "reward": self._drop_entry(recipe.rewards[0]),
+                    "reward": self._contact_reward(recipe),
                 }
                 for recipe in self.service.settings.permanent_contact_recipes
             ],
@@ -544,6 +546,32 @@ class SpyWebAppServer:
             "name": definition.display_name,
             "emoji": definition.emoji,
             "amount": reward.amount,
+        }
+
+    @staticmethod
+    def _contact_reward(recipe) -> dict:
+        if len(recipe.rewards) == 1:
+            return SpyWebAppServer._drop_entry(recipe.rewards[0])
+        if all(reward.reward_type == "agent" for reward in recipe.rewards):
+            tiers = sorted(
+                {
+                    AGENT_TYPES[reward.reward_id].tier
+                    for reward in recipe.rewards
+                    if reward.reward_id in AGENT_TYPES
+                }
+            )
+            tier_label = (
+                f"Tier {tiers[0]}–{tiers[-1]}" if len(tiers) > 1 else f"Tier {tiers[0]}"
+            )
+            name = f"Случайный агент {tier_label}"
+        else:
+            name = "Случайный результат"
+        return {
+            "type": "random",
+            "id": None,
+            "name": name,
+            "emoji": "🎲",
+            "amount": recipe.rewards[0].amount,
         }
 
     async def state(self, request: web.Request) -> web.Response:

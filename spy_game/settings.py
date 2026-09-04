@@ -218,6 +218,7 @@ DEFAULT_NPC_RECIPES = (
 
 PERMANENT_CONTACT_NPC_IDS = frozenset(
     {
+        "recruiter",
         "operations_chief",
         "counterintelligence",
     }
@@ -315,6 +316,8 @@ class SpySettings:
     agency_required_residents: int = 2
     agency_required_illegal_agents: int = 2
     agency_rare_bonus_percent: int = 5
+    handler_event_reward_multiplier: int = 2
+    npc_event_reward_multiplier: int = 2
     event_weights: tuple[EventWeight, ...] = field(
         default_factory=lambda: DEFAULT_EVENT_WEIGHTS
     )
@@ -441,6 +444,11 @@ class SpySettings:
             raise ValueError("agency progression settings must be positive")
         if not 0 <= self.agency_rare_bonus_percent <= 20:
             raise ValueError("agency rare bonus must be between 0 and 20")
+        if (
+            self.handler_event_reward_multiplier < 2
+            or self.npc_event_reward_multiplier < 2
+        ):
+            raise ValueError("contact event reward multipliers must be at least 2")
         if any(
             amount <= 0
             for amount in (
@@ -468,8 +476,6 @@ class SpySettings:
                 self._validate_drop_entry(reward, "NPC")
                 if reward.reward_type == "empty":
                     raise ValueError("NPC reward pool cannot contain empty rewards")
-            if recipe.npc_id in PERMANENT_CONTACT_NPC_IDS and len(recipe.rewards) != 1:
-                raise ValueError("permanent contact recipes must be deterministic")
         scenario_ids = [scenario.id for scenario in self.intercept_scenarios]
         if not scenario_ids or len(scenario_ids) != len(set(scenario_ids)):
             raise ValueError("intercept scenario IDs must be non-empty and unique")
@@ -545,12 +551,30 @@ class SpySettings:
         return tuple(recipe for recipe in self.npc_recipes if recipe.npc_id == npc_id)
 
     @property
-    def permanent_contact_recipes(self) -> tuple[NpcRecipe, ...]:
+    def handler_contact_recipes(self) -> tuple[NpcRecipe, ...]:
         return tuple(
+            NpcRecipe(
+                id=f"handler_{recipe.id}",
+                npc_id="handler",
+                display_name=recipe.display_name,
+                agent_costs=recipe.costs,
+                item_costs=(),
+                rewards=tuple(
+                    DropEntry("agent", agent_id, recipe.reward_amount, 1)
+                    for agent_id in recipe.reward_pool
+                ),
+            )
+            for recipe in self.handler_recipes
+        )
+
+    @property
+    def permanent_contact_recipes(self) -> tuple[NpcRecipe, ...]:
+        npc_contacts = tuple(
             recipe
             for recipe in self.npc_recipes
             if recipe.npc_id in PERMANENT_CONTACT_NPC_IDS
         )
+        return self.handler_contact_recipes + npc_contacts
 
     def permanent_contact_recipe(self, recipe_id: str) -> NpcRecipe | None:
         return next(
@@ -573,9 +597,7 @@ class SpySettings:
 
     @property
     def event_npc_ids(self) -> tuple[str, ...]:
-        return tuple(
-            npc_id for npc_id in self.npc_ids if npc_id not in PERMANENT_CONTACT_NPC_IDS
-        )
+        return self.npc_ids
 
     def agency_requirements(self, agency_level: int) -> tuple[AgentCost, ...]:
         multiplier = agency_level + 1

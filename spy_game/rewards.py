@@ -18,9 +18,18 @@ class RewardResolver:
         return Reward(self.settings.recruitment_agent_type, amount)
 
     @staticmethod
-    def resolve_exchange(recipe: ExchangeRecipe, rng: RandomSource) -> Reward:
+    def resolve_exchange(
+        recipe: ExchangeRecipe,
+        rng: RandomSource,
+        amount_multiplier: int = 1,
+    ) -> Reward:
+        if amount_multiplier <= 0:
+            raise ValueError("exchange reward multiplier must be positive")
         index = rng.randint(0, len(recipe.reward_pool) - 1)
-        return Reward(recipe.reward_pool[index], recipe.reward_amount)
+        return Reward(
+            recipe.reward_pool[index],
+            recipe.reward_amount * amount_multiplier,
+        )
 
     def resolve_dead_drop(self, rng: RandomSource) -> DropReward:
         return self._resolve_drop(self.settings.dead_drop_entries, rng)
@@ -30,7 +39,10 @@ class RewardResolver:
         recipe: NpcRecipe,
         agency_level: int,
         rng: RandomSource,
+        amount_multiplier: int = 1,
     ) -> DropReward:
+        if amount_multiplier <= 0:
+            raise ValueError("NPC reward multiplier must be positive")
         entries = recipe.rewards
         if recipe.npc_id == "recruiter" and agency_level > 0:
             weights = [entry.weight for entry in entries]
@@ -63,7 +75,12 @@ class RewardResolver:
                     )
                     for index, entry in enumerate(entries)
                 )
-        return self._resolve_drop(entries, rng)
+        reward = self._resolve_drop(entries, rng)
+        return DropReward(
+            reward.reward_type,
+            reward.reward_id,
+            reward.amount * amount_multiplier,
+        )
 
     @staticmethod
     def _resolve_drop(

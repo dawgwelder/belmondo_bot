@@ -593,6 +593,7 @@ class SpyRepository:
             payload_data = {
                 "action": "exchange",
                 "recipe_ids": [recipe.id for recipe in self.settings.handler_recipes],
+                "reward_multiplier": self.settings.handler_event_reward_multiplier,
                 "manual": manual,
             }
         elif event_type == "death_operation":
@@ -635,6 +636,7 @@ class SpyRepository:
                 "recipe_ids": [
                     recipe.id for recipe in self.settings.npc_recipes_for(npc_id)
                 ],
+                "reward_multiplier": self.settings.npc_event_reward_multiplier,
                 "manual": manual,
             }
         else:
@@ -2380,6 +2382,13 @@ class SpyRepository:
             return ExchangeResult(EconomyStatus.WRONG_CHAT, event_id, recipe_id)
         if event["event_type"] != "handler":
             return ExchangeResult(EconomyStatus.INVALID_RECIPE, event_id, recipe_id)
+        payload = json.loads(event["payload_json"])
+        reward_multiplier = payload.get("reward_multiplier", 1)
+        if type(reward_multiplier) is not int or reward_multiplier not in {
+            1,
+            self.settings.handler_event_reward_multiplier,
+        }:
+            return ExchangeResult(EconomyStatus.INVALID_RECIPE, event_id, recipe_id)
         if event["status"] == "expired":
             return ExchangeResult(EconomyStatus.EXPIRED, event_id, recipe_id)
         if event["status"] != "active":
@@ -2409,13 +2418,18 @@ class SpyRepository:
         if claimed.rowcount != 1:
             return ExchangeResult(EconomyStatus.ALREADY_RESOLVED, event_id, recipe_id)
 
-        reward = self.reward_resolver.resolve_exchange(recipe, self.rng)
+        reward = self.reward_resolver.resolve_exchange(
+            recipe,
+            self.rng,
+            amount_multiplier=reward_multiplier,
+        )
         self._spend_costs(connection, user_id, recipe.costs)
         self._add_reward(connection, user_id, reward)
         metadata = json.dumps(
             {
                 "recipe_id": recipe.id,
                 "costs": {cost.agent_type: cost.amount for cost in recipe.costs},
+                "reward_multiplier": reward_multiplier,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -2493,6 +2507,12 @@ class SpyRepository:
             "recipe_ids", ()
         ):
             return NpcResult(NpcStatus.INVALID_RECIPE, event_id, recipe_id)
+        reward_multiplier = payload.get("reward_multiplier", 1)
+        if type(reward_multiplier) is not int or reward_multiplier not in {
+            1,
+            self.settings.npc_event_reward_multiplier,
+        }:
+            return NpcResult(NpcStatus.INVALID_RECIPE, event_id, recipe_id)
         if event["status"] == "expired":
             return NpcResult(NpcStatus.EXPIRED, event_id, recipe_id)
         if event["status"] != "active":
@@ -2531,7 +2551,12 @@ class SpyRepository:
         ).fetchone()[0]
         self._spend_costs(connection, user_id, recipe.agent_costs)
         self._spend_item_costs(connection, user_id, recipe.item_costs)
-        reward = self.reward_resolver.resolve_npc(recipe, agency_level, self.rng)
+        reward = self.reward_resolver.resolve_npc(
+            recipe,
+            agency_level,
+            self.rng,
+            amount_multiplier=reward_multiplier,
+        )
         self._add_drop_reward(connection, user_id, reward)
         metadata = json.dumps(
             {
@@ -2544,6 +2569,7 @@ class SpyRepository:
                     cost.item_type: cost.amount for cost in recipe.item_costs
                 },
                 "agency_level": agency_level,
+                "reward_multiplier": reward_multiplier,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -3265,10 +3291,14 @@ class SpyRepository:
                 and isinstance(payload.get("manual"), bool)
             )
         if event_type == "handler":
+            reward_multiplier = payload.get("reward_multiplier", 1)
             return (
                 payload.get("action") == "exchange"
                 and payload.get("recipe_ids")
                 == [recipe.id for recipe in self.settings.handler_recipes]
+                and type(reward_multiplier) is int
+                and reward_multiplier
+                in {1, self.settings.handler_event_reward_multiplier}
                 and isinstance(payload.get("manual"), bool)
             )
         if event_type == "death_operation":
@@ -3300,11 +3330,14 @@ class SpyRepository:
             )
         if event_type == "npc":
             npc_id = payload.get("config_id")
+            reward_multiplier = payload.get("reward_multiplier", 1)
             return (
                 payload.get("action") == "npc_exchange"
                 and npc_id in self.settings.npc_ids
                 and payload.get("recipe_ids")
                 == [recipe.id for recipe in self.settings.npc_recipes_for(npc_id)]
+                and type(reward_multiplier) is int
+                and reward_multiplier in {1, self.settings.npc_event_reward_multiplier}
                 and isinstance(payload.get("manual"), bool)
             )
         return False

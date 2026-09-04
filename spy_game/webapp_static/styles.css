@@ -193,6 +193,10 @@ h2 {
   gap: 12px;
 }
 
+.row-copy {
+  min-width: 0;
+}
+
 .row-icon {
   display: grid;
   width: 38px;
@@ -220,6 +224,16 @@ h2 {
   margin-top: 3px;
   color: var(--muted);
   font-size: 0.76rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.contact-row .row-main {
+  align-items: flex-start;
+}
+
+.contact-row .row-meta {
+  white-space: pre-line;
 }
 
 .row-side {
@@ -394,5 +408,21 @@ button:disabled {
 
   .card {
     padding: 23px;
+  }
+}
+
+@media (max-width: 480px) {
+  .contact-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .contact-row .row-side,
+  .contact-row .small-button {
+    width: 100%;
+  }
+
+  .contact-row .small-button {
+    min-height: 40px;
   }
 }

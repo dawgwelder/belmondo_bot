@@ -161,6 +161,8 @@ def _event_keyboard(
     recipes=DEFAULT_HANDLER_RECIPES,
     intercept_scenarios=DEFAULT_INTERCEPT_SCENARIOS,
     npc_recipes=DEFAULT_NPC_RECIPES,
+    handler_reward_multiplier=2,
+    npc_reward_multiplier=2,
 ):
     if event.event_type == "recruitment":
         return _claim_keyboard(event.event_id)
@@ -235,7 +237,7 @@ def _event_keyboard(
             [
                 [
                     InlineKeyboardButton(
-                        recipe.display_name,
+                        f"{recipe.display_name} · ×{handler_reward_multiplier}",
                         callback_data=f"spy:exchange_{recipe.id}:{event.event_id}",
                     )
                 ]
@@ -252,7 +254,7 @@ def _event_keyboard(
             [
                 [
                     InlineKeyboardButton(
-                        recipe.display_name,
+                        f"{recipe.display_name} · ×{npc_reward_multiplier}",
                         callback_data=f"spy:npc_{recipe.id}:{event.event_id}",
                     )
                 ]
@@ -386,8 +388,27 @@ def _format_drop_reward(reward) -> str:
     return f"{definition.emoji} {definition.display_name} ×{reward.amount}"
 
 
+def _format_npc_recipe_reward(recipe) -> str:
+    if len(recipe.rewards) == 1:
+        return _format_drop_reward(recipe.rewards[0])
+    tiers = sorted(
+        {
+            AGENT_TYPES[reward.reward_id].tier
+            for reward in recipe.rewards
+            if reward.reward_type == "agent" and reward.reward_id in AGENT_TYPES
+        }
+    )
+    if len(tiers) > 1:
+        return f"🎲 Случайный агент Tier {tiers[0]}–{tiers[-1]}"
+    if tiers:
+        return f"🎲 Случайный агент Tier {tiers[0]}"
+    return "🎲 Случайный результат"
+
+
 def build_contact_blocks(recipes) -> list[dict]:
     names = {
+        "handler": "🗂 Куратор",
+        "recruiter": "🧑‍💼 Рекрутер",
         "operations_chief": "🎖 Начальник операций",
         "counterintelligence": "🔎 Контрразведка",
     }
@@ -407,7 +428,7 @@ def build_contact_blocks(recipes) -> list[dict]:
             ]
             lines.append(
                 f"{recipe.display_name}: {'; '.join(costs)} → "
-                f"{_format_drop_reward(recipe.rewards[0])}"
+                f"{_format_npc_recipe_reward(recipe)}"
             )
         if lines:
             blocks.append(
@@ -421,8 +442,8 @@ def build_contact_blocks(recipes) -> list[dict]:
         {
             "type": "footer",
             "text": (
-                "Эти сделки доступны постоянно. Рекрутер по-прежнему появляется "
-                "только как редкое событие."
+                "Эти сделки доступны постоянно. Редкая встреча с NPC даёт "
+                "увеличенный результат."
             ),
         }
     )
@@ -697,6 +718,8 @@ def build_event_blocks(
     intercept_prompt: str | None = None,
     cooperative_required: int = 3,
     recruitment_required: int = 3,
+    handler_reward_multiplier: int = 2,
+    npc_reward_multiplier: int = 2,
 ) -> list[dict]:
     lifetime_minutes = max(
         1,
@@ -759,10 +782,11 @@ def build_event_blocks(
                 else "Два этапа могут закрыть разные игроки. "
                 f"Окно: ~{lifetime_minutes} мин."
                 if is_chase
-                else "Первый успешный обмен закрывает окно NPC; стоимость и "
-                f"результат определяет сервер. Окно: ~{lifetime_minutes} мин."
+                else "Первый успешный обмен закрывает окно NPC. Бонус встречи: "
+                f"результат ×{npc_reward_multiplier}. Окно: ~{lifetime_minutes} мин."
                 if is_npc
-                else f"Первый успешный обмен закроет встречу. Окно: ~{lifetime_minutes} мин."
+                else "Первый успешный обмен закроет встречу. Бонус встречи: "
+                f"результат ×{handler_reward_multiplier}. Окно: ~{lifetime_minutes} мин."
                 if is_handler
                 else f"Первый обыскавший забирает содержимое. Окно: ~{lifetime_minutes} мин."
                 if is_dead_drop
@@ -841,6 +865,16 @@ async def publish_spy_event(
         if isinstance(service, SpyGameService)
         else 2
     )
+    npc_reward_multiplier = (
+        service.settings.npc_event_reward_multiplier
+        if isinstance(service, SpyGameService)
+        else 2
+    )
+    handler_reward_multiplier = (
+        service.settings.handler_event_reward_multiplier
+        if isinstance(service, SpyGameService)
+        else 2
+    )
     scenario = (
         service.settings.intercept_scenario(event.config_id or "")
         if isinstance(service, SpyGameService)
@@ -915,6 +949,8 @@ async def publish_spy_event(
             intercept_prompt=scenario.prompt if scenario else None,
             cooperative_required=cooperative_required,
             recruitment_required=recruitment_required,
+            handler_reward_multiplier=handler_reward_multiplier,
+            npc_reward_multiplier=npc_reward_multiplier,
         ),
         fallback_text=(
             "💀 Смертельная операция\n"
@@ -927,9 +963,9 @@ async def publish_spy_event(
             if is_cooperative
             else "🏎 Погоня\nНачните преследование, затем перехватите цель."
             if is_chase
-            else "🗝 Специальный куратор\nПредъявите ресурсы для закрытой сделки."
+            else "🗝 Специальный куратор\nРедкая встреча удваивает результат сделки."
             if is_npc
-            else "🗂 Встреча с куратором\nПредъявите ресурсы для обмена."
+            else "🗂 Встреча с куратором\nРедкая встреча удваивает результат обмена."
             if is_handler
             else "📦 Тайник разведсети\nПервый обыскавший забирает содержимое."
             if is_dead_drop
@@ -950,6 +986,8 @@ async def publish_spy_event(
                 if isinstance(service, SpyGameService)
                 else DEFAULT_NPC_RECIPES
             ),
+            handler_reward_multiplier,
+            npc_reward_multiplier,
         ),
     )
     logger.info(
