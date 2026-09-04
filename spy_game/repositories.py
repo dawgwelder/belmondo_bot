@@ -1073,10 +1073,14 @@ class SpyRepository:
             row = self._dead_drop_game_row(connection, token_hash)
             return self._dead_drop_game_run(row, DeadDropGameStatus.READY)
 
-        run_expires_at = min(
-            now + timedelta(seconds=self.settings.dead_drop_game_run_seconds),
-            _datetime(event["expires_at"]),
+        run_expires_at = now + timedelta(
+            seconds=self.settings.dead_drop_game_run_seconds
         )
+        if event["expires_at"] < _iso(run_expires_at):
+            connection.execute(
+                "UPDATE game_events SET expires_at = ? WHERE id = ?",
+                (_iso(run_expires_at), event["id"]),
+            )
         connection.execute(
             """
             INSERT INTO dead_drop_game_runs(
@@ -1194,10 +1198,6 @@ class SpyRepository:
                 self._add_drop_reward(connection, row["user_id"], reward)
                 run_status = "won"
                 result_status = DeadDropGameStatus.WON
-        elif len(attempts) >= self.settings.dead_drop_game_attempts:
-            run_status = "failed"
-            result_status = DeadDropGameStatus.FAILED
-
         attempts_json = json.dumps(
             [
                 {
@@ -1264,7 +1264,6 @@ class SpyRepository:
             message_id=row["message_id"],
             public_name=self._user_label(row["username"], None),
             code_length=self.settings.dead_drop_game_code_length,
-            attempts_allowed=self.settings.dead_drop_game_attempts,
             attempts=attempts,
             expires_at=_datetime(row["run_expires_at"]),
             reward=reward,
@@ -1333,7 +1332,6 @@ class SpyRepository:
             message_id=row["message_id"],
             public_name=self._user_label(row["username"], None),
             code_length=self.settings.dead_drop_game_code_length,
-            attempts_allowed=self.settings.dead_drop_game_attempts,
             attempts=self._dead_drop_attempts(row["attempts_json"]),
             expires_at=_datetime(row["run_expires_at"]),
             reward=reward,

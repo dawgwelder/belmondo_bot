@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from .activity import ActivityTracker
 from .database import SQLiteDatabase
 from .director import GameDirector, build_director
+from .duels import DUEL_ACTIONS, SpyDuelRepository
 from .models import (
     AdminResult,
     AgencyResult,
@@ -28,6 +29,8 @@ from .models import (
     DeadDropResult,
     DeathOperationResult,
     DeathOperationStatus,
+    DuelWager,
+    DuelWagerStatus,
     EconomyStatus,
     EquipmentResult,
     EquipmentStatus,
@@ -74,6 +77,7 @@ class SpyGameService:
             self.rng,
             RewardResolver(settings),
         )
+        self.duel_repository = SpyDuelRepository(settings)
         self._startup_expired = ()
 
     async def initialize(self, *, now: datetime | None = None) -> None:
@@ -81,6 +85,10 @@ class SpyGameService:
         current = now or utc_now()
         self._startup_expired = await self.database.transaction(
             lambda connection: self.repository.reconcile(connection, current),
+            immediate=True,
+        )
+        await self.database.transaction(
+            lambda connection: self.duel_repository.reconcile(connection, current),
             immediate=True,
         )
 
@@ -102,9 +110,13 @@ class SpyGameService:
         return await self.activity.record(chat_id, user_id, now or utc_now())
 
     async def tick(self, *, now: datetime | None = None) -> TickResult:
+        current = now or utc_now()
+        await self.database.transaction(
+            lambda connection: self.duel_repository.reconcile(connection, current),
+            immediate=True,
+        )
         if not self.settings.enabled:
             return TickResult()
-        current = now or utc_now()
         counts = await self.activity.drain()
         try:
             prepared = await self.database.transaction(
@@ -594,6 +606,213 @@ class SpyGameService:
     @staticmethod
     def _game_token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    async def create_duel_wager(
+        self,
+        *,
+        duel_id: str,
+        chat_id: int,
+        challenger_user_id: int,
+        challenger_username: str | None,
+        challenger_display_name: str | None,
+        opponent_user_id: int | None,
+        opponent_username: str | None,
+        opponent_display_name: str | None,
+        stake_amount: int,
+        scenario: dict,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        if not self.chat_is_available(chat_id):
+            return DuelWager(DuelWagerStatus.DISABLED, duel_id, chat_id=chat_id)
+        if stake_amount not in self.settings.duel_stake_amounts:
+            raise ValueError("invalid duel stake")
+        if not isinstance(scenario, dict):
+            raise ValueError("invalid duel scenario")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.create(
+                connection,
+                duel_id=duel_id,
+                chat_id=chat_id,
+                challenger_user_id=challenger_user_id,
+                challenger_username=challenger_username,
+                challenger_display_name=challenger_display_name,
+                opponent_user_id=opponent_user_id,
+                opponent_username=opponent_username,
+                opponent_display_name=opponent_display_name,
+                stake_amount=stake_amount,
+                scenario=scenario,
+                tie_breaker_role=(
+                    "challenger" if self.rng.randint(0, 1) == 0 else "opponent"
+                ),
+                now=current,
+            ),
+            immediate=True,
+        )
+
+    async def attach_duel_message(
+        self,
+        duel_id: str,
+        message_id: int,
+    ) -> DuelWager:
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.attach_message(
+                connection,
+                duel_id,
+                message_id,
+            ),
+            immediate=True,
+        )
+
+    async def get_duel_wager(
+        self,
+        duel_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.get(
+                connection,
+                duel_id,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def get_active_duel_wager(
+        self,
+        chat_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.get_active_for_chat(
+                connection,
+                chat_id,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def accept_duel_wager(
+        self,
+        *,
+        duel_id: str,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.accept(
+                connection,
+                duel_id=duel_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                now=current,
+            ),
+            immediate=True,
+        )
+
+    async def choose_duel_move(
+        self,
+        *,
+        duel_id: str,
+        user_id: int,
+        action: str,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        if action not in DUEL_ACTIONS:
+            raise ValueError("invalid duel action")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.choose(
+                connection,
+                duel_id=duel_id,
+                user_id=user_id,
+                action=action,
+                now=current,
+            ),
+            immediate=True,
+        )
+
+    async def forfeit_duel_wager(
+        self,
+        duel_id: str,
+        user_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.forfeit(
+                connection,
+                duel_id,
+                user_id,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def close_pending_duel_wager(
+        self,
+        *,
+        duel_id: str,
+        user_id: int,
+        username: str | None,
+        action: str,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        if action not in {"cancel", "decline"}:
+            raise ValueError("invalid pending duel action")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.close_pending(
+                connection,
+                duel_id=duel_id,
+                user_id=user_id,
+                username=username,
+                action=action,
+                now=current,
+            ),
+            immediate=True,
+        )
+
+    async def cancel_duel_wager_as_master(
+        self,
+        duel_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.master_cancel(
+                connection,
+                duel_id,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def expire_duel_wager(
+        self,
+        duel_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> DuelWager:
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.duel_repository.expire(
+                connection,
+                duel_id,
+                current,
+            ),
+            immediate=True,
+        )
 
     async def contribute_cooperative(
         self,

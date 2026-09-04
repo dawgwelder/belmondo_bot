@@ -105,10 +105,7 @@
   }
 
   function renderAttempts() {
-    $("attempts").textContent = `Попытка ${Math.min(
-      state.attempts.length + 1,
-      state.attempts_allowed
-    )}/${state.attempts_allowed}`;
+    $("attempts").textContent = `Проверено кодов: ${state.attempts.length}`;
     const history = $("attempt-history");
     history.replaceChildren();
     [...state.attempts].reverse().forEach((attempt) => {
@@ -229,6 +226,11 @@
     stopTimer();
     try {
       state = await api("state");
+      if (state.status === "ready") {
+        finished = false;
+        timerId = window.setTimeout(expireSession, 1000);
+        return;
+      }
       renderResult();
     } catch (error) {
       renderError(error.message);
@@ -239,7 +241,13 @@
     const expiresAt = Date.parse(state.expires_at);
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-      $("timer").textContent = `${remaining}с`;
+      if (state.game_type === "dead_drop") {
+        const minutes = Math.floor(remaining / 60);
+        const seconds = String(remaining % 60).padStart(2, "0");
+        $("timer").textContent = `${minutes}:${seconds}`;
+      } else {
+        $("timer").textContent = `${remaining}с`;
+      }
       if (remaining <= 0) expireSession();
     };
     tick();

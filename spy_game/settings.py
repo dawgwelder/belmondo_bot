@@ -283,8 +283,11 @@ class SpySettings:
     intercept_game_run_seconds: int = 45
     intercept_game_success_score: int = 3000
     dead_drop_game_code_length: int = 3
-    dead_drop_game_attempts: int = 6
-    dead_drop_game_run_seconds: int = 60
+    dead_drop_game_run_seconds: int = 5 * 60
+    duel_stake_agent_type: str = "informant"
+    duel_stake_amounts: tuple[int, ...] = (1, 3, 5)
+    duel_accept_seconds: int = 120
+    duel_move_seconds: int = 180
     death_operation_success_percent: int = 35
     death_operation_confirmation_seconds: int = 60
     death_operation_reward_multiplier: int = 2
@@ -395,8 +398,18 @@ class SpySettings:
             raise ValueError("intercept game success score is out of range")
         if not 2 <= self.dead_drop_game_code_length <= 6:
             raise ValueError("dead drop game code length must be between 2 and 6")
-        if self.dead_drop_game_attempts <= 0 or self.dead_drop_game_run_seconds <= 0:
-            raise ValueError("dead drop game attempts and duration must be positive")
+        if self.dead_drop_game_run_seconds <= 0:
+            raise ValueError("dead drop game duration must be positive")
+        if self.duel_stake_agent_type not in AGENT_TYPES:
+            raise ValueError("duel stake agent type is unknown")
+        if (
+            not self.duel_stake_amounts
+            or any(amount <= 0 for amount in self.duel_stake_amounts)
+            or len(self.duel_stake_amounts) != len(set(self.duel_stake_amounts))
+        ):
+            raise ValueError("duel stake amounts must be positive and unique")
+        if self.duel_accept_seconds <= 0 or self.duel_move_seconds <= 0:
+            raise ValueError("duel timeouts must be positive")
         if not 0 <= self.death_operation_success_percent <= 100:
             raise ValueError("death operation success chance must be between 0 and 100")
         if self.death_operation_confirmation_seconds <= 0:

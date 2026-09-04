@@ -307,7 +307,7 @@ class SpyWebAppServer:
     async def game_javascript(self, request: web.Request) -> web.Response:
         return web.FileResponse(
             self.ASSETS / "game.js",
-            headers=self._static_headers("public, max-age=300"),
+            headers=self._static_headers("no-store"),
         )
 
     async def game_styles(self, request: web.Request) -> web.Response:
@@ -673,7 +673,6 @@ class SpyWebAppServer:
             "game_type": "dead_drop",
             "status": result.status.value,
             "code_length": result.code_length,
-            "attempts_allowed": result.attempts_allowed,
             "attempts": [
                 {
                     "digits": list(attempt.digits),

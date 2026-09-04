@@ -1859,7 +1859,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 10
+        assert migration_count == 11
     finally:
         await second.close()
 
@@ -1943,6 +1943,14 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "AND name = 'dead_drop_game_runs'"
                 ).fetchone()[0],
                 connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'spy_duels'"
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'spy_duel_history'"
+                ).fetchone()[0],
+                connection.execute(
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
@@ -1953,7 +1961,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -1964,6 +1972,8 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "agency_history",
             "intercept_game_runs",
             "dead_drop_game_runs",
+            "spy_duels",
+            "spy_duel_history",
             None,
             "balanced",
         )
@@ -2554,7 +2564,7 @@ async def test_html5_dead_drop_feedback_is_persisted_and_win_is_idempotent(tmp_p
         )
         assert run.status is DeadDropGameStatus.READY
         assert run.code_length == 3
-        assert run.attempts_allowed == 6
+        assert run.expires_at == NOW + timedelta(minutes=5)
 
         token_hash, code_json = await service.database.read(
             lambda connection: connection.execute(
@@ -2612,12 +2622,14 @@ async def test_html5_dead_drop_feedback_is_persisted_and_win_is_idempotent(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_html5_dead_drop_failed_agent_does_not_close_event(tmp_path):
+async def test_html5_dead_drop_has_unlimited_attempts_until_five_minute_timeout(
+    tmp_path,
+):
     service = await initialized_service(tmp_path, lifetime=120)
     event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
     await service.attach_message(event.event_id, 711)
     try:
-        first = await service.start_dead_drop_game(
+        run = await service.start_dead_drop_game(
             chat_id=CHAT_ID,
             message_id=711,
             user_id=1,
@@ -2626,40 +2638,39 @@ async def test_html5_dead_drop_failed_agent_does_not_close_event(tmp_path):
             now=NOW,
         )
         for offset, guess in enumerate(
-            ((1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6)),
+            (
+                (1, 1, 1),
+                (2, 2, 2),
+                (3, 3, 3),
+                (4, 4, 4),
+                (5, 5, 5),
+                (6, 6, 6),
+                (7, 7, 7),
+            ),
             start=1,
         ):
-            failed = await service.guess_dead_drop_game(
-                first.launch_token,
+            active = await service.guess_dead_drop_game(
+                run.launch_token,
                 guess,
                 now=NOW + timedelta(seconds=offset),
             )
-        assert failed.status is DeadDropGameStatus.FAILED
+            assert active.status is DeadDropGameStatus.READY
+        assert len(active.attempts) == 7
+        event_expiry = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT expires_at FROM game_events WHERE id = ?",
+                (event.event_id,),
+            ).fetchone()[0]
+        )
+        assert datetime.fromisoformat(event_expiry) == NOW + timedelta(minutes=5)
 
-        replay = await service.start_dead_drop_game(
-            chat_id=CHAT_ID,
-            message_id=711,
-            user_id=1,
-            username="first",
-            display_name="First",
-            now=NOW + timedelta(seconds=7),
+        expired = await service.guess_dead_drop_game(
+            run.launch_token,
+            (8, 8, 8),
+            now=NOW + timedelta(minutes=5, seconds=1),
         )
-        assert replay.status is DeadDropGameStatus.ALREADY_PLAYED
-
-        second = await service.start_dead_drop_game(
-            chat_id=CHAT_ID,
-            message_id=711,
-            user_id=2,
-            username="second",
-            display_name="Second",
-            now=NOW + timedelta(seconds=7),
-        )
-        won = await service.guess_dead_drop_game(
-            second.launch_token,
-            (0, 0, 0),
-            now=NOW + timedelta(seconds=8),
-        )
-        assert won.status is DeadDropGameStatus.WON
+        assert expired.status is DeadDropGameStatus.EXPIRED
+        assert len(expired.attempts) == 7
     finally:
         await service.close()
 

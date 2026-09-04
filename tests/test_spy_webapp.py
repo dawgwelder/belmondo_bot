@@ -362,6 +362,9 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
             "game_enabled": True,
             "html5_game_enabled": False,
         }
+        game_javascript = await server.game_javascript(request())
+        assert game_javascript.headers["Cache-Control"] == "no-store"
+        assert "game.js?v=2" in (server.ASSETS / "game.html").read_text()
     finally:
         await service.close()
 
@@ -456,6 +459,7 @@ async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp
         assert state["game_type"] == "dead_drop"
         assert state["status"] == "ready"
         assert state["code_length"] == 3
+        assert "attempts_allowed" not in state
         assert "code" not in state
 
         response = await server.game_guess(request(headers, {"guess": [1, 2, 3]}))

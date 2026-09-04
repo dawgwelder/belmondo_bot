@@ -87,6 +87,19 @@ class DeadDropGameStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class DuelWagerStatus(str, Enum):
+    PENDING = "pending"
+    CHOOSING = "choosing"
+    WON = "won"
+    REFUNDED = "refunded"
+    INSUFFICIENT_AGENTS = "insufficient_agents"
+    ACTIVE_DUEL_EXISTS = "active_duel_exists"
+    INVALID_PARTICIPANT = "invalid_participant"
+    ALREADY_MOVED = "already_moved"
+    NOT_FOUND = "not_found"
+    DISABLED = "disabled"
+
+
 class CooperativeStatus(str, Enum):
     CONTRIBUTED = "contributed"
     COMPLETED = "completed"
@@ -346,10 +359,31 @@ class DeadDropGameRun:
     message_id: int | None = None
     public_name: str | None = None
     code_length: int = 0
-    attempts_allowed: int = 0
     attempts: tuple[DeadDropGuess, ...] = ()
     expires_at: datetime | None = None
     reward: DropReward | None = None
+
+
+@dataclass(frozen=True)
+class DuelWager:
+    status: DuelWagerStatus
+    duel_id: str
+    chat_id: int | None = None
+    message_id: int | None = None
+    challenger_user_id: int | None = None
+    opponent_user_id: int | None = None
+    challenger_name: str | None = None
+    opponent_name: str | None = None
+    opponent_username: str | None = None
+    agent_type: str = "informant"
+    stake_amount: int = 0
+    challenger_action: str | None = None
+    opponent_action: str | None = None
+    winner_user_id: int | None = None
+    winner_name: str | None = None
+    resolution: str | None = None
+    scenario: dict | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
