@@ -220,6 +220,56 @@ input[type="range"] { width: 100%; accent-color: #55e8ac; }
 }
 .attempt-history code { color: #e9fff6; font-size: 16px; letter-spacing: 0.18em; }
 
+.case-panel {
+  padding: 18px;
+  border: 1px solid rgba(85, 232, 172, 0.25);
+  border-radius: 14px;
+  background: rgba(10, 28, 22, 0.8);
+}
+.clue-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding-left: 22px;
+  color: #cbe7dc;
+  line-height: 1.45;
+}
+.dossier-heading { margin-top: 26px; }
+.suspect-grid { display: grid; gap: 10px; }
+.suspect-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #e9fff6;
+  font-family: inherit;
+  text-align: left;
+}
+.suspect-card.selected {
+  border-color: #55e8ac;
+  background: rgba(85, 232, 172, 0.12);
+  box-shadow: 0 0 18px rgba(85, 232, 172, 0.08);
+}
+.suspect-card strong { font-size: 18px; }
+.suspect-role { color: #55e8ac; font-size: 12px; text-transform: uppercase; }
+.suspect-dossier { color: #a9c7bb; line-height: 1.4; }
+.confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.secondary-button {
+  min-height: 54px;
+  margin-top: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  background: transparent;
+  color: #d7eee5;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+}
+.danger-button { background: #e97365; color: #180706; }
+
 #result, #error { padding-top: 12vh; text-align: center; }
 .result-icon {
   display: grid;
@@ -236,4 +286,15 @@ input[type="range"] { width: 100%; accent-color: #55e8ac; }
 .result-icon.danger { border-color: #e97365; color: #e97365; }
 #result-copy, #error-copy { color: #9ebbae; line-height: 1.55; }
 .result-score { display: block; margin: 28px 0 18px; font-size: 34px; }
-.reward { color: #8fffc9; font-size: 18px; font-weight: 700; }
+.reward {
+  color: #8fffc9;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+#death-mission .death-copy { white-space: pre-wrap; line-height: 1.6; }
+#death-mission button { width: 100%; margin-top: 12px; touch-action: manipulation; }
+#death-mission .death-select { display: block; margin: 16px 0; }
+#death-mission select { display: block; width: 100%; margin-top: 8px; padding: 12px; color: inherit; background: #182725; border: 1px solid #527066; border-radius: 8px; }

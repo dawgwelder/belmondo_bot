@@ -20,6 +20,7 @@ from spy_game.models import (
     DirectorState,
     EconomyStatus,
     EquipmentStatus,
+    FindMoleGameStatus,
     InterceptGameStatus,
     InterceptStatus,
     NpcStatus,
@@ -67,6 +68,7 @@ def settings(
     inertia_window=120,
     inertia_one_in=3,
     random_average=6 * 60 * 60,
+    html5_mole=False,
 ) -> SpySettings:
     return SpySettings(
         mode="dev",
@@ -84,6 +86,7 @@ def settings(
         activity_half_life_seconds=100,
         allow_manual_spawn=True,
         equipment_slots=equipment_slots,
+        html5_mole_enabled=html5_mole,
     )
 
 
@@ -466,6 +469,50 @@ async def test_story_hook_loads_matching_lore_for_narrator(tmp_path):
         result = await service.tick(now=NOW)
         assert result.spawned[0].story_hook == "section_7"
         assert any("Секция 7" in text for text in result.spawned[0].lore_context)
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize(
+    ("story_stage", "mole_allowed"),
+    ((2, False), (3, True), (4, True)),
+)
+@pytest.mark.asyncio
+async def test_tick_allows_find_mole_from_story_stage_three(
+    tmp_path,
+    story_stage,
+    mole_allowed,
+):
+    observed_states = []
+
+    class CapturingDirector:
+        async def choose_event(self, state):
+            observed_states.append(state)
+            return DirectorDecision("recruitment")
+
+    service = SpyGameService(
+        settings(tmp_path),
+        rng=FixedRandom(),
+        director=CapturingDirector(),
+    )
+    await service.initialize(now=NOW)
+    await service.enable_chat(CHAT_ID, now=NOW)
+    await service.database.transaction(
+        lambda connection: connection.execute(
+            "UPDATE chat_state SET story_arc = 'mole_hunt', story_stage = ? "
+            "WHERE chat_id = ?",
+            (story_stage, CHAT_ID),
+        ),
+        immediate=True,
+    )
+    try:
+        await service.record_activity(CHAT_ID, 1, now=NOW)
+        await service.record_activity(CHAT_ID, 2, now=NOW)
+        tick = await service.tick(now=NOW)
+
+        assert len(tick.spawned) == 1
+        assert len(observed_states) == 1
+        assert ("find_mole" in observed_states[0].allowed_events) is mole_allowed
     finally:
         await service.close()
 
@@ -2051,7 +2098,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 11
+        assert migration_count == 13
     finally:
         await second.close()
 
@@ -2143,6 +2190,14 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "AND name = 'spy_duel_history'"
                 ).fetchone()[0],
                 connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'find_mole_cases'"
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'find_mole_game_runs'"
+                ).fetchone()[0],
+                connection.execute(
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
@@ -2153,7 +2208,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -2166,6 +2221,8 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "dead_drop_game_runs",
             "spy_duels",
             "spy_duel_history",
+            "find_mole_cases",
+            "find_mole_game_runs",
             None,
             "balanced",
         )
@@ -3018,6 +3075,380 @@ async def test_html5_dead_drop_run_survives_service_restart(tmp_path):
         await second.close()
 
 
+def test_find_mole_templates_have_four_suspects_and_one_solution(tmp_path):
+    config = settings(tmp_path)
+
+    assert config.mole_cases
+    for case in config.mole_cases:
+        assert len(case.suspects) == 4
+        assert len(case.solution_candidates) == 1
+        assert case.correct_suspect_id in {suspect.id for suspect in case.suspects}
+
+
+@pytest.mark.asyncio
+async def test_find_mole_wrong_answer_is_personal_and_win_is_atomic(tmp_path):
+    service = await initialized_service(tmp_path, html5_mole=True)
+    await service.database.transaction(
+        lambda connection: connection.execute(
+            "UPDATE chat_state SET story_arc = 'mole_hunt', story_stage = 3 "
+            "WHERE chat_id = ?",
+            (CHAT_ID,),
+        ),
+        immediate=True,
+    )
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await service.attach_message(event.event_id, 720)
+    try:
+        public_case, solution = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT public_case_json, solution_suspect_id "
+                "FROM find_mole_cases WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+        )
+        public_payload = json.loads(public_case)
+        assert "solution" not in public_case
+        wrong_suspect = next(
+            suspect["id"]
+            for suspect in public_payload["suspects"]
+            if suspect["id"] != solution
+        )
+
+        first = await service.start_find_mole_game(
+            chat_id=CHAT_ID,
+            message_id=720,
+            user_id=1,
+            username="wrong_agent",
+            display_name="Private Wrong",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert first.status is FindMoleGameStatus.READY
+        assert first.expires_at == NOW + timedelta(minutes=5)
+        assert len(first.suspects) == 4
+
+        stale = await service.accuse_find_mole_game(
+            first.launch_token,
+            wrong_suspect,
+            first.revision + 1,
+            "stale-attempt-1",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert stale.status is FindMoleGameStatus.STALE
+        assert (
+            await service.get_find_mole_game(
+                first.launch_token,
+                now=NOW + timedelta(seconds=1),
+            )
+        ).status is FindMoleGameStatus.READY
+
+        failed = await service.accuse_find_mole_game(
+            first.launch_token,
+            wrong_suspect,
+            first.revision,
+            "wrong-attempt-1",
+            now=NOW + timedelta(seconds=2),
+        )
+        assert failed.status is FindMoleGameStatus.FAILED
+        assert (
+            await service.get_chat_status(CHAT_ID)
+        ).active_event_id == event.event_id
+
+        repeated = await service.accuse_find_mole_game(
+            first.launch_token,
+            solution,
+            first.revision,
+            "different-attempt",
+            now=NOW + timedelta(seconds=3),
+        )
+        assert repeated.status is FindMoleGameStatus.FAILED
+
+        second = await service.start_find_mole_game(
+            chat_id=CHAT_ID,
+            message_id=720,
+            user_id=2,
+            username="winner",
+            display_name="Private Winner",
+            now=NOW + timedelta(seconds=3),
+        )
+        won = await service.accuse_find_mole_game(
+            second.launch_token,
+            solution,
+            second.revision,
+            "winning-attempt",
+            now=NOW + timedelta(seconds=4),
+        )
+        assert won.status is FindMoleGameStatus.WON
+        assert won.newly_won
+        assert won.public_name == "@winner"
+        assert (won.item_reward.reward_id, won.item_reward.amount) == (
+            "fake_passport",
+            1,
+        )
+        assert (won.agent_reward.agent_type, won.agent_reward.amount) == (
+            "informant",
+            3,
+        )
+        assert (await service.get_chat_status(CHAT_ID)).story_stage == 4
+
+        retry = await service.accuse_find_mole_game(
+            second.launch_token,
+            solution,
+            second.revision,
+            "winning-attempt",
+            now=NOW + timedelta(seconds=5),
+        )
+        assert retry.status is FindMoleGameStatus.WON
+        assert not retry.newly_won
+        inventory = await service.get_inventory(2)
+        assert [(item.item_type, item.amount) for item in inventory.items] == [
+            ("fake_passport", 1)
+        ]
+        assert [
+            (agent.agent_type, agent.amount) for agent in await service.get_agents(2)
+        ] == [("informant", 3)]
+        histories = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT outcome FROM event_history WHERE event_type = 'find_mole' "
+                "ORDER BY id"
+            ).fetchall()
+        )
+        assert [row[0] for row in histories] == ["failed", "won"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_win_after_stage_three_keeps_story_progress(tmp_path):
+    service = await initialized_service(tmp_path, html5_mole=True)
+    await service.database.transaction(
+        lambda connection: connection.execute(
+            "UPDATE chat_state SET story_arc = 'mole_hunt', story_stage = 4 "
+            "WHERE chat_id = ?",
+            (CHAT_ID,),
+        ),
+        immediate=True,
+    )
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await service.attach_message(event.event_id, 727)
+    solution = await service.database.read(
+        lambda connection: connection.execute(
+            "SELECT solution_suspect_id FROM find_mole_cases WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()[0]
+    )
+    try:
+        run = await service.start_find_mole_game(
+            chat_id=CHAT_ID,
+            message_id=727,
+            user_id=3,
+            username="later_winner",
+            display_name="Private Later",
+            now=NOW + timedelta(seconds=1),
+        )
+        won = await service.accuse_find_mole_game(
+            run.launch_token,
+            solution,
+            run.revision,
+            "later-winning-attempt",
+            now=NOW + timedelta(seconds=2),
+        )
+
+        assert won.status is FindMoleGameStatus.WON
+        assert (await service.get_chat_status(CHAT_ID)).story_stage == 4
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_concurrent_correct_answers_reward_one_winner(tmp_path):
+    service = await initialized_service(tmp_path, html5_mole=True)
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await service.attach_message(event.event_id, 721)
+    solution = await service.database.read(
+        lambda connection: connection.execute(
+            "SELECT solution_suspect_id FROM find_mole_cases WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()[0]
+    )
+    try:
+        runs = [
+            await service.start_find_mole_game(
+                chat_id=CHAT_ID,
+                message_id=721,
+                user_id=user_id,
+                username=f"agent{user_id}",
+                display_name=f"Private {user_id}",
+                now=NOW + timedelta(seconds=1),
+            )
+            for user_id in (11, 12)
+        ]
+        results = await asyncio.gather(
+            *(
+                service.accuse_find_mole_game(
+                    run.launch_token,
+                    solution,
+                    run.revision,
+                    f"correct-{index}-attempt",
+                    now=NOW + timedelta(seconds=2),
+                )
+                for index, run in enumerate(runs)
+            )
+        )
+        assert {result.status for result in results} == {
+            FindMoleGameStatus.WON,
+            FindMoleGameStatus.ALREADY_RESOLVED,
+        }
+        rewarded = []
+        for user_id in (11, 12):
+            agents = await service.get_agents(user_id)
+            inventory = await service.get_inventory(user_id)
+            if agents or inventory.items:
+                rewarded.append(user_id)
+        assert len(rewarded) == 1
+        assert [
+            (agent.agent_type, agent.amount)
+            for agent in await service.get_agents(rewarded[0])
+        ] == [("informant", 3)]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_reward_failure_rolls_back_event_and_inventory(tmp_path):
+    service = await initialized_service(tmp_path, html5_mole=True)
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await service.attach_message(event.event_id, 722)
+    solution = await service.database.read(
+        lambda connection: connection.execute(
+            "SELECT solution_suspect_id FROM find_mole_cases WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()[0]
+    )
+    run = await service.start_find_mole_game(
+        chat_id=CHAT_ID,
+        message_id=722,
+        user_id=21,
+        username="rollback",
+        display_name="Private Rollback",
+        now=NOW + timedelta(seconds=1),
+    )
+    await service.database.transaction(
+        lambda connection: connection.execute(
+            """
+            CREATE TRIGGER fail_mole_agent_reward
+            BEFORE INSERT ON user_agents
+            WHEN NEW.agent_type = 'informant'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced mole reward failure');
+            END
+            """
+        ),
+        immediate=True,
+    )
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="forced mole reward failure"):
+            await service.accuse_find_mole_game(
+                run.launch_token,
+                solution,
+                run.revision,
+                "rollback-attempt",
+                now=NOW + timedelta(seconds=2),
+            )
+        assert (
+            await service.get_chat_status(CHAT_ID)
+        ).active_event_id == event.event_id
+        assert (await service.get_inventory(21)).items == ()
+        restored = await service.get_find_mole_game(
+            run.launch_token,
+            now=NOW + timedelta(seconds=3),
+        )
+        assert restored.status is FindMoleGameStatus.READY
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_session_survives_service_restart(tmp_path):
+    config = settings(tmp_path, html5_mole=True)
+    first = SpyGameService(config, rng=FixedRandom())
+    await first.initialize(now=NOW)
+    await first.enable_chat(CHAT_ID, now=NOW)
+    event = (await first.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await first.attach_message(event.event_id, 725)
+    run = await first.start_find_mole_game(
+        chat_id=CHAT_ID,
+        message_id=725,
+        user_id=31,
+        username="persistent_mole",
+        display_name="Private Persistent",
+        now=NOW + timedelta(seconds=1),
+    )
+    await first.close()
+
+    second = SpyGameService(config, rng=FixedRandom())
+    await second.initialize(now=NOW + timedelta(seconds=2))
+    try:
+        restored = await second.get_find_mole_game(
+            run.launch_token,
+            now=NOW + timedelta(seconds=3),
+        )
+        assert restored.status is FindMoleGameStatus.READY
+        assert restored.event_id == event.event_id
+        assert restored.suspects == run.suspects
+        assert restored.expires_at == run.expires_at
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_inline_fallback_uses_same_resolver_when_html5_is_off(
+    tmp_path,
+):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    await service.attach_message(event.event_id, 726)
+    public_case, solution = await service.database.read(
+        lambda connection: connection.execute(
+            "SELECT public_case_json, solution_suspect_id "
+            "FROM find_mole_cases WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()
+    )
+    wrong = next(
+        suspect["id"]
+        for suspect in json.loads(public_case)["suspects"]
+        if suspect["id"] != solution
+    )
+    try:
+        failed = await service.accuse_find_mole_event(
+            event_id=event.event_id,
+            chat_id=CHAT_ID,
+            user_id=41,
+            username="fallback_wrong",
+            display_name="Private Wrong",
+            suspect_id=wrong,
+            idempotency_key="telegram-query-wrong",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert failed.status is FindMoleGameStatus.FAILED
+
+        won = await service.accuse_find_mole_event(
+            event_id=event.event_id,
+            chat_id=CHAT_ID,
+            user_id=42,
+            username="fallback_winner",
+            display_name="Private Winner",
+            suspect_id=solution,
+            idempotency_key="telegram-query-winner",
+            now=NOW + timedelta(seconds=2),
+        )
+        assert won.status is FindMoleGameStatus.WON
+        assert won.item_reward.amount == 1
+        assert won.agent_reward.amount == 3
+    finally:
+        await service.close()
+
+
 @pytest.mark.asyncio
 async def test_intercept_event_uses_spies_game_and_keeps_text_fallback(tmp_path):
     service = await initialized_service(tmp_path)
@@ -3042,6 +3473,48 @@ async def test_intercept_event_uses_spies_game_and_keeps_text_fallback(tmp_path)
         buttons = kwargs["reply_markup"].inline_keyboard
         assert buttons[0][0].callback_game is not None
         assert len(buttons) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_find_mole_publication_uses_feature_gate_and_keeps_inline_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    service = await initialized_service(tmp_path, html5_mole=True)
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole", now=NOW)).event
+    bot = SimpleNamespace(
+        send_game=AsyncMock(return_value=SimpleNamespace(message_id=723)),
+        token="TOKEN",
+    )
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        mole_game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+    )
+    context = SimpleNamespace(
+        bot=bot,
+        bot_data={"spy_game": service, "spy_webapp": webapp},
+    )
+    try:
+        assert await spy_handlers.publish_spy_event(context, event) == 723
+        keyboard = bot.send_game.await_args.kwargs["reply_markup"]
+        assert keyboard.inline_keyboard[0][0].text == "🔎 Изучить досье"
+
+        send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 724}})
+        monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+        context.bot_data["spy_webapp"] = SimpleNamespace(
+            game_enabled=True,
+            mole_game_enabled=False,
+            settings=SimpleNamespace(game_short_name="spies"),
+        )
+        assert await spy_handlers.publish_spy_event(context, event) == 724
+        buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert len(buttons) == 4
+        assert all(
+            button[0]["callback_data"].startswith("spy:mole_") for button in buttons
+        )
     finally:
         await service.close()
 

@@ -39,6 +39,11 @@ _INTERCEPT_TEMPLATE_BODIES = (
     "Среди радиопомех прозвучала условная фраза. Центр требует немедленной расшифровки.",
     "Перехваченный сигнал выглядит бессмысленным, но одна деталь выдаёт маршрут связного.",
 )
+_FIND_MOLE_TEMPLATE_BODIES = (
+    "Четыре досье легли на стол одновременно. Одно из них принадлежит человеку Секции 7.",
+    "Архив Вяземского восстановлен, но следы в нём ведут к одному из сотрудников сети.",
+    "Центр собрал противоречивые показания. До закрытия дела осталось назвать крота.",
+)
 _COOPERATIVE_TEMPLATE_BODIES = (
     "Центр разворачивает сеть наблюдения сразу в нескольких кварталах. Одному агенту периметр не удержать.",
     "Операция требует синхронной работы нескольких независимых ячеек разведсети.",
@@ -90,6 +95,7 @@ class TemplateNarrator:
             "dead_drop": _DEAD_DROP_TEMPLATE_BODIES,
             "death_operation": _DEATH_OPERATION_TEMPLATE_BODIES,
             "intercept": _INTERCEPT_TEMPLATE_BODIES,
+            "find_mole": _FIND_MOLE_TEMPLATE_BODIES,
             "cooperative_operation": _COOPERATIVE_TEMPLATE_BODIES,
             "chase": _CHASE_TEMPLATE_BODIES,
             "npc": _NPC_TEMPLATE_BODIES,

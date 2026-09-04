@@ -15,6 +15,11 @@ class FixedRandom:
         return self.value
 
 
+class EndRandom:
+    def randint(self, _start, end):
+        return end
+
+
 def settings(tmp_path: Path) -> SpySettings:
     return SpySettings(
         mode="dev",
@@ -90,3 +95,29 @@ async def test_llm_director_failure_uses_rule_based_fallback(tmp_path):
     )
     decision = await director.choose_event(state)
     assert decision.event_type == "recruitment"
+
+
+@pytest.mark.asyncio
+async def test_rule_director_uses_find_mole_from_stage_three(tmp_path):
+    config = settings(tmp_path)
+    early_decision = await RuleBasedDirector(config, EndRandom()).choose_event(
+        director_state(config)
+    )
+    state = DirectorState(
+        **{
+            **director_state(config).__dict__,
+            "recent_events": (),
+            "story_stage": 3,
+        }
+    )
+
+    decision = await RuleBasedDirector(config, FixedRandom(1)).choose_event(state)
+    later_state = DirectorState(**{**state.__dict__, "story_stage": 4})
+    later_decision = await RuleBasedDirector(config, EndRandom()).choose_event(
+        later_state
+    )
+
+    assert early_decision.event_type != "find_mole"
+    assert decision.event_type == "find_mole"
+    assert decision.story_hook == "mole_hunt"
+    assert later_decision.event_type == "find_mole"

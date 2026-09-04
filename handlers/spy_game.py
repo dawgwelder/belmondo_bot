@@ -11,6 +11,10 @@ from telegram.ext import ContextTypes
 
 from config import logger
 from guards import pause
+from telegram.error import BadRequest
+
+from spy_game.death_mission_repository import DeathMissionRun
+from spy_game import death_mission_ui
 from spy_game.models import (
     AgentCost,
     AgencyStatus,
@@ -22,6 +26,7 @@ from spy_game.models import (
     DeathOperationStatus,
     EconomyStatus,
     EquipmentStatus,
+    FindMoleGameStatus,
     Inventory,
     InterceptGameStatus,
     InterceptStatus,
@@ -37,6 +42,7 @@ from spy_game.settings import (
     AGENT_TYPES,
     DEFAULT_HANDLER_RECIPES,
     DEFAULT_INTERCEPT_SCENARIOS,
+    DEFAULT_MOLE_CASES,
     DEFAULT_NPC_RECIPES,
     ITEM_TYPES,
 )
@@ -163,6 +169,7 @@ def _event_keyboard(
     npc_recipes=DEFAULT_NPC_RECIPES,
     handler_reward_multiplier=2,
     npc_reward_multiplier=2,
+    mole_cases=DEFAULT_MOLE_CASES,
 ):
     if event.event_type == "recruitment":
         return _claim_keyboard(event.event_id)
@@ -173,6 +180,17 @@ def _event_keyboard(
                     InlineKeyboardButton(
                         "Обыскать тайник",
                         callback_data=f"spy:search:{event.event_id}",
+                    )
+                ]
+            ]
+        )
+    if event.event_type == "death_operation" and event.config_id == "death_choice_v1":
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Выбрать: all-in или личная миссия",
+                        callback_data=f"spy:deathmenu:{event.event_id}",
                     )
                 ]
             ]
@@ -208,6 +226,24 @@ def _event_keyboard(
                     )
                 ]
                 for option in scenario.options
+            ]
+        )
+    if event.event_type == "find_mole":
+        case = next(
+            (candidate for candidate in mole_cases if candidate.id == event.config_id),
+            None,
+        )
+        if case is None:
+            raise ValueError(f"unknown mole case: {event.config_id}")
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        f"Обвинить: {suspect.codename}",
+                        callback_data=f"spy:mole_{suspect.id}:{event.event_id}",
+                    )
+                ]
+                for suspect in case.suspects
             ]
         )
     if event.event_type == "cooperative_operation":
@@ -274,8 +310,16 @@ def _public_username(user) -> str | None:
     return f"@{user.username.lstrip('@')}"
 
 
-def _html5_game_keyboard(event_type: str) -> InlineKeyboardMarkup:
-    label = "📦 Вскрыть тайник" if event_type == "dead_drop" else "📡 Настроить перехват"
+def _html5_game_keyboard(
+    event_type: str, event_id: str | None = None
+) -> InlineKeyboardMarkup:
+    labels = {
+        "dead_drop": "📦 Вскрыть тайник",
+        "intercept": "📡 Настроить перехват",
+        "find_mole": "🔎 Изучить досье",
+        "death_operation": "🕵️ All-in или личная миссия",
+    }
+    label = labels[event_type]
     return InlineKeyboardMarkup(
         [
             [
@@ -283,7 +327,18 @@ def _html5_game_keyboard(event_type: str) -> InlineKeyboardMarkup:
                     label,
                     callback_game=CallbackGame(),
                 )
-            ]
+            ],
+            *(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Текстовый режим", callback_data=f"spy:deathmenu:{event_id}"
+                        )
+                    ]
+                ]
+                if event_type == "death_operation" and event_id
+                else []
+            ),
         ]
     )
 
@@ -720,6 +775,7 @@ def build_event_blocks(
     recruitment_required: int = 3,
     handler_reward_multiplier: int = 2,
     npc_reward_multiplier: int = 2,
+    mole_case=None,
 ) -> list[dict]:
     lifetime_minutes = max(
         1,
@@ -732,6 +788,7 @@ def build_event_blocks(
     is_cooperative = event.event_type == "cooperative_operation"
     is_chase = event.event_type == "chase"
     is_npc = event.event_type == "npc"
+    is_mole = event.event_type == "find_mole"
     npc_titles = {
         "recruiter": "🧑‍💼 РЕКРУТЕР",
         "operations_chief": "🎖 НАЧАЛЬНИК ОПЕРАЦИЙ",
@@ -741,7 +798,9 @@ def build_event_blocks(
         {
             "type": "paragraph",
             "text": (
-                "💀 СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ"
+                "🔎 НАЙТИ КРОТА"
+                if is_mole
+                else "💀 СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ"
                 if is_death_operation
                 else "📡 ПЕРЕХВАТ"
                 if is_intercept
@@ -760,6 +819,40 @@ def build_event_blocks(
         },
         {"type": "paragraph", "text": narrative.body},
         *(
+            [
+                {"type": "paragraph", "text": mole_case.briefing},
+                {
+                    "type": "details",
+                    "summary": "Улики",
+                    "blocks": [
+                        {
+                            "type": "paragraph",
+                            "text": "\n".join(
+                                f"{index}. {clue}"
+                                for index, clue in enumerate(mole_case.clues, 1)
+                            ),
+                        }
+                    ],
+                },
+                {
+                    "type": "details",
+                    "summary": "Досье подозреваемых",
+                    "blocks": [
+                        {
+                            "type": "paragraph",
+                            "text": (
+                                f"{suspect.codename} · {suspect.role}\n"
+                                f"{suspect.dossier}"
+                            ),
+                        }
+                        for suspect in mole_case.suspects
+                    ],
+                },
+            ]
+            if is_mole and mole_case is not None
+            else []
+        ),
+        *(
             [{"type": "paragraph", "text": intercept_prompt}]
             if is_intercept and intercept_prompt
             else []
@@ -767,7 +860,11 @@ def build_event_blocks(
         {
             "type": "footer",
             "text": (
-                f"Два нажатия для подтверждения. Шанс успеха {death_success_percent}%: "
+                "Одна финальная версия на игрока. Первый верный ответ получает "
+                "случайный предмет и 3 агентов Tier 1. "
+                f"Окно: ~{lifetime_minutes} мин."
+                if is_mole
+                else f"Два нажатия для подтверждения. Шанс успеха {death_success_percent}%: "
                 "провал заберёт всех агентов, успех вернёт состав "
                 f"×{death_reward_multiplier} и даст Tier 3. "
                 f"Окно: ~{lifetime_minutes} мин."
@@ -855,6 +952,7 @@ async def publish_spy_event(
     is_cooperative = event.event_type == "cooperative_operation"
     is_chase = event.event_type == "chase"
     is_npc = event.event_type == "npc"
+    is_mole = event.event_type == "find_mole"
     death_success_percent = (
         service.settings.death_operation_success_percent
         if isinstance(service, SpyGameService)
@@ -887,6 +985,18 @@ async def publish_spy_event(
             None,
         )
     )
+    mole_case = (
+        service.settings.mole_case(event.config_id or "")
+        if isinstance(service, SpyGameService)
+        else next(
+            (
+                candidate
+                for candidate in DEFAULT_MOLE_CASES
+                if candidate.id == event.config_id
+            ),
+            None,
+        )
+    )
     cooperative_required = (
         service.settings.cooperative_required_contributions
         if isinstance(service, SpyGameService)
@@ -898,14 +1008,24 @@ async def publish_spy_event(
         else 3
     )
     webapp = context.bot_data.get("spy_webapp")
-    if (is_dead_drop or (is_intercept and scenario is not None)) and getattr(
-        webapp, "game_enabled", False
-    ):
+    use_html5 = (
+        (
+            is_dead_drop
+            or (is_intercept and scenario is not None)
+            or (is_death_operation and event.config_id == "death_choice_v1")
+        )
+        and getattr(webapp, "game_enabled", False)
+    ) or (
+        is_mole
+        and mole_case is not None
+        and getattr(webapp, "mole_game_enabled", False)
+    )
+    if use_html5:
         try:
             message = await context.bot.send_game(
                 chat_id=event.chat_id,
                 game_short_name=webapp.settings.game_short_name,
-                reply_markup=_html5_game_keyboard(event.event_type),
+                reply_markup=_html5_game_keyboard(event.event_type, event.event_id),
             )
             logger.info(
                 "spy_narrative_selected event_id=%s event_type=%s source=html5_game",
@@ -920,6 +1040,29 @@ async def publish_spy_event(
                 event.event_id,
                 event.event_type,
             )
+    if is_death_operation and event.config_id == "death_choice_v1":
+        message = await context.bot.send_message(
+            chat_id=event.chat_id,
+            text=(
+                "СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ\n\n"
+                f"🎲 All-in: мгновенный исход, шанс {death_success_percent}%, "
+                f"сеть ×{death_reward_multiplier} и Tier 3 ×1.\n\n"
+                f"🕵️ Личная миссия: сеть ×{death_reward_multiplier} и Tier 3 ×2 "
+                "или Tier 4 ×1 за полное прохождение. Есть аварийная эвакуация.\n\n"
+                "В обоих режимах на кону вся доступная сеть. Списание — после подтверждения."
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Открыть выбор режима",
+                            callback_data=f"spy:deathmenu:{event.event_id}",
+                        )
+                    ]
+                ]
+            ),
+        )
+        return message.message_id
     narrative = await _narrator(context).narrate(event)
     if event.event_type == "recruitment":
         progress = RecruitmentProgress(
@@ -951,9 +1094,13 @@ async def publish_spy_event(
             recruitment_required=recruitment_required,
             handler_reward_multiplier=handler_reward_multiplier,
             npc_reward_multiplier=npc_reward_multiplier,
+            mole_case=mole_case,
         ),
         fallback_text=(
-            "💀 Смертельная операция\n"
+            "🔎 Найти крота\nИзучите улики и выберите одного подозреваемого. "
+            "У каждого игрока только одна финальная версия."
+            if is_mole
+            else "💀 Смертельная операция\n"
             f"Поставьте всех агентов: {death_success_percent}% на возврат состава "
             f"×{death_reward_multiplier} и бонус Tier 3."
             if is_death_operation
@@ -988,6 +1135,11 @@ async def publish_spy_event(
             ),
             handler_reward_multiplier,
             npc_reward_multiplier,
+            (
+                service.settings.mole_cases
+                if isinstance(service, SpyGameService)
+                else DEFAULT_MOLE_CASES
+            ),
         ),
     )
     logger.info(
@@ -1027,21 +1179,13 @@ async def spy_html5_game_launch(
         return
     try:
         service = _service(context)
-        result = await service.start_intercept_game(
+        result = await service.start_html5_game(
             chat_id=chat.id,
             message_id=message.message_id,
             user_id=user.id,
             username=user.username,
             display_name=_display_name(user),
         )
-        if result.status is InterceptGameStatus.NOT_FOUND:
-            result = await service.start_dead_drop_game(
-                chat_id=chat.id,
-                message_id=message.message_id,
-                user_id=user.id,
-                username=user.username,
-                display_name=_display_name(user),
-            )
     except Exception:
         logger.exception(
             "spy_game: failed to start HTML5 operation chat_id=%s message_id=%s",
@@ -1050,12 +1194,30 @@ async def spy_html5_game_launch(
         )
         await query.answer("Не удалось открыть операцию.", show_alert=True)
         return
-    if result.status in {InterceptGameStatus.READY, DeadDropGameStatus.READY}:
+    if isinstance(result, DeathMissionRun):
+        if result.launch_token:
+            await query.answer(url=webapp.game_launch_url(result.launch_token))
+        else:
+            await query.answer("Операция уже занята или недоступна.", show_alert=True)
+        return
+    if result.status in {
+        InterceptGameStatus.READY,
+        DeadDropGameStatus.READY,
+        FindMoleGameStatus.READY,
+    }:
         launch_url = webapp.game_launch_url(result.launch_token)
         if launch_url:
             await query.answer(url=launch_url)
             return
-    if isinstance(result.status, DeadDropGameStatus):
+    if isinstance(result.status, FindMoleGameStatus):
+        messages = {
+            FindMoleGameStatus.ALREADY_PLAYED: "Вы уже выдвинули финальную версию.",
+            FindMoleGameStatus.ALREADY_RESOLVED: "Крот уже раскрыт.",
+            FindMoleGameStatus.EXPIRED: "Дело уже закрыто Центром.",
+            FindMoleGameStatus.DISABLED: "HTML5-досье пока выключено.",
+        }
+        fallback = "Это дело больше недоступно."
+    elif isinstance(result.status, DeadDropGameStatus):
         messages = {
             DeadDropGameStatus.ALREADY_PLAYED: "Вы уже использовали попытку.",
             DeadDropGameStatus.ALREADY_RESOLVED: "Тайник уже вскрыт.",
@@ -1094,6 +1256,157 @@ async def _remove_event_keyboard(context, chat_id: int, message_id: int | None) 
         )
 
 
+async def _death_mission_callback(update, context, category, value):
+    service = _service(context)
+    async with death_mission_ui.delivery_lock(service):
+        await _death_mission_callback_locked(update, context, category, value)
+    await death_mission_ui.publish_pending(service, context.bot)
+
+
+async def _death_mission_callback_locked(update, context, category, value):
+    query, user, chat = (
+        update.callback_query,
+        update.effective_user,
+        update.effective_chat,
+    )
+    service = _service(context)
+    if query.message is None:
+        await query.answer("Откройте сообщение операции в группе.", show_alert=True)
+        return
+    message_id = query.message.message_id
+    code = None
+    try:
+        if category == "deathmenu":
+            event_matches = await service.database.read(
+                lambda connection: connection.execute(
+                    "SELECT 1 FROM game_events WHERE id=? AND chat_id=? AND message_id=?",
+                    (value, chat.id, message_id),
+                ).fetchone()
+                is not None
+            )
+            if not event_matches:
+                await query.answer("Это сообщение другой операции.", show_alert=True)
+                return
+            result = await service.start_death_mission(
+                chat_id=chat.id,
+                message_id=message_id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+            )
+            if not result.launch_token:
+                await query.answer(
+                    "Операция уже занята или недоступна.", show_alert=True
+                )
+                return
+            run_id = await service.death_mission_run_id(result.launch_token)
+        else:
+            run_id, revision, code = value.split(".")
+            if code not in {"askextract", "askabandon"}:
+                action, choice = death_mission_ui.decode(code)
+                result = await service.mission_callback(
+                    run_id=run_id,
+                    user_id=user.id,
+                    chat_id=chat.id,
+                    message_id=message_id,
+                    action=action,
+                    revision=int(revision),
+                    operation_id=query.id,
+                    choice=choice,
+                )
+                if result.status == "forbidden":
+                    await query.answer("Это операция другого агента.", show_alert=True)
+                    return
+                if result.payload.get("error"):
+                    await query.answer(
+                        death_mission_ui.ERRORS.get(
+                            result.payload["error"], "Действие недоступно."
+                        ),
+                        show_alert=True,
+                    )
+                else:
+                    await query.answer()
+
+        # Read the latest revision, including after an idempotent retry.
+        def current(connection):
+            row = service.repository.death_mission.row(connection, run_id=run_id)
+            if not row or (row["user_id"], row["chat_id"], row["message_id"]) != (
+                user.id,
+                chat.id,
+                message_id,
+            ):
+                return None
+            from spy_game.service import utc_now
+
+            row = service.repository.death_mission.refresh(connection, row, utc_now())
+            return (
+                service.repository.death_mission.view(connection, row).payload,
+                row["event_id"],
+            )
+
+        latest = await service.database.transaction(current, immediate=True)
+        if latest is None:
+            await query.answer("Это операция другого агента.", show_alert=True)
+            return
+        payload, event_id = latest
+        if category == "deathmenu" or code in {"askextract", "askabandon"}:
+            await query.answer()
+        if payload["status"] in death_mission_ui.TERMINAL:
+            return
+        markup = death_mission_ui.keyboard(payload, run_id, event_id)
+        copy = death_mission_ui.text(payload)
+        if code in {"askextract", "askabandon"} and payload["status"] == "in_run":
+            extract = code == "askextract"
+            if extract and not payload["mission"]["checkpoint"]:
+                return
+            action = "extract" if extract else "abandon"
+            copy += "\n\n" + (
+                "Завершить миссию и вернуть указанный состав?"
+                if extract
+                else "Сдаться и потерять всю ставку?"
+            )
+            markup = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Подтвердить",
+                            callback_data=f"spy:mission:{run_id}.{payload['revision']}.{action}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "Продолжить миссию",
+                            callback_data=f"spy:deathmenu:{event_id}",
+                        )
+                    ],
+                ]
+            )
+        if getattr(query.message, "game", None) is not None:
+            markup = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Открыть HTML5", callback_game=CallbackGame()
+                        )
+                    ],
+                    *(markup.inline_keyboard if markup else []),
+                ]
+            )
+        try:
+            await query.edit_message_text(text=copy, reply_markup=markup)
+        except BadRequest as error:
+            if "message is not modified" not in str(error).lower():
+                raise
+    except (ValueError, TypeError):
+        await query.answer("Некорректное действие операции.", show_alert=True)
+    except Exception:
+        logger.exception("death mission callback failed")
+        await query.answer(
+            "Не удалось получить ответ. Откройте операцию повторно: состояние сохранено на сервере.",
+            show_alert=True,
+        )
+
+
 async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
@@ -1106,6 +1419,10 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     service = _service(context)
     category, value = parts[1], parts[2]
+
+    if category in {"deathmenu", "mission"}:
+        await _death_mission_callback(update, context, category, value)
+        return
 
     if category == "menu":
         if value not in {
@@ -1139,6 +1456,13 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 ", ".join(f"{item.agent_type} ×{item.amount}" for item in holdings)
                 or "пока пуста"
             )
+            reserved = await service.reserved_mission_agents(user.id)
+            if reserved:
+                copy = "На Смертельной операции: " + death_mission_ui.bundle_text(
+                    reserved
+                )
+                blocks.append({"type": "paragraph", "text": copy})
+                fallback += "\n" + copy
         elif value == "inventory":
             await _profile_for_update(update, service)
             inventory = await service.get_inventory(user.id)
@@ -1393,6 +1717,67 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.answer("Предмет снят.", show_alert=True)
         else:
             await query.answer("Этот слот уже пуст.", show_alert=True)
+        return
+
+    if category.startswith("mole_"):
+        suspect_id = category.removeprefix("mole_")
+        try:
+            result = await service.accuse_find_mole_event(
+                event_id=value,
+                chat_id=chat.id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+                suspect_id=suspect_id,
+                idempotency_key=query.id,
+            )
+        except Exception:
+            logger.exception("spy_game: mole accusation failed event_id=%s", value)
+            await query.answer(
+                "Центр не принял версию. Попробуйте ещё раз.",
+                show_alert=True,
+            )
+            return
+        if result.status is FindMoleGameStatus.WON:
+            item = ITEM_TYPES[result.item_reward.reward_id]
+            agent = AGENT_TYPES[result.agent_reward.agent_type]
+            reward_text = (
+                f"{item.emoji} {item.display_name} ×{result.item_reward.amount} и "
+                f"{agent.emoji} {agent.display_name} ×{result.agent_reward.amount}"
+            )
+            await query.answer(f"Крот раскрыт. Награда: {reward_text}", show_alert=True)
+            await _remove_event_keyboard(context, chat.id, result.message_id)
+            await _send_rich(
+                context,
+                chat.id,
+                [
+                    {"type": "paragraph", "text": "✅ КРОТ РАСКРЫТ"},
+                    {
+                        "type": "paragraph",
+                        "text": (
+                            f"{_public_label(user)} завершил расследование и получил "
+                            f"{reward_text}."
+                        ),
+                    },
+                ],
+                fallback_text=(
+                    f"✅ {_public_label(user)} раскрыл крота и получил {reward_text}."
+                ),
+            )
+        elif result.status is FindMoleGameStatus.FAILED:
+            await query.answer(
+                "Версия оказалась неверной. Ваша попытка завершена; остальные "
+                "агенты могут продолжить.",
+                show_alert=True,
+            )
+        elif result.status is FindMoleGameStatus.ALREADY_PLAYED:
+            await query.answer("Вы уже выдвинули финальную версию.", show_alert=True)
+        elif result.status is FindMoleGameStatus.EXPIRED:
+            await query.answer("Время расследования закончилось.", show_alert=True)
+        elif result.status is FindMoleGameStatus.ALREADY_RESOLVED:
+            await query.answer("Другой агент уже раскрыл крота.", show_alert=True)
+        else:
+            await query.answer("Это дело сейчас недоступно.", show_alert=True)
         return
 
     if category == "search":
@@ -1993,6 +2378,7 @@ async def spy_game_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         logger.exception("spy_game: scheduler tick failed")
         return
+    await death_mission_ui.publish_pending(service, context.bot)
     for expired in result.expired:
         await _remove_event_keyboard(
             context,
@@ -2146,7 +2532,7 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.effective_message.reply_text(
             "Использование: /spy_admin enable|disable|spawn "
-            "[recruitment|dead_drop|intercept|cooperative_operation|chase|"
+            "[recruitment|dead_drop|intercept|find_mole|cooperative_operation|chase|"
             "handler|npc|death_operation]|activity "
             "[calm|balanced|aggressive]|status"
         )

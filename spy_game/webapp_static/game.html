@@ -6,7 +6,8 @@
     <meta name="color-scheme" content="dark">
     <title>Операция · Spy Clicker</title>
     <link rel="stylesheet" href="game.css">
-    <script src="game.js?v=2" defer></script>
+    <script src="death.js?v=1" defer></script>
+    <script src="game.js?v=4" defer></script>
   </head>
   <body>
     <main class="console">
@@ -68,6 +69,33 @@
         <p id="code-feedback" class="feedback" aria-live="polite"></p>
         <ol id="attempt-history" class="attempt-history"></ol>
       </section>
+
+      <section id="mole-mission" class="screen hidden">
+        <p id="mole-briefing" class="prompt"></p>
+        <section class="case-panel">
+          <p class="eyebrow">УЛИКИ</p>
+          <ol id="mole-clues" class="clue-list"></ol>
+        </section>
+        <p class="eyebrow dossier-heading">ДОСЬЕ ПОДОЗРЕВАЕМЫХ</p>
+        <div id="mole-suspects" class="suspect-grid"></div>
+        <button id="accuse" class="action-button" type="button" disabled>
+          Выдвинуть финальную версию
+        </button>
+        <p class="feedback">Версию нельзя изменить после подтверждения.</p>
+      </section>
+
+      <section id="mole-confirm" class="screen hidden" aria-live="polite">
+        <div class="result-icon danger">!</div>
+        <p class="eyebrow">НЕОБРАТИМОЕ РЕШЕНИЕ</p>
+        <h2>Обвинить <span id="accused-name"></span>?</h2>
+        <p id="accused-copy"></p>
+        <div class="confirm-actions">
+          <button id="cancel-accuse" class="secondary-button" type="button">Вернуться</button>
+          <button id="confirm-accuse" class="action-button danger-button" type="button">Обвинить</button>
+        </div>
+      </section>
+
+      <section id="death-mission" class="screen hidden" aria-live="polite"></section>
 
       <section id="result" class="screen hidden" aria-live="polite">
         <div id="result-icon" class="result-icon">✓</div>

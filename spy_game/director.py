@@ -49,8 +49,16 @@ class RuleBasedDirector:
             "cooperative_operation",
             "chase",
             "npc",
+            "find_mole",
         }:
             return DirectorDecision("recruitment", "bureaucratic", state.story_arc, 1)
+
+        if (
+            state.story_arc == "mole_hunt"
+            and state.story_stage == 3
+            and "find_mole" in state.allowed_events
+        ):
+            return DirectorDecision("find_mole", "paranoid", "mole_hunt", 3)
 
         recent_counts = {
             event_type: state.recent_events.count(event_type)
@@ -59,6 +67,10 @@ class RuleBasedDirector:
         weighted: list[tuple[str, int]] = []
         for configured in self.settings.event_weights:
             if configured.event_type not in state.allowed_events:
+                continue
+            if configured.event_type == "find_mole" and not (
+                state.story_arc == "mole_hunt" and state.story_stage >= 3
+            ):
                 continue
             weight = max(1, configured.weight - recent_counts[configured.event_type])
             if (
@@ -71,9 +83,6 @@ class RuleBasedDirector:
                     weight += 3
             if state.story_arc == "mole_hunt" and state.story_stage == 2:
                 if configured.event_type == "handler":
-                    weight += 3
-            if state.story_arc == "mole_hunt" and state.story_stage == 3:
-                if configured.event_type == "npc":
                     weight += 3
             weighted.append((configured.event_type, weight))
         if not weighted:

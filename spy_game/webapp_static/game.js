@@ -2,7 +2,9 @@
   "use strict";
 
   const fragment = new URLSearchParams(window.location.hash.slice(1));
-  const token = fragment.get("run") || "";
+  let savedDeathToken = "";
+  try { savedDeathToken = sessionStorage.getItem("spy-death-run") || ""; } catch (_) { /* Telegram can reopen the run. */ }
+  const token = fragment.get("run") || savedDeathToken;
   if (token) {
     window.history.replaceState(
       null,
@@ -15,12 +17,16 @@
   const frequency = $("frequency");
   const lockButton = $("lock");
   const codeButton = $("try-code");
+  const accuseButton = $("accuse");
+  const confirmAccuseButton = $("confirm-accuse");
   let state = null;
   let round = 0;
   let locks = [];
   let digits = [];
   let finished = false;
   let timerId = null;
+  let selectedSuspect = null;
+  let accusationKey = null;
 
   function show(id) {
     document.querySelectorAll(".screen").forEach((screen) => {
@@ -155,7 +161,92 @@
     }
   }
 
+  function renderMoleCase() {
+    $("mole-briefing").textContent = state.briefing;
+    const clues = $("mole-clues");
+    clues.replaceChildren();
+    state.clues.forEach((clue) => {
+      const item = document.createElement("li");
+      item.textContent = clue;
+      clues.appendChild(item);
+    });
+    const suspects = $("mole-suspects");
+    suspects.replaceChildren();
+    state.suspects.forEach((suspect) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "suspect-card";
+      button.dataset.suspectId = suspect.id;
+      const codename = document.createElement("strong");
+      codename.textContent = suspect.codename;
+      const role = document.createElement("span");
+      role.className = "suspect-role";
+      role.textContent = suspect.role;
+      const dossier = document.createElement("span");
+      dossier.className = "suspect-dossier";
+      dossier.textContent = suspect.dossier;
+      button.append(codename, role, dossier);
+      suspects.appendChild(button);
+    });
+  }
+
+  function chooseSuspect(suspectId) {
+    selectedSuspect = state.suspects.find((suspect) => suspect.id === suspectId);
+    document.querySelectorAll(".suspect-card").forEach((card) => {
+      card.classList.toggle("selected", card.dataset.suspectId === suspectId);
+    });
+    accuseButton.disabled = !selectedSuspect;
+  }
+
+  function showAccusationConfirmation() {
+    if (!selectedSuspect || finished) return;
+    $("accused-name").textContent = selectedSuspect.codename;
+    $("accused-copy").textContent =
+      "Неверное обвинение завершит вашу личную сессию. Остальные агенты смогут продолжить расследование.";
+    show("mole-confirm");
+  }
+
+  async function submitAccusation() {
+    if (!selectedSuspect || finished || confirmAccuseButton.disabled) return;
+    confirmAccuseButton.disabled = true;
+    $("cancel-accuse").disabled = true;
+    accusationKey = accusationKey || (window.crypto && window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    try {
+      state = await api("mole/accuse", {
+        method: "POST",
+        body: JSON.stringify({
+          suspect_id: selectedSuspect.id,
+          revision: state.revision,
+          idempotency_key: accusationKey
+        })
+      });
+      if (state.status === "stale") {
+        state = await api("state");
+        confirmAccuseButton.disabled = false;
+        $("cancel-accuse").disabled = false;
+        show("mole-mission");
+        return;
+      }
+      finished = true;
+      stopTimer();
+      renderResult();
+    } catch (error) {
+      confirmAccuseButton.disabled = false;
+      $("cancel-accuse").disabled = false;
+      $("accused-copy").textContent =
+        `${error.message || "Центр не ответил."} Повторите отправку той же версии.`;
+    }
+  }
+
   function renderReward() {
+    if (state.rewards) {
+      $("reward").textContent = state.rewards
+        .map((reward) => `${reward.emoji} ${reward.name} ×${reward.amount}`)
+        .join("\n");
+      return;
+    }
     $("reward").textContent = state.reward
       ? `${state.reward.emoji} ${state.reward.name}${state.reward.amount
         ? ` ×${state.reward.amount}`
@@ -172,7 +263,10 @@
     $("result-icon").classList.remove("danger");
     if (state.status === "won") {
       $("result-icon").textContent = "✓";
-      if (state.game_type === "dead_drop") {
+      if (state.game_type === "find_mole") {
+        $("result-title").textContent = "Крот раскрыт";
+        $("result-copy").textContent = "Ваша версия подтверждена Центром.";
+      } else if (state.game_type === "dead_drop") {
         $("result-title").textContent = "Тайник вскрыт";
         $("result-copy").textContent = "Вы первым подобрали код.";
       } else {
@@ -183,23 +277,31 @@
     } else if (state.status === "failed") {
       $("result-icon").textContent = "×";
       $("result-icon").classList.add("danger");
-      $("result-title").textContent = state.game_type === "dead_drop"
-        ? "Замок устоял"
-        : "Недостаточно данных";
-      $("result-copy").textContent = state.game_type === "dead_drop"
-        ? "Ваша попытка использована, но тайник ещё могут вскрыть другие агенты."
-        : "Ваша попытка использована, но другие агенты ещё могут перехватить канал.";
+      $("result-title").textContent = state.game_type === "find_mole"
+        ? "Версия не подтвердилась"
+        : state.game_type === "dead_drop"
+          ? "Замок устоял"
+          : "Недостаточно данных";
+      $("result-copy").textContent = state.game_type === "find_mole"
+        ? "Ваша попытка завершена, но другие агенты могут продолжить расследование."
+        : state.game_type === "dead_drop"
+          ? "Ваша попытка использована, но тайник ещё могут вскрыть другие агенты."
+          : "Ваша попытка использована, но другие агенты ещё могут перехватить канал.";
     } else if (state.status === "expired") {
       $("result-icon").textContent = "⌛";
-      $("result-title").textContent = state.game_type === "dead_drop"
-        ? "Тайник изъят"
-        : "Сигнал исчез";
+      $("result-title").textContent = state.game_type === "find_mole"
+        ? "Дело закрыто"
+        : state.game_type === "dead_drop"
+          ? "Тайник изъят"
+          : "Сигнал исчез";
       $("result-copy").textContent = "Время операции закончилось.";
     } else {
       $("result-icon").textContent = "◆";
-      $("result-title").textContent = state.game_type === "dead_drop"
-        ? "Тайник уже вскрыт"
-        : "Канал уже перехвачен";
+      $("result-title").textContent = state.game_type === "find_mole"
+        ? "Крот уже раскрыт"
+        : state.game_type === "dead_drop"
+          ? "Тайник уже вскрыт"
+          : "Канал уже перехвачен";
       $("result-copy").textContent = "Другой агент завершил операцию раньше.";
     }
   }
@@ -241,7 +343,7 @@
     const expiresAt = Date.parse(state.expires_at);
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-      if (state.game_type === "dead_drop") {
+      if (state.game_type === "dead_drop" || state.game_type === "find_mole") {
         const minutes = Math.floor(remaining / 60);
         const seconds = String(remaining % 60).padStart(2, "0");
         $("timer").textContent = `${minutes}:${seconds}`;
@@ -283,6 +385,14 @@
     $(`digit-${index}`).textContent = String(digits[index]);
   });
   codeButton.addEventListener("click", submitCode);
+  $("mole-suspects").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-suspect-id]");
+    if (!button || finished) return;
+    chooseSuspect(button.dataset.suspectId);
+  });
+  accuseButton.addEventListener("click", showAccusationConfirmation);
+  $("cancel-accuse").addEventListener("click", () => show("mole-mission"));
+  confirmAccuseButton.addEventListener("click", submitAccusation);
   frequency.addEventListener("input", updateSignal);
 
   async function boot() {
@@ -292,12 +402,24 @@
     }
     try {
       state = await api("state");
+      if (state.game_type === "death_operation") {
+        try { sessionStorage.setItem("spy-death-run", token); } catch (_) { /* Storage may be disabled. */ }
+        show("death-mission");
+        window.startDeathMission(state, api);
+        return;
+      }
       if (state.status !== "ready") {
         finished = true;
         renderResult();
         return;
       }
-      if (state.game_type === "dead_drop") {
+      if (state.game_type === "find_mole") {
+        document.title = "Найти крота · Spy Clicker";
+        $("eyebrow").textContent = "ДЕЛО СЕКЦИИ 7";
+        $("operation-title").textContent = state.title;
+        renderMoleCase();
+        show("mole-mission");
+      } else if (state.game_type === "dead_drop") {
         document.title = "Вскрытие тайника · Spy Clicker";
         $("eyebrow").textContent = "ЗАЩИЩЁННЫЙ КОНТЕЙНЕР";
         $("operation-title").textContent = "Вскрытие тайника";

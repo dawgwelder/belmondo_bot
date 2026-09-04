@@ -17,6 +17,8 @@ from .models import (
     ItemCost,
     ItemCategory,
     ItemType,
+    MoleCaseTemplate,
+    MoleSuspect,
     NpcRecipe,
 )
 
@@ -60,6 +62,7 @@ DEFAULT_EVENT_WEIGHTS = (
     EventWeight("handler", 2),
     EventWeight("npc", 1),
     EventWeight("death_operation", 1),
+    EventWeight("find_mole", 1),
 )
 
 ACTIVITY_PROFILES = ("calm", "balanced", "aggressive")
@@ -86,6 +89,103 @@ DEFAULT_INTERCEPT_SCENARIOS = (
         ),
         correct_option_id="north",
         reward_item="intel_file",
+    ),
+)
+
+DEFAULT_MOLE_CASES = (
+    MoleCaseTemplate(
+        id="archive_leak",
+        version=1,
+        title="Утечка из архива Секции 7",
+        briefing=(
+            "Крот вынес копию личного дела Вяземского. Сопоставьте маршрут, "
+            "служебный канал и след на архивной плёнке."
+        ),
+        clues=(
+            "Копию сняли на плёнку из восточного архивного терминала.",
+            "Крот вышел через речной КПП и передал пакет по каналу «Янтарь».",
+            "Журнал доступа диспетчерской подтверждён: его запись не подделывали.",
+            "На плёнке осталась красная пыль из ремонтного тоннеля.",
+        ),
+        suspects=(
+            MoleSuspect(
+                "orion",
+                "Орион",
+                "архивист",
+                "Работал у западного терминала; канал «Кобальт», выход через метро.",
+                ("west_terminal", "cobalt", "metro"),
+            ),
+            MoleSuspect(
+                "lark",
+                "Жаворонок",
+                "курьер",
+                "Был у восточного терминала и шёл через речной КПП; "
+                "канал «Янтарь», одежда в красной пыли.",
+                ("east_terminal", "amber", "river", "red_dust"),
+            ),
+            MoleSuspect(
+                "sable",
+                "Соболь",
+                "аналитик",
+                "Оставался в диспетчерской; канал «Янтарь», выход через метро.",
+                ("control_room", "amber", "metro", "verified_log"),
+            ),
+            MoleSuspect(
+                "atlas",
+                "Атлас",
+                "техник связи",
+                "Осматривал восточный терминал; канал «Фиолет», выход через северный КПП.",
+                ("east_terminal", "violet", "north", "red_dust"),
+            ),
+        ),
+        solution_tags=("east_terminal", "amber", "river", "red_dust"),
+    ),
+    MoleCaseTemplate(
+        id="embassy_signal",
+        version=1,
+        title="Сигнал у старого посольства",
+        briefing=(
+            "Перед исчезновением полковник оставил четыре перекрёстные отметки. "
+            "Только одно досье совпадает со всеми следами."
+        ),
+        clues=(
+            "Передатчик включили с крыши старого посольства.",
+            "В эфир ушёл позывной «Маяк».",
+            "Курьер унёс пакет на северный вокзал.",
+            "На конверте найдено масло от типографского пресса.",
+        ),
+        suspects=(
+            MoleSuspect(
+                "rook",
+                "Ладья",
+                "радист",
+                "Был на крыше посольства; позывной «Маяк», маршрут к порту.",
+                ("embassy_roof", "beacon", "harbor"),
+            ),
+            MoleSuspect(
+                "mistral",
+                "Мистраль",
+                "печатник",
+                "С крыши посольства нёс пакет на северный вокзал; "
+                "позывной «Маяк», след типографского масла.",
+                ("embassy_roof", "beacon", "north_station", "press_oil"),
+            ),
+            MoleSuspect(
+                "cedar",
+                "Кедр",
+                "дипкурьер",
+                "Нёс пакет к посольству; позывной «Факел», маршрут к северному вокзалу.",
+                ("embassy_lobby", "torch", "north_station"),
+            ),
+            MoleSuspect(
+                "vega",
+                "Вега",
+                "наблюдатель",
+                "Дежурил напротив посольства; позывной «Маяк», след оружейного масла.",
+                ("embassy_street", "beacon", "gun_oil"),
+            ),
+        ),
+        solution_tags=("embassy_roof", "beacon", "north_station", "press_oil"),
     ),
 )
 
@@ -292,10 +392,19 @@ class SpySettings:
     intercept_game_success_score: int = 3000
     dead_drop_game_code_length: int = 3
     dead_drop_game_run_seconds: int = 5 * 60
+    html5_mole_enabled: bool = False
+    mole_game_run_seconds: int = 5 * 60
+    mole_suspect_count: int = 4
+    mole_reward_item_amount: int = 1
+    mole_reward_agent_type: str = "informant"
+    mole_reward_agent_amount: int = 3
     duel_stake_agent_type: str = "informant"
     duel_stake_amounts: tuple[int, ...] = (1, 3, 5)
     duel_accept_seconds: int = 120
     duel_move_seconds: int = 180
+    death_mission_enabled: bool = False
+    death_mission_seconds: int = 15 * 60
+    death_mission_tier4_pool: tuple[str, ...] = ("resident", "illegal_agent")
     death_operation_success_percent: int = 35
     death_operation_confirmation_seconds: int = 60
     death_operation_reward_multiplier: int = 2
@@ -335,6 +444,12 @@ class SpySettings:
     )
     intercept_scenarios: tuple[InterceptScenario, ...] = field(
         default_factory=lambda: DEFAULT_INTERCEPT_SCENARIOS
+    )
+    mole_cases: tuple[MoleCaseTemplate, ...] = field(
+        default_factory=lambda: DEFAULT_MOLE_CASES
+    )
+    mole_reward_item_pool: tuple[str, ...] = field(
+        default_factory=lambda: tuple(ITEM_TYPES)
     )
 
     def __post_init__(self) -> None:
@@ -377,10 +492,12 @@ class SpySettings:
             "cooperative_operation",
             "chase",
             "npc",
+            "find_mole",
         }:
             raise ValueError(
                 "event weights must configure recruitment, dead_drop, handler "
-                "and death_operation, intercept, cooperative_operation, chase and npc"
+                "and death_operation, intercept, cooperative_operation, chase, npc "
+                "and find_mole"
             )
         if any(item.weight <= 0 for item in self.event_weights):
             raise ValueError("event weights must be positive")
@@ -410,6 +527,20 @@ class SpySettings:
             raise ValueError("dead drop game code length must be between 2 and 6")
         if self.dead_drop_game_run_seconds <= 0:
             raise ValueError("dead drop game duration must be positive")
+        if self.mole_game_run_seconds <= 0 or self.mole_suspect_count != 4:
+            raise ValueError("mole game requires four suspects and a positive duration")
+        if (
+            self.mole_reward_item_amount <= 0
+            or not self.mole_reward_item_pool
+            or any(item_id not in ITEM_TYPES for item_id in self.mole_reward_item_pool)
+        ):
+            raise ValueError("mole item reward pool is invalid")
+        if (
+            self.mole_reward_agent_type not in AGENT_TYPES
+            or AGENT_TYPES[self.mole_reward_agent_type].tier != 1
+            or self.mole_reward_agent_amount <= 0
+        ):
+            raise ValueError("mole agent reward must contain a Tier 1 agent")
         if self.duel_stake_agent_type not in AGENT_TYPES:
             raise ValueError("duel stake agent type is unknown")
         if (
@@ -420,6 +551,13 @@ class SpySettings:
             raise ValueError("duel stake amounts must be positive and unique")
         if self.duel_accept_seconds <= 0 or self.duel_move_seconds <= 0:
             raise ValueError("duel timeouts must be positive")
+        if self.death_mission_seconds <= 0:
+            raise ValueError("death mission duration must be positive")
+        if not self.death_mission_tier4_pool or any(
+            agent not in AGENT_TYPES or AGENT_TYPES[agent].tier != 4
+            for agent in self.death_mission_tier4_pool
+        ):
+            raise ValueError("death mission bonus pool must contain Tier 4 agents")
         if not 0 <= self.death_operation_success_percent <= 100:
             raise ValueError("death operation success chance must be between 0 and 100")
         if self.death_operation_confirmation_seconds <= 0:
@@ -489,6 +627,20 @@ class SpySettings:
                 or scenario.reward_amount <= 0
             ):
                 raise ValueError("intercept scenario is invalid")
+        case_ids = [case.id for case in self.mole_cases]
+        if not case_ids or len(case_ids) != len(set(case_ids)):
+            raise ValueError("mole case IDs must be non-empty and unique")
+        for case in self.mole_cases:
+            suspect_ids = [suspect.id for suspect in case.suspects]
+            if (
+                case.version <= 0
+                or len(suspect_ids) != self.mole_suspect_count
+                or len(suspect_ids) != len(set(suspect_ids))
+                or not case.clues
+                or not case.solution_tags
+                or len(case.solution_candidates) != 1
+            ):
+                raise ValueError("mole case must have exactly one valid solution")
         if not self.dead_drop_entries:
             raise ValueError("dead drop registry must not be empty")
         for entry in self.dead_drop_entries:
@@ -540,6 +692,9 @@ class SpySettings:
             ),
             None,
         )
+
+    def mole_case(self, case_id: str) -> MoleCaseTemplate | None:
+        return next((case for case in self.mole_cases if case.id == case_id), None)
 
     def npc_recipe(self, recipe_id: str) -> NpcRecipe | None:
         return next(
@@ -641,6 +796,10 @@ class SpySettings:
             llm_director_timeout_seconds=_env_int(
                 "SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS", 8
             ),
+            html5_mole_enabled=_env_bool("SPY_GAME_HTML5_MOLE_ENABLED", False),
+            death_mission_enabled=_env_bool("SPY_GAME_DEATH_ROGUELITE_ENABLED", False),
+            death_mission_seconds=_env_int("SPY_GAME_DEATH_MISSION_SECONDS", 900),
+            mole_game_run_seconds=_env_int("SPY_GAME_MOLE_RUN_SECONDS", 5 * 60),
         )
 
     def chat_is_allowed(self, chat_id: int) -> bool:

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from .activity import ActivityTracker
 from .database import SQLiteDatabase
+from .death_mission_repository import DeathMissionRun
 from .director import GameDirector, build_director
 from .duels import DUEL_ACTIONS, SpyDuelRepository
 from .models import (
@@ -37,6 +38,8 @@ from .models import (
     EquipmentResult,
     EquipmentStatus,
     ExchangeResult,
+    FindMoleGameRun,
+    FindMoleGameStatus,
     Inventory,
     InterceptGameRun,
     InterceptGameStatus,
@@ -85,6 +88,12 @@ class SpyGameService:
     async def initialize(self, *, now: datetime | None = None) -> None:
         await self.database.initialize()
         current = now or utc_now()
+        await self.database.transaction(
+            lambda connection: self.repository.death_mission.reconcile(
+                connection, current
+            ),
+            immediate=True,
+        )
         self._startup_expired = await self.database.transaction(
             lambda connection: self.repository.reconcile(connection, current),
             immediate=True,
@@ -115,6 +124,12 @@ class SpyGameService:
         current = now or utc_now()
         await self.database.transaction(
             lambda connection: self.duel_repository.reconcile(connection, current),
+            immediate=True,
+        )
+        await self.database.transaction(
+            lambda connection: self.repository.death_mission.reconcile(
+                connection, current
+            ),
             immediate=True,
         )
         if not self.settings.enabled:
@@ -243,6 +258,7 @@ class SpyGameService:
             "cooperative_operation",
             "chase",
             "npc",
+            "find_mole",
         }:
             return AdminResult(False, "Неизвестный тип события.")
         current = now or utc_now()
@@ -376,6 +392,146 @@ class SpyGameService:
             immediate=True,
         )
 
+    async def start_death_mission(
+        self, *, chat_id, message_id, user_id, username, display_name, now=None
+    ) -> DeathMissionRun:
+        if not self.chat_is_available(chat_id):
+            return DeathMissionRun(
+                {"game_type": "death_operation", "status": "disabled"}
+            )
+        token = secrets.token_urlsafe(32)
+        result = await self.database.transaction(
+            lambda connection: self.repository.death_mission.start(
+                connection,
+                chat_id=chat_id,
+                message_id=message_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                token_hash=self._game_token_hash(token),
+                now=now or utc_now(),
+            ),
+            immediate=True,
+        )
+        if "revision" in result.payload:
+            return replace(result, launch_token=token)
+        return result
+
+    async def get_death_mission(self, token, *, now=None) -> DeathMissionRun:
+        if not isinstance(token, str) or not token or len(token) > 256:
+            return DeathMissionRun(
+                {"game_type": "death_operation", "status": "not_found"}
+            )
+        return await self.database.transaction(
+            lambda connection: self.repository.death_mission.get(
+                connection,
+                self._game_token_hash(token),
+                now or utc_now(),
+            ),
+            immediate=True,
+        )
+
+    @staticmethod
+    def _validate_mission_action(action, revision, operation_id, choice):
+        if action not in {"arm", "back", "commit", "action", "extract", "abandon"}:
+            raise ValueError("Неизвестное действие")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("Некорректная revision")
+        if not isinstance(operation_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", operation_id
+        ):
+            raise ValueError("Некорректный ключ операции")
+        if (
+            not isinstance(choice, dict)
+            or len(choice) > 3
+            or any(
+                k not in {"id", "mode", "tactic", "bonus"}
+                or not isinstance(v, str)
+                or len(v) > 32
+                for k, v in choice.items()
+            )
+        ):
+            raise ValueError("Некорректный выбор")
+
+    async def mutate_death_mission(
+        self, token, *, action, revision, operation_id, choice, now=None
+    ):
+        self._validate_mission_action(action, revision, operation_id, choice)
+        if not isinstance(token, str) or not token or len(token) > 256:
+            return DeathMissionRun(
+                {"game_type": "death_operation", "status": "not_found"}
+            )
+        return await self.database.transaction(
+            lambda connection: self.repository.death_mission.mutate(
+                connection,
+                token_hash=self._game_token_hash(token),
+                action=action,
+                revision=revision,
+                operation_id=operation_id,
+                choice=choice,
+                now=now or utc_now(),
+            ),
+            immediate=True,
+        )
+
+    async def mission_callback(
+        self,
+        *,
+        run_id,
+        user_id,
+        chat_id,
+        message_id,
+        action,
+        revision,
+        operation_id,
+        choice,
+        now=None,
+    ):
+        self._validate_mission_action(action, revision, operation_id, choice)
+
+        def operation(connection):
+            row = self.repository.death_mission.row(connection, run_id=run_id)
+            if not row or (row["user_id"], row["chat_id"], row["message_id"]) != (
+                user_id,
+                chat_id,
+                message_id,
+            ):
+                return DeathMissionRun(
+                    {"game_type": "death_operation", "status": "forbidden"}
+                )
+            return self.repository.death_mission.mutate(
+                connection,
+                token_hash=row["token_hash"],
+                action=action,
+                revision=revision,
+                operation_id=operation_id,
+                choice=choice,
+                now=now or utc_now(),
+            )
+
+        return await self.database.transaction(operation, immediate=True)
+
+    async def death_mission_run_id(self, token):
+        return await self.database.read(
+            lambda connection: self.repository.death_mission.row(
+                connection, token_hash=self._game_token_hash(token)
+            )["id"]
+        )
+
+    async def reserved_mission_agents(self, user_id):
+        return await self.database.read(
+            lambda connection: self.repository.death_mission.bundle(
+                dict(
+                    connection.execute(
+                        "SELECT s.agent_type, SUM(s.amount) FROM death_mission_stakes s "
+                        "JOIN death_mission_runs r ON r.id=s.run_id "
+                        "WHERE r.user_id=? AND r.status='in_run' GROUP BY s.agent_type",
+                        (user_id,),
+                    ).fetchall()
+                )
+            )
+        )
+
     async def run_death_operation(
         self,
         *,
@@ -473,6 +629,41 @@ class SpyGameService:
         if result.status is InterceptGameStatus.READY:
             return replace(result, launch_token=token)
         return result
+
+    async def start_html5_game(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> InterceptGameRun | DeadDropGameRun | FindMoleGameRun | DeathMissionRun:
+        event_type = await self.database.read(
+            lambda connection: self.repository.html5_event_type(
+                connection,
+                chat_id,
+                message_id,
+            )
+        )
+        arguments = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "user_id": user_id,
+            "username": username,
+            "display_name": display_name,
+            "now": now,
+        }
+        if event_type == "intercept":
+            return await self.start_intercept_game(**arguments)
+        if event_type == "dead_drop":
+            return await self.start_dead_drop_game(**arguments)
+        if event_type == "find_mole":
+            return await self.start_find_mole_game(**arguments)
+        if event_type == "death_operation":
+            return await self.start_death_mission(**arguments)
+        return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
 
     async def start_dead_drop_game(
         self,
@@ -575,6 +766,156 @@ class SpyGameService:
                 connection,
                 self._game_token_hash(launch_token),
                 current,
+            ),
+            immediate=True,
+        )
+
+    async def start_find_mole_game(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> FindMoleGameRun:
+        if not self.chat_is_available(chat_id) or not self.settings.html5_mole_enabled:
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED)
+        token = secrets.token_urlsafe(32)
+        token_hash = self._game_token_hash(token)
+        run_id = secrets.token_hex(12)
+        current = now or utc_now()
+        result = await self.database.transaction(
+            lambda connection: self.repository.start_find_mole_game(
+                connection,
+                chat_id=chat_id,
+                message_id=message_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                run_id=run_id,
+                token_hash=token_hash,
+                now=current,
+            ),
+            immediate=True,
+        )
+        if result.status is FindMoleGameStatus.READY:
+            return replace(result, launch_token=token)
+        return result
+
+    async def get_find_mole_game(
+        self,
+        launch_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> FindMoleGameRun:
+        if not self.settings.enabled or not self.settings.html5_mole_enabled:
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return FindMoleGameRun(FindMoleGameStatus.NOT_FOUND)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.get_find_mole_game(
+                connection,
+                self._game_token_hash(launch_token),
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def get_html5_game(
+        self,
+        launch_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[
+        str | None,
+        InterceptGameRun | DeadDropGameRun | FindMoleGameRun | DeathMissionRun,
+    ]:
+        if not launch_token or len(launch_token) > 256:
+            return None, InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+        token_hash = self._game_token_hash(launch_token)
+        game_type = await self.database.read(
+            lambda connection: self.repository.html5_game_type(connection, token_hash)
+        )
+        if game_type == "intercept":
+            return game_type, await self.get_intercept_game(launch_token, now=now)
+        if game_type == "dead_drop":
+            return game_type, await self.get_dead_drop_game(launch_token, now=now)
+        if game_type == "find_mole":
+            return game_type, await self.get_find_mole_game(launch_token, now=now)
+        if game_type == "death_operation":
+            return game_type, await self.get_death_mission(launch_token, now=now)
+        return None, InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+
+    async def accuse_find_mole_game(
+        self,
+        launch_token: str,
+        suspect_id: str,
+        revision: int,
+        idempotency_key: str,
+        *,
+        now: datetime | None = None,
+    ) -> FindMoleGameRun:
+        if not self.settings.enabled or not self.settings.html5_mole_enabled:
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return FindMoleGameRun(FindMoleGameStatus.NOT_FOUND)
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", suspect_id):
+            raise ValueError("invalid mole suspect")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid mole revision")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", idempotency_key):
+            raise ValueError("invalid mole idempotency key")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.accuse_find_mole_game(
+                connection,
+                self._game_token_hash(launch_token),
+                suspect_id,
+                revision,
+                idempotency_key,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def accuse_find_mole_event(
+        self,
+        *,
+        event_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        suspect_id: str,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> FindMoleGameRun:
+        if not self.chat_is_available(chat_id):
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED, event_id=event_id)
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", suspect_id):
+            return FindMoleGameRun(
+                FindMoleGameStatus.INVALID_SUSPECT,
+                event_id=event_id,
+            )
+        current = now or utc_now()
+        run_id = secrets.token_hex(12)
+        token_hash = self._game_token_hash(f"telegram:{event_id}:{user_id}:{run_id}")
+        return await self.database.transaction(
+            lambda connection: self.repository.accuse_find_mole_event(
+                connection,
+                event_id=event_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                suspect_id=suspect_id,
+                run_id=run_id,
+                token_hash=token_hash,
+                idempotency_key=idempotency_key,
+                now=current,
             ),
             immediate=True,
         )

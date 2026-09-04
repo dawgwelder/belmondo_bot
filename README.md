@@ -102,6 +102,9 @@ export SPY_GAME_WEBAPP_ENABLED=false
 export SPY_GAME_WEBAPP_HOST=127.0.0.1
 export SPY_GAME_WEBAPP_PORT=8080
 export SPY_GAME_WEBAPP_LAUNCH_URL=https://t.me/<bot_username>/<short_name>
+export SPY_GAME_HTML5_MOLE_ENABLED=false
+export SPY_GAME_DEATH_ROGUELITE_ENABLED=false
+export SPY_GAME_DEATH_MISSION_SECONDS=900
 ```
 
 После запуска master включает сеть командой `/spy_admin enable`. В production
@@ -252,8 +255,9 @@ Score имеет half-life 30 минут. Все три канала испол�
 transaction. Исходное сообщение Recruitment редактируется на месте: прогресс
 меняется от `0/3` до `3/3`, новые сообщения на каждый claim не создаются. В
 публичном списке участников используются только `@username`; имя профиля не
-показывается. Повторный клик не занимает дополнительное место. Registry также включает Dead Drop, Intercept, Chase, cooperative
-operation, Handler, Рекрутера и двухшаговую «Смертельную операцию».
+показывается. Повторный клик не занимает дополнительное место. Registry также
+включает Dead Drop, Intercept, «Найти крота», Chase, cooperative operation,
+Handler, Рекрутера и двухшаговую «Смертельную операцию».
 Куратор, Рекрутер, Начальник операций и Контрразведка доступны постоянно через
 «Контакты Центра» в Mini App и inline fallback. Каждый из них также может
 появиться как редкое событие, в котором результат обмена удваивается.
@@ -275,7 +279,7 @@ Master использует одну команду с подкомандами:
 /spy_admin status
 /spy_admin enable
 /spy_admin disable
-/spy_admin spawn [recruitment|dead_drop|intercept|cooperative_operation|chase|handler|npc|death_operation]
+/spy_admin spawn [recruitment|dead_drop|intercept|find_mole|cooperative_operation|chase|handler|npc|death_operation]
 /spy_admin activity [calm|balanced|aggressive]
 ```
 
@@ -295,14 +299,27 @@ HTTPS обычно завершается на nginx, приложение сл�
 `127.0.0.1:8080`. Подробности — в
 [`docs/runbooks/spy-game-webapp-rollout.md`](docs/runbooks/spy-game-webapp-rollout.md).
 
-События «Перехват» и «Тайник» опционально запускаются как Telegram HTML5 Game с
-short name `spies`. В Перехвате игрок настраивает пять частот; в Тайнике —
+События «Перехват», «Тайник» и «Найти крота» опционально запускаются как Telegram
+HTML5 Game с short name `spies`. В Перехвате игрок настраивает пять частот; в Тайнике —
 подбирает трёхзначный код по серверным подсказкам за пять минут без ограничения
-числа проверок. Для каждой операции SQLite хранит одну игровую сессию на
+числа проверок. В расследовании игрок изучает четыре досье и имеет одну финальную
+версию; первый правильный ответ получает случайный предмет и трёх осведомителей.
+Естественно событие появляется только в сюжетной арке `mole_hunt` на стадии 3
+и выше: на стадии 3 оно гарантированно завершает арку, после неё участвует в
+обычном пуле и больше не меняет сюжетный прогресс.
+HTML5-вариант расследования включается отдельным
+`SPY_GAME_HTML5_MOLE_ENABLED=true`; иначе остаются inline-кнопки. Для каждой
+операции SQLite хранит одну игровую сессию на
 пользователя, а награду атомарно получает первый победитель. Без
 `SPY_GAME_HTML5_URL` сохраняются прежние Telegram-кнопки.
 Инструкция по включению и beta smoke находится в
 [`docs/runbooks/spy-game-html5-intercept.md`](docs/runbooks/spy-game-html5-intercept.md).
+
+Смертельная операция при `SPY_GAME_DEATH_ROGUELITE_ENABLED=true` предлагает
+мгновенный all-in или личную roguelite-миссию. За полный личный финал — сеть ×2
+и выбранный бонус Tier 3 ×2 либо Tier 4 ×1; после контрольной точки доступна
+эвакуация половины ставки. HTML5 и Telegram используют общий SQLite-движок.
+Правила, баланс и включение: [runbook](docs/runbooks/spy-game-death-mission.md).
 
 ### Групповые LLM-игры
 

@@ -62,14 +62,18 @@ def make_init_data(
     return urlencode(values)
 
 
-def game_settings(tmp_path: Path):
+def game_settings(tmp_path: Path, **overrides):
+    values = {
+        "mode": "dev",
+        "enabled": True,
+        "database_path": tmp_path / "spy-webapp.sqlite3",
+        "allowed_chat_ids": frozenset({CHAT_ID}),
+        "activity_user_debounce_seconds": 0,
+        "allow_manual_spawn": True,
+    }
+    values.update(overrides)
     return SpySettings(
-        mode="dev",
-        enabled=True,
-        database_path=tmp_path / "spy-webapp.sqlite3",
-        allowed_chat_ids=frozenset({CHAT_ID}),
-        activity_user_debounce_seconds=0,
-        allow_manual_spawn=True,
+        **values,
     )
 
 
@@ -478,10 +482,11 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
             "ok": True,
             "game_enabled": True,
             "html5_game_enabled": False,
+            "html5_mole_enabled": False,
         }
         game_javascript = await server.game_javascript(request())
         assert game_javascript.headers["Cache-Control"] == "no-store"
-        assert "game.js?v=2" in (server.ASSETS / "game.html").read_text()
+        assert "game.js?v=4" in (server.ASSETS / "game.html").read_text()
     finally:
         await service.close()
 
@@ -595,6 +600,87 @@ async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp
         assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
 
         await server.game_guess(request(headers, {"guess": [0, 0, 0]}))
+        bot.send_message.assert_awaited_once()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
+    rng = SimpleNamespace(randint=lambda start, end: start)
+    service = SpyGameService(
+        game_settings(tmp_path, html5_mole_enabled=True),
+        rng=rng,
+    )
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    event = (await service.manual_spawn(CHAT_ID, event_type="find_mole")).event
+    await service.attach_message(event.event_id, 902)
+    solution = await service.database.read(
+        lambda connection: connection.execute(
+            "SELECT solution_suspect_id FROM find_mole_cases WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()[0]
+    )
+    run = await service.start_find_mole_game(
+        chat_id=CHAT_ID,
+        message_id=902,
+        user_id=USER_ID,
+        username="bond",
+        display_name="Private Bond",
+    )
+    bot = SimpleNamespace(
+        edit_message_reply_markup=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    server = SpyWebAppServer(
+        service,
+        BOT_TOKEN,
+        web_settings(game_url="https://spy.example/spy-app/game/"),
+        bot=bot,
+    )
+    headers = {"X-Spy-Game-Token": run.launch_token}
+    try:
+        response = await server.game_state(request(headers))
+        state = json.loads(response.text)
+        assert state["game_type"] == "find_mole"
+        assert state["status"] == "ready"
+        assert len(state["suspects"]) == 4
+        assert "solution" not in response.text
+
+        response = await server.game_mole_accuse(
+            request(
+                headers,
+                {
+                    "suspect_id": solution,
+                    "revision": state["revision"],
+                    "idempotency_key": "api-mole-attempt-1",
+                },
+            )
+        )
+        result = json.loads(response.text)
+        assert result["status"] == "won"
+        assert [(reward["type"], reward["amount"]) for reward in result["rewards"]] == [
+            ("item", 1),
+            ("agent", 3),
+        ]
+        assert result["rewards"][0]["id"] == "fake_passport"
+        assert result["rewards"][1]["id"] == "informant"
+        assert "solution" not in response.text
+        bot.send_message.assert_awaited_once()
+        assert "@bond" in bot.send_message.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+
+        await server.game_mole_accuse(
+            request(
+                headers,
+                {
+                    "suspect_id": solution,
+                    "revision": state["revision"],
+                    "idempotency_key": "api-mole-attempt-1",
+                },
+            )
+        )
         bot.send_message.assert_awaited_once()
     finally:
         await service.close()

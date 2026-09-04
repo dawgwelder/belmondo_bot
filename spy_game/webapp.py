@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from collections import defaultdict, deque
@@ -19,12 +20,16 @@ from .models import (
     DeadDropGameStatus,
     EconomyStatus,
     EquipmentStatus,
+    FindMoleGameRun,
+    FindMoleGameStatus,
     InterceptGameRun,
     InterceptGameStatus,
     NpcStatus,
 )
 from .service import SpyGameService
 from .settings import AGENT_TYPES, ITEM_TYPES
+from .death_mission_repository import DeathMissionRun
+from .death_mission_ui import publish_pending, text as mission_text
 from .webapp_auth import (
     LaunchContextSigner,
     WebAppAuthError,
@@ -135,11 +140,11 @@ class RequestIdentity:
 class _RateLimiter:
     def __init__(self, limit: int) -> None:
         self.limit = limit
-        self._requests: dict[int, deque[float]] = defaultdict(deque)
+        self._requests: dict[int | str, deque[float]] = defaultdict(deque)
 
-    def allow(self, user_id: int, *, now: float | None = None) -> bool:
+    def allow(self, subject: int | str, *, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
-        requests = self._requests[user_id]
+        requests = self._requests[subject]
         while requests and requests[0] <= current - 60:
             requests.popleft()
         if len(requests) >= self.limit:
@@ -170,6 +175,7 @@ class SpyWebAppServer:
             settings.launch_context_ttl_seconds,
         )
         self.rate_limiter = _RateLimiter(settings.rate_limit_per_minute)
+        self.game_rate_limiter = _RateLimiter(settings.rate_limit_per_minute)
         self._runner: web.AppRunner | None = None
         self.app = self._build_application()
 
@@ -183,6 +189,11 @@ class SpyWebAppServer:
                 web.get(f"{self.BASE_PATH}/game/", self.game),
                 web.get(f"{self.BASE_PATH}/game/game.js", self.game_javascript),
                 web.get(f"{self.BASE_PATH}/game/game.css", self.game_styles),
+                web.get(f"{self.BASE_PATH}/game/death.js", self.death_javascript),
+                web.post(
+                    f"{self.BASE_PATH}/api/game/death/{{action}}",
+                    self.game_death_action,
+                ),
                 web.get(f"{self.BASE_PATH}/health", self.health),
                 web.get(f"{self.BASE_PATH}/api/state", self.state),
                 web.post(f"{self.BASE_PATH}/api/equipment/equip", self.equip),
@@ -196,6 +207,10 @@ class SpyWebAppServer:
                 web.get(f"{self.BASE_PATH}/api/game/state", self.game_state),
                 web.post(f"{self.BASE_PATH}/api/game/finish", self.game_finish),
                 web.post(f"{self.BASE_PATH}/api/game/guess", self.game_guess),
+                web.post(
+                    f"{self.BASE_PATH}/api/game/mole/accuse",
+                    self.game_mole_accuse,
+                ),
             ]
         )
         return app
@@ -256,6 +271,10 @@ class SpyWebAppServer:
             and self.settings.game_url
         )
 
+    @property
+    def mole_game_enabled(self) -> bool:
+        return self.game_enabled and self.service.settings.html5_mole_enabled
+
     def game_launch_url(self, launch_token: str) -> str | None:
         if not self.game_enabled or not self.settings.game_url:
             return None
@@ -315,6 +334,11 @@ class SpyWebAppServer:
             headers=self._static_headers("no-store"),
         )
 
+    async def death_javascript(self, request: web.Request) -> web.Response:
+        return web.FileResponse(
+            self.ASSETS / "death.js", headers=self._static_headers("no-store")
+        )
+
     async def game_styles(self, request: web.Request) -> web.Response:
         return web.FileResponse(
             self.ASSETS / "game.css",
@@ -327,6 +351,7 @@ class SpyWebAppServer:
                 "ok": True,
                 "game_enabled": self.service.settings.enabled,
                 "html5_game_enabled": self.game_enabled,
+                "html5_mole_enabled": self.mole_game_enabled,
             }
         )
 
@@ -420,6 +445,7 @@ class SpyWebAppServer:
                 "agency_max_level": self.service.settings.agency_max_level,
                 "total_agents": profile.total_agents,
             },
+            "reserved_agents": await self.service.reserved_mission_agents(user.user_id),
             "agents": [
                 {
                     "id": holding.agent_type,
@@ -701,19 +727,28 @@ class SpyWebAppServer:
     async def _game_session(
         self,
         request: web.Request,
-    ) -> tuple[str, InterceptGameRun | DeadDropGameRun]:
+    ) -> tuple[
+        str, InterceptGameRun | DeadDropGameRun | FindMoleGameRun | DeathMissionRun
+    ]:
         launch_token = request.headers.get("X-Spy-Game-Token", "")
-        intercept = await self.service.get_intercept_game(launch_token)
-        if intercept.status is not InterceptGameStatus.NOT_FOUND:
-            if intercept.status is InterceptGameStatus.DISABLED:
-                raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
-            return "intercept", intercept
-        dead_drop = await self.service.get_dead_drop_game(launch_token)
-        if dead_drop.status is DeadDropGameStatus.NOT_FOUND:
+        game_type, result = await self.service.get_html5_game(launch_token)
+        if game_type is None:
             raise web.HTTPUnauthorized(text="Откройте игру заново из Telegram")
-        if dead_drop.status is DeadDropGameStatus.DISABLED:
+        if result.status in {
+            InterceptGameStatus.DISABLED,
+            DeadDropGameStatus.DISABLED,
+            FindMoleGameStatus.DISABLED,
+        }:
             raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
-        return "dead_drop", dead_drop
+        return game_type, result
+
+    def _limit_game_mutation(self, request: web.Request) -> None:
+        token = request.headers.get("X-Spy-Game-Token", "")
+        subject = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        if not self.game_rate_limiter.allow(subject):
+            raise web.HTTPTooManyRequests(
+                text="Слишком много игровых запросов. Повторите через минуту."
+            )
 
     def _intercept_game_payload(self, result: InterceptGameRun) -> dict:
         reward = None
@@ -787,13 +822,88 @@ class SpyWebAppServer:
             "reward": reward,
         }
 
+    def _find_mole_game_payload(self, result: FindMoleGameRun) -> dict:
+        rewards = []
+        if result.item_reward is not None:
+            item = ITEM_TYPES.get(result.item_reward.reward_id or "")
+            if item is not None:
+                rewards.append(
+                    {
+                        "type": "item",
+                        "id": item.id,
+                        "name": item.display_name,
+                        "emoji": item.emoji,
+                        "amount": result.item_reward.amount,
+                    }
+                )
+        if result.agent_reward is not None:
+            agent = AGENT_TYPES.get(result.agent_reward.agent_type)
+            if agent is not None:
+                rewards.append(
+                    {
+                        "type": "agent",
+                        "id": agent.id,
+                        "name": agent.display_name,
+                        "emoji": agent.emoji,
+                        "amount": result.agent_reward.amount,
+                    }
+                )
+        return {
+            "game_type": "find_mole",
+            "status": result.status.value,
+            "title": result.title,
+            "briefing": result.briefing,
+            "clues": list(result.clues),
+            "suspects": [
+                {
+                    "id": suspect.id,
+                    "codename": suspect.codename,
+                    "role": suspect.role,
+                    "dossier": suspect.dossier,
+                }
+                for suspect in result.suspects
+            ],
+            "revision": result.revision,
+            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
+            "rewards": rewards,
+        }
+
     async def game_state(self, request: web.Request) -> web.Response:
         game_type, result = await self._game_session(request)
+        if game_type == "death_operation":
+            return self._json_response(self._death_payload(result))
         if game_type == "intercept":
             return self._json_response(self._intercept_game_payload(result))
+        if game_type == "find_mole":
+            return self._json_response(self._find_mole_game_payload(result))
         return self._json_response(self._dead_drop_game_payload(result))
 
+    @staticmethod
+    def _death_payload(result):
+        return {**result.payload, "text": mission_text(result.payload)}
+
+    async def game_death_action(self, request: web.Request) -> web.Response:
+        self._limit_game_mutation(request)
+        game_type, _ = await self._game_session(request)
+        if game_type != "death_operation":
+            raise web.HTTPBadRequest(text="Это не Смертельная операция")
+        payload = await self._json_object(request)
+        try:
+            result = await self.service.mutate_death_mission(
+                request.headers.get("X-Spy-Game-Token", ""),
+                action=request.match_info["action"],
+                revision=payload.get("revision"),
+                operation_id=payload.get("operation_id"),
+                choice=payload.get("choice", {}),
+            )
+        except (TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        if self.bot is not None:
+            await publish_pending(self.service, self.bot)
+        return self._json_response(self._death_payload(result))
+
     async def game_finish(self, request: web.Request) -> web.Response:
+        self._limit_game_mutation(request)
         active = await self._intercept_game_run(request)
         if active.status is not InterceptGameStatus.READY:
             return self._json_response(self._intercept_game_payload(active))
@@ -813,6 +923,7 @@ class SpyWebAppServer:
         return self._json_response(self._intercept_game_payload(result))
 
     async def game_guess(self, request: web.Request) -> web.Response:
+        self._limit_game_mutation(request)
         game_type, active = await self._game_session(request)
         if game_type != "dead_drop":
             raise web.HTTPBadRequest(text="Эта операция не использует кодовый замок")
@@ -832,6 +943,32 @@ class SpyWebAppServer:
         if result.status is DeadDropGameStatus.WON and self.bot is not None:
             await self._announce_dead_drop_win(result)
         return self._json_response(self._dead_drop_game_payload(result))
+
+    async def game_mole_accuse(self, request: web.Request) -> web.Response:
+        self._limit_game_mutation(request)
+        game_type, active = await self._game_session(request)
+        if game_type != "find_mole":
+            raise web.HTTPBadRequest(text="Эта операция не содержит дела о кроте")
+        if active.status is not FindMoleGameStatus.READY:
+            return self._json_response(self._find_mole_game_payload(active))
+        payload = await self._json_object(request)
+        suspect_id = payload.get("suspect_id")
+        revision = payload.get("revision")
+        idempotency_key = payload.get("idempotency_key")
+        if not isinstance(suspect_id, str):
+            raise web.HTTPBadRequest(text="Неизвестный подозреваемый")
+        try:
+            result = await self.service.accuse_find_mole_game(
+                request.headers.get("X-Spy-Game-Token", ""),
+                suspect_id,
+                revision,
+                idempotency_key,
+            )
+        except (TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        if result.newly_won and self.bot is not None:
+            await self._announce_find_mole_win(result)
+        return self._json_response(self._find_mole_game_payload(result))
 
     async def _announce_intercept_win(self, result: InterceptGameRun) -> None:
         if result.chat_id is None or result.reward is None:
@@ -912,5 +1049,51 @@ class SpyWebAppServer:
         except Exception:
             logger.exception(
                 "spy_game: HTML5 dead drop announcement failed event_id=%s",
+                result.event_id,
+            )
+
+    async def _announce_find_mole_win(self, result: FindMoleGameRun) -> None:
+        if (
+            result.chat_id is None
+            or result.item_reward is None
+            or result.agent_reward is None
+        ):
+            return
+        item = ITEM_TYPES.get(result.item_reward.reward_id or "")
+        agent = AGENT_TYPES.get(result.agent_reward.agent_type)
+        item_text = (
+            f"{item.emoji} {item.display_name} ×{result.item_reward.amount}"
+            if item is not None
+            else "предмет Центра"
+        )
+        agent_text = (
+            f"{agent.emoji} {agent.display_name} ×{result.agent_reward.amount}"
+            if agent is not None
+            else "агенты Tier 1"
+        )
+        try:
+            if result.message_id is not None:
+                await self.bot.edit_message_reply_markup(
+                    chat_id=result.chat_id,
+                    message_id=result.message_id,
+                    reply_markup=None,
+                )
+        except Exception:
+            logger.warning(
+                "spy_game: HTML5 mole keyboard remained event_id=%s",
+                result.event_id,
+            )
+        try:
+            await self.bot.send_message(
+                chat_id=result.chat_id,
+                text=(
+                    "✅ КРОТ РАСКРЫТ\n"
+                    f"{result.public_name or 'Скрытый агент'} завершил расследование "
+                    f"и получил {item_text} и {agent_text}."
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "spy_game: HTML5 mole announcement failed event_id=%s",
                 result.event_id,
             )

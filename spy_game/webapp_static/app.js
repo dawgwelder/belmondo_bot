@@ -134,8 +134,10 @@
   function renderAgents() {
     const target = $("agent-list");
     clear(target);
+    (state.reserved_agents || []).forEach((agent) =>
+      target.append(row(agent.emoji, agent.name, "На Смертельной операции", `×${agent.amount}`)));
     if (!state.agents.length) {
-      empty(target, "Сеть пока пуста. Следите за событиями в групповом чате.");
+      empty(target, "Доступных агентов нет. Следите за событиями в групповом чате.");
       return;
     }
     [...state.agents]

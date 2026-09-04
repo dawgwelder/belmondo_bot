@@ -87,6 +87,20 @@ class DeadDropGameStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class FindMoleGameStatus(str, Enum):
+    READY = "ready"
+    WON = "won"
+    FAILED = "failed"
+    ALREADY_PLAYED = "already_played"
+    ALREADY_RESOLVED = "already_resolved"
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    WRONG_CHAT = "wrong_chat"
+    INVALID_SUSPECT = "invalid_suspect"
+    STALE = "stale"
+    DISABLED = "disabled"
+
+
 class DuelWagerStatus(str, Enum):
     PENDING = "pending"
     CHOOSING = "choosing"
@@ -208,6 +222,42 @@ class InterceptScenario:
     correct_option_id: str
     reward_item: str
     reward_amount: int = 1
+
+
+@dataclass(frozen=True)
+class MoleSuspect:
+    id: str
+    codename: str
+    role: str
+    dossier: str
+    evidence_tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MoleCaseTemplate:
+    id: str
+    version: int
+    title: str
+    briefing: str
+    clues: tuple[str, ...]
+    suspects: tuple[MoleSuspect, ...]
+    solution_tags: tuple[str, ...]
+
+    @property
+    def solution_candidates(self) -> tuple[MoleSuspect, ...]:
+        required = set(self.solution_tags)
+        return tuple(
+            suspect
+            for suspect in self.suspects
+            if required.issubset(suspect.evidence_tags)
+        )
+
+    @property
+    def correct_suspect_id(self) -> str:
+        candidates = self.solution_candidates
+        if len(candidates) != 1:
+            raise ValueError("mole case must have exactly one solution")
+        return candidates[0].id
 
 
 @dataclass(frozen=True)
@@ -362,6 +412,35 @@ class DeadDropGameRun:
     attempts: tuple[DeadDropGuess, ...] = ()
     expires_at: datetime | None = None
     reward: DropReward | None = None
+
+
+@dataclass(frozen=True)
+class MoleSuspectCard:
+    id: str
+    codename: str
+    role: str
+    dossier: str
+
+
+@dataclass(frozen=True)
+class FindMoleGameRun:
+    status: FindMoleGameStatus
+    newly_won: bool = False
+    run_id: str | None = None
+    launch_token: str | None = None
+    event_id: str | None = None
+    chat_id: int | None = None
+    message_id: int | None = None
+    public_name: str | None = None
+    title: str | None = None
+    briefing: str | None = None
+    clues: tuple[str, ...] = ()
+    suspects: tuple[MoleSuspectCard, ...] = ()
+    revision: int = 0
+    selected_suspect_id: str | None = None
+    expires_at: datetime | None = None
+    item_reward: DropReward | None = None
+    agent_reward: Reward | None = None
 
 
 @dataclass(frozen=True)
