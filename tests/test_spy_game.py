@@ -1437,31 +1437,139 @@ async def test_recruiter_npc_atomically_spends_cost_and_applies_agency_bonus(tmp
 
 
 @pytest.mark.asyncio
-async def test_operations_chief_requires_agent_and_item_for_specialist(tmp_path):
+async def test_npc_event_spawns_only_event_only_recruiter(tmp_path):
     config = settings(tmp_path)
-    service = SpyGameService(config, rng=SequenceRandom(1, 1))
+    service = SpyGameService(config, rng=FixedRandom())
     await service.initialize(now=NOW)
     await service.enable_chat(CHAT_ID, now=NOW)
     try:
+        event = (await service.manual_spawn(CHAT_ID, event_type="npc", now=NOW)).event
+        assert event.config_id == "recruiter"
+        payload = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT payload_json FROM game_events WHERE id = ?",
+                (event.event_id,),
+            ).fetchone()[0]
+        )
+        assert '"config_id":"recruiter"' in payload
+        assert '"recipe_ids":["recruiter_network"]' in payload
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_permanent_contact_exchange_is_atomic_idempotent_and_event_free(tmp_path):
+    service = await initialized_service(tmp_path)
+    try:
         await grant_agents(service, 1, {"operative": 1})
         await grant_items(service, 1, {"fake_passport": 1})
-        event = (await service.manual_spawn(CHAT_ID, event_type="npc", now=NOW)).event
-        assert event.config_id == "operations_chief"
-        result = await service.interact_with_npc(
-            event_id=event.event_id,
+
+        result = await service.exchange_with_contact(
+            operation_id="telegram-callback-1",
             recipe_id="chief_illegal",
             chat_id=CHAT_ID,
             user_id=1,
-            username=None,
-            display_name="Chief",
+            username="bond",
+            display_name="Private Bond",
             now=NOW + timedelta(seconds=1),
         )
         assert result.status is NpcStatus.SUCCESS
+        assert (result.reward.reward_type, result.reward.reward_id) == (
+            "agent",
+            "illegal_agent",
+        )
         assert [
             (holding.agent_type, holding.amount)
             for holding in await service.get_agents(1)
         ] == [("illegal_agent", 1)]
         assert (await service.get_inventory(1)).items == ()
+        assert (await service.get_chat_status(CHAT_ID)).active_event_id is None
+
+        duplicate = await service.exchange_with_contact(
+            operation_id="telegram-callback-1",
+            recipe_id="chief_illegal",
+            chat_id=CHAT_ID,
+            user_id=1,
+            username="bond",
+            display_name="Private Bond",
+            now=NOW + timedelta(seconds=2),
+        )
+        assert duplicate == result
+        history = await service.database.read(
+            lambda connection: connection.execute(
+                """
+                SELECT action, source_event_id, recipe_id, metadata_json
+                FROM economy_history
+                WHERE idempotency_key = ?
+                """,
+                ("contact:1:telegram-callback-1",),
+            ).fetchall()
+        )
+        assert len(history) == 1
+        assert (history[0]["action"], history[0]["source_event_id"]) == (
+            "exchange",
+            None,
+        )
+        assert history[0]["recipe_id"] == "chief_illegal"
+        assert '"source":"operational_center"' in history[0]["metadata_json"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_permanent_contacts_reject_recruiter_and_roll_back_failed_audit(tmp_path):
+    service = await initialized_service(tmp_path)
+    try:
+        await grant_agents(service, 1, {"informant": 20, "operative": 1})
+        await grant_items(service, 1, {"fake_passport": 1})
+        recruiter = await service.exchange_with_contact(
+            operation_id="recruiter-is-event-only",
+            recipe_id="recruiter_network",
+            chat_id=CHAT_ID,
+            user_id=1,
+            username=None,
+            display_name="Recruit",
+            now=NOW,
+        )
+        assert recruiter.status is NpcStatus.INVALID_RECIPE
+
+        await service.database.transaction(
+            lambda connection: connection.execute(
+                """
+                CREATE TRIGGER reject_contact_history
+                BEFORE INSERT ON economy_history
+                WHEN NEW.source_event_id IS NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'test contact failure');
+                END
+                """
+            ),
+            immediate=True,
+        )
+        with pytest.raises(Exception, match="test contact failure"):
+            await service.exchange_with_contact(
+                operation_id="failed-operation",
+                recipe_id="chief_illegal",
+                chat_id=CHAT_ID,
+                user_id=1,
+                username=None,
+                display_name="Chief",
+                now=NOW,
+            )
+        state = await service.database.read(
+            lambda connection: (
+                connection.execute(
+                    "SELECT amount FROM user_agents WHERE user_id = 1 AND agent_type = 'operative'"
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT amount FROM user_items WHERE user_id = 1 AND item_type = 'fake_passport'"
+                ).fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM user_agents WHERE user_id = 1 AND agent_type = 'illegal_agent'"
+                ).fetchone()[0],
+            )
+        )
+        assert state == (1, 1, 0)
     finally:
         await service.close()
 
@@ -2125,6 +2233,7 @@ async def test_player_has_one_menu_command_with_inline_navigation(
             "spy:menu:refresh",
             "spy:prestige:0",
             "spy:agency:status",
+            "spy:menu:contacts",
         ]
     finally:
         await service.close()
@@ -2159,6 +2268,68 @@ async def test_spy_menu_adds_webapp_launch_and_keeps_telegram_fallback(
             "url": f"https://t.me/bot/app?startapp={CHAT_ID}_1",
         }
         assert buttons[1][0]["callback_data"] == "spy:menu:profile"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_fallback_lists_and_executes_permanent_contact_exchange(
+    tmp_path,
+    monkeypatch,
+):
+    service = await initialized_service(tmp_path)
+    await grant_agents(service, 1, {"operative": 1})
+    await grant_items(service, 1, {"fake_passport": 1})
+    send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 49}})
+    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    user = SimpleNamespace(id=1, username="bond", full_name="Private Bond")
+    context = SimpleNamespace(
+        bot_data={"spy_game": service, "paused": False},
+        bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
+    )
+    try:
+        menu_query = SimpleNamespace(
+            id="menu-query",
+            data="spy:menu:contacts",
+            answer=AsyncMock(),
+        )
+        await spy_handlers.spy_callback(
+            SimpleNamespace(
+                callback_query=menu_query,
+                effective_user=user,
+                effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+            ),
+            context,
+        )
+        buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        callback_data = [row[0]["callback_data"] for row in buttons]
+        assert len(callback_data) == 6
+        assert "spy:contact_chief_illegal:0" in callback_data
+        assert all("recruiter" not in value for value in callback_data)
+
+        exchange_query = SimpleNamespace(
+            id="exchange-query",
+            data="spy:contact_chief_illegal:0",
+            answer=AsyncMock(),
+        )
+        await spy_handlers.spy_callback(
+            SimpleNamespace(
+                callback_query=exchange_query,
+                effective_user=user,
+                effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+            ),
+            context,
+        )
+        exchange_query.answer.assert_awaited_once_with(
+            "Сделка завершена: 🪪 Агент-нелегал ×1",
+            show_alert=True,
+        )
+        assert [
+            (holding.agent_type, holding.amount)
+            for holding in await service.get_agents(1)
+        ] == [("illegal_agent", 1)]
+        assert (await service.get_inventory(1)).items == ()
+        assert send_rich.await_count == 1
     finally:
         await service.close()
 

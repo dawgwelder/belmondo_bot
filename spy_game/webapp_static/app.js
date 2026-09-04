@@ -4,6 +4,7 @@
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || "";
   let state = null;
+  let mutationInFlight = false;
 
   const $ = (id) => document.getElementById(id);
   const notice = $("notice");
@@ -17,7 +18,8 @@
     invalid_slot: "Слот экипировки устарел.",
     stale: "Досье изменилось. Данные обновлены.",
     max_level: "Достигнут максимальный уровень службы.",
-    disabled: "Операция сейчас недоступна в этом чате."
+    disabled: "Операция сейчас недоступна в этом чате.",
+    invalid_recipe: "Этот контакт не проводит такую сделку."
   };
 
   function showNotice(message, isError = false) {
@@ -183,10 +185,54 @@
     });
   }
 
+  function operationId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function rewardText(reward) {
+    return `${reward.emoji} ${reward.name} ×${reward.amount}`;
+  }
+
+  function renderContacts() {
+    const target = $("contact-list");
+    clear(target);
+    if (!state.contacts.length) {
+      empty(target, "Постоянные контакты пока недоступны.");
+      return;
+    }
+    state.contacts.forEach((contact) => {
+      const button = actionButton("Обменять", () => {
+        const costs = [...contact.agent_costs, ...contact.item_costs]
+          .map((cost) => `${cost.emoji} ${cost.name} ×${cost.amount}`)
+          .join(", ");
+        confirmAction(
+          `Провести обмен? Будет списано: ${costs}.`,
+          () => mutate(
+            "contacts/exchange",
+            { recipe_id: contact.id, operation_id: operationId() },
+            `Получено: ${rewardText(contact.reward)}.`
+          )
+        );
+      });
+      button.disabled = !state.context.can_mutate;
+      const costs = [...contact.agent_costs, ...contact.item_costs]
+        .map((cost) => `${cost.emoji} ${cost.name} ×${cost.amount}`)
+        .join(" · ");
+      target.append(row(
+        contact.reward.emoji,
+        contact.name,
+        `${contact.npc_name} · ${costs} → ${rewardText(contact.reward)}`,
+        button
+      ));
+    });
+  }
+
   function render() {
     renderOverview();
     renderAgents();
     renderInventory();
+    renderContacts();
     renderLeaderboard();
   }
 
@@ -196,6 +242,8 @@
   }
 
   async function mutate(path, payload, successMessage) {
+    if (mutationInFlight) return;
+    mutationInFlight = true;
     hideNotice();
     try {
       const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
@@ -209,6 +257,8 @@
     } catch (error) {
       tg?.HapticFeedback?.notificationOccurred("error");
       showNotice(error.message, true);
+    } finally {
+      mutationInFlight = false;
     }
   }
 

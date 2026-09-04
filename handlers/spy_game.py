@@ -139,6 +139,12 @@ def _menu_keyboard(
                     callback_data="spy:agency:status",
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    "🤝 Контакты Центра",
+                    callback_data="spy:menu:contacts",
+                )
+            ],
         ]
     )
     return InlineKeyboardMarkup(rows)
@@ -371,6 +377,69 @@ def _format_costs(costs: tuple[AgentCost, ...]) -> str:
 def _format_item_costs(costs) -> str:
     return ", ".join(
         f"{ITEM_TYPES[cost.item_type].display_name} ×{cost.amount}" for cost in costs
+    )
+
+
+def _format_drop_reward(reward) -> str:
+    registry = AGENT_TYPES if reward.reward_type == "agent" else ITEM_TYPES
+    definition = registry[reward.reward_id]
+    return f"{definition.emoji} {definition.display_name} ×{reward.amount}"
+
+
+def build_contact_blocks(recipes) -> list[dict]:
+    names = {
+        "operations_chief": "🎖 Начальник операций",
+        "counterintelligence": "🔎 Контрразведка",
+    }
+    blocks: list[dict] = [{"type": "paragraph", "text": "🤝 ПОСТОЯННЫЕ КОНТАКТЫ ЦЕНТРА"}]
+    for npc_id, title in names.items():
+        lines = []
+        for recipe in recipes:
+            if recipe.npc_id != npc_id:
+                continue
+            costs = [
+                part
+                for part in (
+                    _format_costs(recipe.agent_costs),
+                    _format_item_costs(recipe.item_costs),
+                )
+                if part
+            ]
+            lines.append(
+                f"{recipe.display_name}: {'; '.join(costs)} → "
+                f"{_format_drop_reward(recipe.rewards[0])}"
+            )
+        if lines:
+            blocks.append(
+                {
+                    "type": "details",
+                    "summary": title,
+                    "blocks": [{"type": "paragraph", "text": "\n".join(lines)}],
+                }
+            )
+    blocks.append(
+        {
+            "type": "footer",
+            "text": (
+                "Эти сделки доступны постоянно. Рекрутер по-прежнему появляется "
+                "только как редкое событие."
+            ),
+        }
+    )
+    return blocks
+
+
+def _contact_keyboard(recipes) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    recipe.display_name,
+                    callback_data=f"spy:contact_{recipe.id}:0",
+                )
+            ]
+            for recipe in recipes
+        ]
     )
 
 
@@ -1006,6 +1075,7 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "profile",
             "agents",
             "inventory",
+            "contacts",
             "leaderboard",
             "status",
         }:
@@ -1042,6 +1112,13 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 )
                 or "пока пуст"
             )
+        elif value == "contacts":
+            recipes = service.settings.permanent_contact_recipes
+            blocks = build_contact_blocks(recipes)
+            reply_markup = _contact_keyboard(recipes)
+            fallback = "Постоянные контакты Центра:\n" + "\n".join(
+                recipe.display_name for recipe in recipes
+            )
         elif value == "leaderboard":
             entries = await service.get_leaderboard()
             blocks = build_leaderboard_blocks(entries)
@@ -1067,6 +1144,46 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             fallback_text=fallback,
             reply_markup=reply_markup,
         )
+        return
+
+    if category.startswith("contact_"):
+        recipe_id = category.removeprefix("contact_")
+        try:
+            result = await service.exchange_with_contact(
+                operation_id=query.id,
+                recipe_id=recipe_id,
+                chat_id=chat.id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+            )
+        except Exception:
+            logger.exception(
+                "spy_game: permanent contact exchange failed recipe_id=%s",
+                recipe_id,
+            )
+            await query.answer(
+                "Центр не провёл сделку. Ресурсы не изменены.",
+                show_alert=True,
+            )
+            return
+        if result.status is NpcStatus.SUCCESS:
+            await query.answer(
+                f"Сделка завершена: {_format_drop_reward(result.reward)}",
+                show_alert=True,
+            )
+        elif result.status is NpcStatus.INSUFFICIENT_RESOURCES:
+            requirements = []
+            if result.required_agents:
+                requirements.append(_format_costs(result.required_agents))
+            if result.required_items:
+                requirements.append(_format_item_costs(result.required_items))
+            await query.answer(
+                "Для сделки нужно: " + "; ".join(requirements),
+                show_alert=True,
+            )
+        else:
+            await query.answer("Эта сделка недоступна.", show_alert=True)
         return
 
     if category == "agency":

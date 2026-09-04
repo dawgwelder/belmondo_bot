@@ -23,6 +23,7 @@ from .models import (
     ClaimStatus,
     CooperativeResult,
     CooperativeStatus,
+    ContactExchangeResult,
     DeadDropGameRun,
     DeadDropGameStatus,
     DeadDropGuess,
@@ -625,8 +626,8 @@ class SpyRepository:
                 "manual": manual,
             }
         elif event_type == "npc":
-            npc_id = self.settings.npc_ids[
-                self.rng.randint(0, len(self.settings.npc_ids) - 1)
+            npc_id = self.settings.event_npc_ids[
+                self.rng.randint(0, len(self.settings.event_npc_ids) - 1)
             ]
             payload_data = {
                 "action": "npc_exchange",
@@ -2571,6 +2572,131 @@ class SpyRepository:
         return NpcResult(
             NpcStatus.SUCCESS,
             event_id,
+            recipe_id,
+            reward=reward,
+            required_agents=recipe.agent_costs,
+            required_items=recipe.item_costs,
+        )
+
+    def exchange_with_contact(
+        self,
+        connection: sqlite3.Connection,
+        operation_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime,
+    ) -> ContactExchangeResult:
+        recipe = self.settings.permanent_contact_recipe(recipe_id)
+        if recipe is None:
+            return ContactExchangeResult(
+                NpcStatus.INVALID_RECIPE,
+                operation_id,
+                recipe_id,
+            )
+        chat = connection.execute(
+            "SELECT enabled FROM chat_state WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if chat is None or not chat["enabled"]:
+            return ContactExchangeResult(
+                NpcStatus.DISABLED,
+                operation_id,
+                recipe_id,
+            )
+
+        idempotency_key = f"contact:{user_id}:{operation_id}"
+        existing = connection.execute(
+            """
+            SELECT recipe_id, metadata_json
+            FROM economy_history
+            WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        if existing is not None:
+            if existing["recipe_id"] != recipe_id:
+                return ContactExchangeResult(
+                    NpcStatus.INVALID_RECIPE,
+                    operation_id,
+                    recipe_id,
+                )
+            metadata = json.loads(existing["metadata_json"])
+            reward = DropReward(
+                metadata["reward_type"],
+                metadata["reward_id"],
+                metadata["reward_amount"],
+            )
+            return ContactExchangeResult(
+                NpcStatus.SUCCESS,
+                operation_id,
+                recipe_id,
+                reward=reward,
+                required_agents=recipe.agent_costs,
+                required_items=recipe.item_costs,
+            )
+
+        now_value = _iso(now)
+        self._ensure_user(connection, user_id, username, display_name, now_value)
+        if not self._has_costs(connection, user_id, recipe.agent_costs) or not (
+            self._has_item_costs(connection, user_id, recipe.item_costs)
+        ):
+            return ContactExchangeResult(
+                NpcStatus.INSUFFICIENT_RESOURCES,
+                operation_id,
+                recipe_id,
+                required_agents=recipe.agent_costs,
+                required_items=recipe.item_costs,
+            )
+
+        agency_level = connection.execute(
+            "SELECT agency_level FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
+        self._spend_costs(connection, user_id, recipe.agent_costs)
+        self._spend_item_costs(connection, user_id, recipe.item_costs)
+        reward = self.reward_resolver.resolve_npc(recipe, agency_level, self.rng)
+        self._add_drop_reward(connection, user_id, reward)
+        metadata = json.dumps(
+            {
+                "source": "operational_center",
+                "chat_id": chat_id,
+                "npc_id": recipe.npc_id,
+                "recipe_id": recipe.id,
+                "agent_costs": {
+                    cost.agent_type: cost.amount for cost in recipe.agent_costs
+                },
+                "item_costs": {
+                    cost.item_type: cost.amount for cost in recipe.item_costs
+                },
+                "agency_level": agency_level,
+                "reward_type": reward.reward_type,
+                "reward_id": reward.reward_id,
+                "reward_amount": reward.amount,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            INSERT INTO economy_history(
+                idempotency_key, user_id, action, source_event_id,
+                recipe_id, metadata_json, created_at
+            ) VALUES (?, ?, 'exchange', NULL, ?, ?, ?)
+            """,
+            (
+                idempotency_key,
+                user_id,
+                recipe.id,
+                metadata,
+                now_value,
+            ),
+        )
+        return ContactExchangeResult(
+            NpcStatus.SUCCESS,
+            operation_id,
             recipe_id,
             reward=reward,
             required_agents=recipe.agent_costs,

@@ -216,6 +216,13 @@ DEFAULT_NPC_RECIPES = (
     ),
 )
 
+PERMANENT_CONTACT_NPC_IDS = frozenset(
+    {
+        "operations_chief",
+        "counterintelligence",
+    }
+)
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -461,6 +468,8 @@ class SpySettings:
                 self._validate_drop_entry(reward, "NPC")
                 if reward.reward_type == "empty":
                     raise ValueError("NPC reward pool cannot contain empty rewards")
+            if recipe.npc_id in PERMANENT_CONTACT_NPC_IDS and len(recipe.rewards) != 1:
+                raise ValueError("permanent contact recipes must be deterministic")
         scenario_ids = [scenario.id for scenario in self.intercept_scenarios]
         if not scenario_ids or len(scenario_ids) != len(set(scenario_ids)):
             raise ValueError("intercept scenario IDs must be non-empty and unique")
@@ -535,6 +544,24 @@ class SpySettings:
     def npc_recipes_for(self, npc_id: str) -> tuple[NpcRecipe, ...]:
         return tuple(recipe for recipe in self.npc_recipes if recipe.npc_id == npc_id)
 
+    @property
+    def permanent_contact_recipes(self) -> tuple[NpcRecipe, ...]:
+        return tuple(
+            recipe
+            for recipe in self.npc_recipes
+            if recipe.npc_id in PERMANENT_CONTACT_NPC_IDS
+        )
+
+    def permanent_contact_recipe(self, recipe_id: str) -> NpcRecipe | None:
+        return next(
+            (
+                recipe
+                for recipe in self.permanent_contact_recipes
+                if recipe.id == recipe_id
+            ),
+            None,
+        )
+
     @staticmethod
     def agent_tier(agent_id: str | None) -> int:
         agent = AGENT_TYPES.get(agent_id or "")
@@ -543,6 +570,12 @@ class SpySettings:
     @property
     def npc_ids(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(recipe.npc_id for recipe in self.npc_recipes))
+
+    @property
+    def event_npc_ids(self) -> tuple[str, ...]:
+        return tuple(
+            npc_id for npc_id in self.npc_ids if npc_id not in PERMANENT_CONTACT_NPC_IDS
+        )
 
     def agency_requirements(self, agency_level: int) -> tuple[AgentCost, ...]:
         multiplier = agency_level + 1

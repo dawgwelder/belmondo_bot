@@ -419,6 +419,16 @@ class NpcResult:
 
 
 @dataclass(frozen=True)
+class ContactExchangeResult:
+    status: NpcStatus
+    operation_id: str
+    recipe_id: str
+    reward: DropReward | None = None
+    required_agents: tuple[AgentCost, ...] = ()
+    required_items: tuple[ItemCost, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExchangeResult:
     status: EconomyStatus
     event_id: str

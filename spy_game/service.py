@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import secrets
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from .models import (
     ClaimStatus,
     CooperativeResult,
     CooperativeStatus,
+    ContactExchangeResult,
     DeadDropGameRun,
     DeadDropGameStatus,
     DeadDropResult,
@@ -884,6 +886,40 @@ class SpyGameService:
             lambda connection: self.repository.interact_with_npc(
                 connection,
                 event_id,
+                recipe_id,
+                chat_id,
+                user_id,
+                username,
+                display_name,
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def exchange_with_contact(
+        self,
+        *,
+        operation_id: str,
+        recipe_id: str,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> ContactExchangeResult:
+        if not self.chat_is_available(chat_id):
+            return ContactExchangeResult(
+                NpcStatus.DISABLED,
+                operation_id,
+                recipe_id,
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", operation_id):
+            raise ValueError("contact operation ID is invalid")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.exchange_with_contact(
+                connection,
+                operation_id,
                 recipe_id,
                 chat_id,
                 user_id,

@@ -345,6 +345,87 @@ async def test_webapp_prestige_and_agency_keep_stale_checks_server_side(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_webapp_exposes_permanent_contacts_and_keeps_recruiter_event_only(
+    tmp_path,
+):
+    service = SpyGameService(game_settings(tmp_path))
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    await service.get_profile(
+        user_id=USER_ID,
+        username="bond",
+        display_name="Private Bond",
+    )
+    await service.database.transaction(
+        lambda connection: (
+            connection.execute(
+                "INSERT INTO user_agents(user_id, agent_type, amount) VALUES (?, ?, ?)",
+                (USER_ID, "operative", 1),
+            ),
+            connection.execute(
+                "INSERT INTO user_items(user_id, item_type, amount) VALUES (?, ?, ?)",
+                (USER_ID, "fake_passport", 1),
+            ),
+        ),
+        immediate=True,
+    )
+    server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
+    launch_token = server.signer.issue(CHAT_ID, USER_ID)
+    headers = {
+        "X-Telegram-Init-Data": make_init_data(start_param=launch_token),
+    }
+    try:
+        response = await server.state(request(headers))
+        state = json.loads(response.text)
+        assert len(state["contacts"]) == 6
+        assert {contact["npc_id"] for contact in state["contacts"]} == {
+            "operations_chief",
+            "counterintelligence",
+        }
+        assert "recruiter_network" not in {
+            contact["id"] for contact in state["contacts"]
+        }
+        chief = next(
+            contact for contact in state["contacts"] if contact["id"] == "chief_illegal"
+        )
+        assert chief["reward"]["id"] == "illegal_agent"
+        assert chief["agent_costs"][0]["id"] == "operative"
+        assert chief["item_costs"][0]["id"] == "fake_passport"
+
+        response = await server.contact_exchange(
+            request(
+                headers,
+                {"recipe_id": "chief_illegal", "operation_id": "web-operation-1"},
+            )
+        )
+        result = json.loads(response.text)
+        assert result["ok"] is True
+        assert result["status"] == "success"
+        assert result["reward"]["id"] == "illegal_agent"
+
+        duplicate = await server.contact_exchange(
+            request(
+                headers,
+                {"recipe_id": "chief_illegal", "operation_id": "web-operation-1"},
+            )
+        )
+        assert json.loads(duplicate.text) == result
+
+        recruiter = await server.contact_exchange(
+            request(
+                headers,
+                {
+                    "recipe_id": "recruiter_network",
+                    "operation_id": "web-operation-2",
+                },
+            )
+        )
+        assert json.loads(recruiter.text)["status"] == "invalid_recipe"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_path):
     service = SpyGameService(game_settings(tmp_path))
     await service.initialize()
@@ -353,6 +434,8 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
         index = await server.index(request())
         assert index.status == 200
         assert "Spy Clicker" in (server.ASSETS / "index.html").read_text()
+        assert "contact-list" in (server.ASSETS / "index.html").read_text()
+        assert '"contacts/exchange"' in (server.ASSETS / "app.js").read_text()
         assert "Content-Security-Policy" in index.headers
 
         health = await server.health(request())

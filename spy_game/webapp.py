@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import time
 import re
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,7 @@ from .models import (
     EquipmentStatus,
     InterceptGameRun,
     InterceptGameStatus,
+    NpcStatus,
 )
 from .service import SpyGameService
 from .settings import AGENT_TYPES, ITEM_TYPES
@@ -188,6 +189,10 @@ class SpyWebAppServer:
                 web.post(f"{self.BASE_PATH}/api/equipment/unequip", self.unequip),
                 web.post(f"{self.BASE_PATH}/api/prestige", self.prestige),
                 web.post(f"{self.BASE_PATH}/api/agency", self.agency),
+                web.post(
+                    f"{self.BASE_PATH}/api/contacts/exchange",
+                    self.contact_exchange,
+                ),
                 web.get(f"{self.BASE_PATH}/api/game/state", self.game_state),
                 web.post(f"{self.BASE_PATH}/api/game/finish", self.game_finish),
                 web.post(f"{self.BASE_PATH}/api/game/guess", self.game_guess),
@@ -399,6 +404,10 @@ class SpyWebAppServer:
             if agency_at_cap
             else self.service.settings.agency_requirements(profile.agency_level)
         )
+        contact_names = {
+            "operations_chief": "Начальник операций",
+            "counterintelligence": "Контрразведка",
+        }
         return {
             "profile": {
                 "username": f"@{profile.username.lstrip('@')}"
@@ -477,6 +486,18 @@ class SpyWebAppServer:
                     * self.service.settings.agency_rare_bonus_percent,
                 ),
             },
+            "contacts": [
+                {
+                    "id": recipe.id,
+                    "npc_id": recipe.npc_id,
+                    "npc_name": contact_names[recipe.npc_id],
+                    "name": recipe.display_name,
+                    "agent_costs": self._agent_costs(recipe.agent_costs),
+                    "item_costs": self._item_costs(recipe.item_costs),
+                    "reward": self._drop_entry(recipe.rewards[0]),
+                }
+                for recipe in self.service.settings.permanent_contact_recipes
+            ],
             "context": {
                 "chat_bound": identity.chat_id is not None,
                 "can_mutate": bool(chat_status and chat_status.enabled),
@@ -500,6 +521,30 @@ class SpyWebAppServer:
             }
             for cost in costs
         ]
+
+    @staticmethod
+    def _item_costs(costs) -> list[dict]:
+        return [
+            {
+                "id": cost.item_type,
+                "name": ITEM_TYPES[cost.item_type].display_name,
+                "emoji": ITEM_TYPES[cost.item_type].emoji,
+                "amount": cost.amount,
+            }
+            for cost in costs
+        ]
+
+    @staticmethod
+    def _drop_entry(reward) -> dict:
+        registry = AGENT_TYPES if reward.reward_type == "agent" else ITEM_TYPES
+        definition = registry[reward.reward_id]
+        return {
+            "type": reward.reward_type,
+            "id": reward.reward_id,
+            "name": definition.display_name,
+            "emoji": definition.emoji,
+            "amount": reward.amount,
+        }
 
     async def state(self, request: web.Request) -> web.Response:
         identity = await self._authenticate(request, require_chat=False)
@@ -584,6 +629,35 @@ class SpyWebAppServer:
                 "agency_level": result.agency_level,
                 "required_reputation": result.required_reputation,
                 "required_agents": self._agent_costs(result.required_agents),
+            }
+        )
+
+    async def contact_exchange(self, request: web.Request) -> web.Response:
+        identity = await self._authenticate(request, require_chat=True)
+        payload = await self._json_object(request)
+        recipe_id = payload.get("recipe_id")
+        operation_id = payload.get("operation_id")
+        if not isinstance(recipe_id, str) or not recipe_id:
+            raise web.HTTPBadRequest(text="Неизвестная сделка")
+        if not isinstance(operation_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,128}", operation_id
+        ):
+            raise web.HTTPBadRequest(text="Некорректный идентификатор операции")
+        result = await self.service.exchange_with_contact(
+            operation_id=operation_id,
+            recipe_id=recipe_id,
+            chat_id=identity.chat_id,
+            user_id=identity.user.user_id,
+            username=identity.user.username,
+            display_name=identity.user.display_name,
+        )
+        return self._json_response(
+            {
+                "ok": result.status is NpcStatus.SUCCESS,
+                "status": result.status.value,
+                "reward": self._drop_entry(result.reward) if result.reward else None,
+                "required_agents": self._agent_costs(result.required_agents),
+                "required_items": self._item_costs(result.required_items),
             }
         )
 
