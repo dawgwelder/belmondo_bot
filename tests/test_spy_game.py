@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -662,12 +663,12 @@ async def test_handler_exchange_is_atomic_and_idempotent(tmp_path):
         assert exchanged.status is EconomyStatus.SUCCESS
         assert (exchanged.reward.agent_type, exchanged.reward.amount) == (
             "operative",
-            1,
+            2,
         )
         assert duplicate.status is EconomyStatus.ALREADY_RESOLVED
         assert [
             (item.agent_type, item.amount) for item in await service.get_agents(1)
-        ] == [("operative", 1)]
+        ] == [("operative", 2)]
         history = await service.database.read(
             lambda connection: (
                 connection.execute(
@@ -708,7 +709,7 @@ async def test_handler_can_create_tier_three_agent(tmp_path):
         assert result.reward.agent_type == "analyst"
         assert [
             (item.agent_type, item.amount) for item in await service.get_agents(1)
-        ] == [("analyst", 1)]
+        ] == [("analyst", 2)]
     finally:
         await service.close()
 
@@ -1418,10 +1419,11 @@ async def test_recruiter_npc_atomically_spends_cost_and_applies_agency_bonus(tmp
             "agent",
             "operative",
         )
+        assert result.reward.amount == 2
         assert [
             (holding.agent_type, holding.amount)
             for holding in await service.get_agents(1)
-        ] == [("operative", 1)]
+        ] == [("operative", 2)]
         duplicate = await service.interact_with_npc(
             event_id=event.event_id,
             recipe_id="recruiter_network",
@@ -1437,24 +1439,99 @@ async def test_recruiter_npc_atomically_spends_cost_and_applies_agency_bonus(tmp
 
 
 @pytest.mark.asyncio
-async def test_npc_event_spawns_only_event_only_recruiter(tmp_path):
+async def test_all_permanent_contacts_can_also_spawn_as_bonus_npc_events(tmp_path):
     config = settings(tmp_path)
-    service = SpyGameService(config, rng=FixedRandom())
+    assert config.event_npc_ids == (
+        "recruiter",
+        "operations_chief",
+        "counterintelligence",
+    )
+    service = SpyGameService(config, rng=EndRandom())
     await service.initialize(now=NOW)
     await service.enable_chat(CHAT_ID, now=NOW)
     try:
         event = (await service.manual_spawn(CHAT_ID, event_type="npc", now=NOW)).event
-        assert event.config_id == "recruiter"
+        assert event.config_id == "counterintelligence"
         payload = await service.database.read(
             lambda connection: connection.execute(
                 "SELECT payload_json FROM game_events WHERE id = ?",
                 (event.event_id,),
             ).fetchone()[0]
         )
-        assert '"config_id":"recruiter"' in payload
-        assert '"recipe_ids":["recruiter_network"]' in payload
+        assert '"config_id":"counterintelligence"' in payload
+        assert '"counter_double","counter_ghost","counter_cache"' in payload
+        assert '"reward_multiplier":2' in payload
+
+        await grant_agents(service, 1, {"operative": 1})
+        await grant_items(service, 1, {"intel_file": 1})
+        result = await service.interact_with_npc(
+            event_id=event.event_id,
+            recipe_id="counter_double",
+            chat_id=CHAT_ID,
+            user_id=1,
+            username=None,
+            display_name="Counter",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert result.status is NpcStatus.SUCCESS
+        assert (
+            result.reward.reward_type,
+            result.reward.reward_id,
+            result.reward.amount,
+        ) == ("agent", "double_agent", 2)
     finally:
         await service.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_npc_event_without_bonus_field_survives_restart(tmp_path):
+    config = settings(tmp_path)
+    first = SpyGameService(config, rng=FixedRandom())
+    await first.initialize(now=NOW)
+    await first.enable_chat(CHAT_ID, now=NOW)
+    event = (await first.manual_spawn(CHAT_ID, event_type="npc", now=NOW)).event
+    await first.attach_message(event.event_id, 901)
+    await grant_agents(first, 1, {"informant": 20})
+    try:
+        payload = await first.database.read(
+            lambda connection: json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM game_events WHERE id = ?",
+                    (event.event_id,),
+                ).fetchone()[0]
+            )
+        )
+        payload.pop("reward_multiplier")
+        await first.database.transaction(
+            lambda connection: connection.execute(
+                "UPDATE game_events SET payload_json = ? WHERE id = ?",
+                (
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    event.event_id,
+                ),
+            ),
+            immediate=True,
+        )
+    finally:
+        await first.close()
+
+    second = SpyGameService(config, rng=FixedRandom())
+    await second.initialize(now=NOW + timedelta(seconds=1))
+    try:
+        assert (await second.get_chat_status(CHAT_ID)).active_event_id == event.event_id
+        result = await second.interact_with_npc(
+            event_id=event.event_id,
+            recipe_id="recruiter_network",
+            chat_id=CHAT_ID,
+            user_id=1,
+            username=None,
+            display_name="Legacy",
+            now=NOW + timedelta(seconds=2),
+        )
+        assert result.status is NpcStatus.SUCCESS
+        assert result.reward.amount == 1
+    finally:
+        await second.close()
 
 
 @pytest.mark.asyncio
@@ -1517,7 +1594,9 @@ async def test_permanent_contact_exchange_is_atomic_idempotent_and_event_free(tm
 
 
 @pytest.mark.asyncio
-async def test_permanent_contacts_reject_recruiter_and_roll_back_failed_audit(tmp_path):
+async def test_permanent_recruiter_uses_regular_reward_and_failed_audit_rolls_back(
+    tmp_path,
+):
     service = await initialized_service(tmp_path)
     try:
         await grant_agents(service, 1, {"informant": 20, "operative": 1})
@@ -1531,7 +1610,12 @@ async def test_permanent_contacts_reject_recruiter_and_roll_back_failed_audit(tm
             display_name="Recruit",
             now=NOW,
         )
-        assert recruiter.status is NpcStatus.INVALID_RECIPE
+        assert recruiter.status is NpcStatus.SUCCESS
+        assert (
+            recruiter.reward.reward_type,
+            recruiter.reward.reward_id,
+            recruiter.reward.amount,
+        ) == ("agent", "operative", 1)
 
         await service.database.transaction(
             lambda connection: connection.execute(
@@ -1569,7 +1653,7 @@ async def test_permanent_contacts_reject_recruiter_and_roll_back_failed_audit(tm
                 ).fetchone()[0],
             )
         )
-        assert state == (1, 1, 0)
+        assert state == (2, 1, 0)
     finally:
         await service.close()
 
@@ -2303,9 +2387,10 @@ async def test_telegram_fallback_lists_and_executes_permanent_contact_exchange(
         )
         buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
         callback_data = [row[0]["callback_data"] for row in buttons]
-        assert len(callback_data) == 6
+        assert len(callback_data) == 12
+        assert "spy:contact_handler_tier2:0" in callback_data
+        assert "spy:contact_recruiter_network:0" in callback_data
         assert "spy:contact_chief_illegal:0" in callback_data
-        assert all("recruiter" not in value for value in callback_data)
 
         exchange_query = SimpleNamespace(
             id="exchange-query",
@@ -2422,6 +2507,7 @@ async def test_handler_event_publishes_server_side_exchange_recipes(
             f"spy:exchange_courier:{event.event_id}",
             f"spy:exchange_tier3:{event.event_id}",
         ]
+        assert all(row[0]["text"].endswith("· ×2") for row in buttons)
         assert all("10" not in row[0]["callback_data"].split(":")[1] for row in buttons)
     finally:
         await service.close()
@@ -2446,8 +2532,10 @@ async def test_npc_event_publishes_only_selected_server_side_recipes(
         assert [row[0]["callback_data"] for row in buttons] == [
             f"spy:npc_recruiter_network:{event.event_id}"
         ]
+        assert buttons[0][0]["text"].endswith("· ×2")
         assert "20" not in buttons[0][0]["callback_data"].split(":")[1]
         assert "РЕКРУТЕР" in send_rich.await_args.args[2][0]["text"]
+        assert "результат ×2" in send_rich.await_args.args[2][-1]["text"]
     finally:
         await service.close()
 
