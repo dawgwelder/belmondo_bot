@@ -41,9 +41,11 @@ from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
 from handlers.spy_game import (
     SPY_CALLBACK_PATTERN,
+    SPY_HTML5_GAME_PATTERN,
     spy_admin,
     spy_callback,
     spy_game_tick,
+    spy_html5_game_launch,
     spy_menu,
     track_spy_activity,
 )
@@ -126,6 +128,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
                 spy_service,
                 token,
                 spy_webapp_settings,
+                bot=application.bot,
             )
             application.bot_data["spy_webapp"] = spy_webapp
     except Exception:
@@ -173,6 +176,12 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     )
     application.add_handler(MessageHandler(media_spam_filter, spam_gif_detector))
 
+    application.add_handler(
+        CallbackQueryHandler(
+            spy_html5_game_launch,
+            game_pattern=SPY_HTML5_GAME_PATTERN,
+        )
+    )
     application.add_handler(
         CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
     )

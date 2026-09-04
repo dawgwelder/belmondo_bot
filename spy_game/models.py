@@ -65,6 +65,17 @@ class InterceptStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class InterceptGameStatus(str, Enum):
+    READY = "ready"
+    WON = "won"
+    FAILED = "failed"
+    ALREADY_PLAYED = "already_played"
+    ALREADY_RESOLVED = "already_resolved"
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    DISABLED = "disabled"
+
+
 class CooperativeStatus(str, Enum):
     CONTRIBUTED = "contributed"
     COMPLETED = "completed"
@@ -288,6 +299,23 @@ class InterceptResult:
     event_id: str
     reward: DropReward | None = None
     winner_user_id: int | None = None
+
+
+@dataclass(frozen=True)
+class InterceptGameRun:
+    status: InterceptGameStatus
+    run_id: str | None = None
+    launch_token: str | None = None
+    event_id: str | None = None
+    chat_id: int | None = None
+    message_id: int | None = None
+    public_name: str | None = None
+    prompt: str | None = None
+    targets: tuple[int, ...] = ()
+    expires_at: datetime | None = None
+    success_score: int = 0
+    score: int | None = None
+    reward: DropReward | None = None
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,13 @@ from aiohttp import web
 
 from config import logger
 
-from .models import AgencyStatus, EconomyStatus, EquipmentStatus
+from .models import (
+    AgencyStatus,
+    EconomyStatus,
+    EquipmentStatus,
+    InterceptGameRun,
+    InterceptGameStatus,
+)
 from .service import SpyGameService
 from .settings import AGENT_TYPES, ITEM_TYPES
 from .webapp_auth import (
@@ -53,6 +60,8 @@ class SpyWebAppSettings:
     host: str = "127.0.0.1"
     port: int = 8080
     launch_url: str | None = None
+    game_url: str | None = None
+    game_short_name: str = "spies"
     init_data_max_age_seconds: int = 5 * 60
     launch_context_ttl_seconds: int = 10 * 60
     rate_limit_per_minute: int = 60
@@ -68,11 +77,15 @@ class SpyWebAppSettings:
             raise ValueError(
                 "Spy Game Web App timeouts and rate limit must be positive"
             )
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", self.game_short_name):
+            raise ValueError("SPY_GAME_HTML5_SHORT_NAME is invalid")
         if self.enabled:
-            if not self.launch_url:
+            if not self.launch_url and not self.game_url:
                 raise ValueError(
-                    "SPY_GAME_WEBAPP_LAUNCH_URL is required when Web App is enabled"
+                    "a Mini App launch URL or HTML5 Game URL is required when "
+                    "the Web App server is enabled"
                 )
+        if self.launch_url:
             parsed = urlsplit(self.launch_url)
             path_parts = [part for part in parsed.path.split("/") if part]
             if (
@@ -84,6 +97,10 @@ class SpyWebAppSettings:
                     "SPY_GAME_WEBAPP_LAUNCH_URL must be an HTTPS Telegram "
                     "direct link such as https://t.me/bot/app"
                 )
+        if self.game_url:
+            parsed = urlsplit(self.game_url)
+            if parsed.scheme != "https" or not parsed.hostname:
+                raise ValueError("SPY_GAME_HTML5_URL must be a public HTTPS URL")
 
     @classmethod
     def from_env(cls) -> "SpyWebAppSettings":
@@ -94,6 +111,8 @@ class SpyWebAppSettings:
             host=os.getenv("SPY_GAME_WEBAPP_HOST", "127.0.0.1"),
             port=_env_int("SPY_GAME_WEBAPP_PORT", 8080),
             launch_url=os.getenv("SPY_GAME_WEBAPP_LAUNCH_URL") or None,
+            game_url=os.getenv("SPY_GAME_HTML5_URL") or None,
+            game_short_name=os.getenv("SPY_GAME_HTML5_SHORT_NAME", "spies"),
             init_data_max_age_seconds=_env_int(
                 "SPY_GAME_WEBAPP_INIT_DATA_MAX_AGE_SECONDS", 5 * 60
             ),
@@ -135,12 +154,14 @@ class SpyWebAppServer:
         service: SpyGameService,
         bot_token: str,
         settings: SpyWebAppSettings,
+        bot=None,
     ) -> None:
         if not bot_token:
             raise ValueError("Telegram bot token is required for Web App auth")
         self.service = service
         self.bot_token = bot_token
         self.settings = settings
+        self.bot = bot
         self.signer = LaunchContextSigner(
             bot_token,
             settings.launch_context_ttl_seconds,
@@ -156,12 +177,17 @@ class SpyWebAppServer:
                 web.get(f"{self.BASE_PATH}/", self.index),
                 web.get(f"{self.BASE_PATH}/app.js", self.javascript),
                 web.get(f"{self.BASE_PATH}/styles.css", self.styles),
+                web.get(f"{self.BASE_PATH}/game/", self.game),
+                web.get(f"{self.BASE_PATH}/game/game.js", self.game_javascript),
+                web.get(f"{self.BASE_PATH}/game/game.css", self.game_styles),
                 web.get(f"{self.BASE_PATH}/health", self.health),
                 web.get(f"{self.BASE_PATH}/api/state", self.state),
                 web.post(f"{self.BASE_PATH}/api/equipment/equip", self.equip),
                 web.post(f"{self.BASE_PATH}/api/equipment/unequip", self.unequip),
                 web.post(f"{self.BASE_PATH}/api/prestige", self.prestige),
                 web.post(f"{self.BASE_PATH}/api/agency", self.agency),
+                web.get(f"{self.BASE_PATH}/api/game/state", self.game_state),
+                web.post(f"{self.BASE_PATH}/api/game/finish", self.game_finish),
             ]
         )
         return app
@@ -214,6 +240,30 @@ class SpyWebAppServer:
             )
         )
 
+    @property
+    def game_enabled(self) -> bool:
+        return bool(
+            self.settings.enabled
+            and self.service.settings.enabled
+            and self.settings.game_url
+        )
+
+    def game_launch_url(self, launch_token: str) -> str | None:
+        if not self.game_enabled or not self.settings.game_url:
+            return None
+        parsed = urlsplit(self.settings.game_url)
+        fragment = dict(parse_qsl(parsed.fragment, keep_blank_values=True))
+        fragment["run"] = launch_token
+        return urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.query,
+                urlencode(fragment),
+            )
+        )
+
     @staticmethod
     def _static_headers(cache_control: str) -> dict[str, str]:
         return {
@@ -245,9 +295,31 @@ class SpyWebAppServer:
             headers=self._static_headers("public, max-age=300"),
         )
 
+    async def game(self, request: web.Request) -> web.Response:
+        return web.FileResponse(
+            self.ASSETS / "game.html",
+            headers=self._static_headers("no-store"),
+        )
+
+    async def game_javascript(self, request: web.Request) -> web.Response:
+        return web.FileResponse(
+            self.ASSETS / "game.js",
+            headers=self._static_headers("public, max-age=300"),
+        )
+
+    async def game_styles(self, request: web.Request) -> web.Response:
+        return web.FileResponse(
+            self.ASSETS / "game.css",
+            headers=self._static_headers("public, max-age=300"),
+        )
+
     async def health(self, request: web.Request) -> web.Response:
         return self._json_response(
-            {"ok": True, "game_enabled": self.service.settings.enabled}
+            {
+                "ok": True,
+                "game_enabled": self.service.settings.enabled,
+                "html5_game_enabled": self.game_enabled,
+            }
         )
 
     @staticmethod
@@ -511,3 +583,91 @@ class SpyWebAppServer:
                 "required_agents": self._agent_costs(result.required_agents),
             }
         )
+
+    async def _intercept_game_run(self, request: web.Request) -> InterceptGameRun:
+        launch_token = request.headers.get("X-Spy-Game-Token", "")
+        result = await self.service.get_intercept_game(launch_token)
+        if result.status is InterceptGameStatus.NOT_FOUND:
+            raise web.HTTPUnauthorized(text="Откройте игру заново из Telegram")
+        if result.status is InterceptGameStatus.DISABLED:
+            raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
+        return result
+
+    def _intercept_game_payload(self, result: InterceptGameRun) -> dict:
+        reward = None
+        if result.reward is not None and result.reward.reward_id in ITEM_TYPES:
+            item = ITEM_TYPES[result.reward.reward_id]
+            reward = {
+                "id": item.id,
+                "name": item.display_name,
+                "emoji": item.emoji,
+                "amount": result.reward.amount,
+            }
+        return {
+            "status": result.status.value,
+            "prompt": result.prompt,
+            "targets": list(result.targets),
+            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
+            "success_score": result.success_score,
+            "score": result.score,
+            "reward": reward,
+        }
+
+    async def game_state(self, request: web.Request) -> web.Response:
+        result = await self._intercept_game_run(request)
+        return self._json_response(self._intercept_game_payload(result))
+
+    async def game_finish(self, request: web.Request) -> web.Response:
+        active = await self._intercept_game_run(request)
+        if active.status is not InterceptGameStatus.READY:
+            return self._json_response(self._intercept_game_payload(active))
+        payload = await self._json_object(request)
+        locks = payload.get("locks")
+        if not isinstance(locks, list):
+            raise web.HTTPBadRequest(text="Некорректный журнал перехвата")
+        try:
+            result = await self.service.finish_intercept_game(
+                request.headers.get("X-Spy-Game-Token", ""),
+                tuple(locks),
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        if result.status is InterceptGameStatus.WON and self.bot is not None:
+            await self._announce_intercept_win(result)
+        return self._json_response(self._intercept_game_payload(result))
+
+    async def _announce_intercept_win(self, result: InterceptGameRun) -> None:
+        if result.chat_id is None or result.reward is None:
+            return
+        item = ITEM_TYPES.get(result.reward.reward_id or "")
+        reward_text = (
+            f"{item.emoji} {item.display_name} ×{result.reward.amount}"
+            if item is not None
+            else "награда Центра"
+        )
+        try:
+            if result.message_id is not None:
+                await self.bot.edit_message_reply_markup(
+                    chat_id=result.chat_id,
+                    message_id=result.message_id,
+                    reply_markup=None,
+                )
+        except Exception:
+            logger.warning(
+                "spy_game: HTML5 intercept keyboard remained event_id=%s",
+                result.event_id,
+            )
+        try:
+            await self.bot.send_message(
+                chat_id=result.chat_id,
+                text=(
+                    "✅ ШИФР РАСКРЫТ\n"
+                    f"{result.public_name or 'Скрытый агент'} восстановил канал "
+                    f"и получил {reward_text}."
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "spy_game: HTML5 intercept announcement failed event_id=%s",
+                result.event_id,
+            )

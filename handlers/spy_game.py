@@ -6,7 +6,7 @@ import asyncio
 import math
 from datetime import datetime, timezone
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackGame, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import logger
@@ -22,6 +22,7 @@ from spy_game.models import (
     EconomyStatus,
     EquipmentStatus,
     Inventory,
+    InterceptGameStatus,
     InterceptStatus,
     NpcStatus,
     Profile,
@@ -41,6 +42,7 @@ from spy_game.settings import (
 from telegram_utils import send_rich_message
 
 SPY_CALLBACK_PATTERN = r"^spy:[a-z0-9_]{1,32}:[a-z0-9_]{1,24}$"
+SPY_HTML5_GAME_PATTERN = r"^[A-Za-z0-9_]{1,64}$"
 RECRUITMENT_PROGRESS_MARKER = "📡 ПРОГРЕСС НАБОРА"
 ACTIVITY_PROFILE_LABELS = {
     "calm": "спокойный",
@@ -261,6 +263,19 @@ def _public_username(user) -> str | None:
     if not user.username or not user.username.strip("@"):
         return None
     return f"@{user.username.lstrip('@')}"
+
+
+def _intercept_game_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "📡 Настроить перехват",
+                    callback_game=CallbackGame(),
+                )
+            ]
+        ]
+    )
 
 
 def _public_label(user) -> str:
@@ -732,7 +747,6 @@ async def publish_spy_event(
     context: ContextTypes.DEFAULT_TYPE,
     event: SpawnEvent,
 ) -> int:
-    narrative = await _narrator(context).narrate(event)
     service = context.bot_data.get("spy_game")
     recipes = (
         service.settings.handler_recipes
@@ -778,6 +792,34 @@ async def publish_spy_event(
         if isinstance(service, SpyGameService)
         else 3
     )
+    webapp = context.bot_data.get("spy_webapp")
+    if (
+        is_intercept
+        and scenario is not None
+        and getattr(
+            webapp,
+            "game_enabled",
+            False,
+        )
+    ):
+        try:
+            message = await context.bot.send_game(
+                chat_id=event.chat_id,
+                game_short_name=webapp.settings.game_short_name,
+                reply_markup=_intercept_game_keyboard(),
+            )
+            logger.info(
+                "spy_narrative_selected event_id=%s source=html5_game",
+                event.event_id,
+            )
+            return message.message_id
+        except Exception:
+            logger.exception(
+                "spy_game: HTML5 intercept publication failed, using fallback "
+                "event_id=%s",
+                event.event_id,
+            )
+    narrative = await _narrator(context).narrate(event)
     if event.event_type == "recruitment":
         progress = RecruitmentProgress(
             event_id=event.event_id,
@@ -849,6 +891,66 @@ async def publish_spy_event(
         narrative.source,
     )
     return message_id
+
+
+async def spy_html5_game_launch(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    chat = update.effective_chat
+    message = query.message if query is not None else None
+    webapp = context.bot_data.get("spy_webapp")
+    if query is None:
+        return
+    if user is None or chat is None or message is None:
+        await query.answer(
+            "Запуск из inline-сообщения пока не поддерживается.",
+            show_alert=True,
+        )
+        return
+    if (
+        webapp is None
+        or not getattr(webapp, "game_enabled", False)
+        or query.game_short_name != webapp.settings.game_short_name
+    ):
+        await query.answer(
+            "HTML5-перехват временно недоступен. Используйте текстовый вариант.",
+            show_alert=True,
+        )
+        return
+    try:
+        result = await _service(context).start_intercept_game(
+            chat_id=chat.id,
+            message_id=message.message_id,
+            user_id=user.id,
+            username=user.username,
+            display_name=_display_name(user),
+        )
+    except Exception:
+        logger.exception(
+            "spy_game: failed to start HTML5 intercept chat_id=%s message_id=%s",
+            chat.id,
+            message.message_id,
+        )
+        await query.answer("Не удалось открыть канал.", show_alert=True)
+        return
+    if result.status is InterceptGameStatus.READY:
+        launch_url = webapp.game_launch_url(result.launch_token)
+        if launch_url:
+            await query.answer(url=launch_url)
+            return
+    messages = {
+        InterceptGameStatus.ALREADY_PLAYED: "Вы уже использовали попытку.",
+        InterceptGameStatus.ALREADY_RESOLVED: "Канал уже перехвачен.",
+        InterceptGameStatus.EXPIRED: "Канал уже замолчал.",
+        InterceptGameStatus.DISABLED: "Разведсеть сейчас отключена.",
+    }
+    await query.answer(
+        messages.get(result.status, "Этот сигнал больше недоступен."),
+        show_alert=True,
+    )
 
 
 async def _remove_event_keyboard(context, chat_id: int, message_id: int | None) -> None:

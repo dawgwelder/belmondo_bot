@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
+import secrets
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .activity import ActivityTracker
@@ -28,6 +31,8 @@ from .models import (
     EquipmentStatus,
     ExchangeResult,
     Inventory,
+    InterceptGameRun,
+    InterceptGameStatus,
     InterceptResult,
     InterceptStatus,
     LeaderboardEntry,
@@ -414,6 +419,94 @@ class SpyGameService:
             ),
             immediate=True,
         )
+
+    async def start_intercept_game(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> InterceptGameRun:
+        if not self.chat_is_available(chat_id):
+            return InterceptGameRun(InterceptGameStatus.DISABLED)
+        token = secrets.token_urlsafe(32)
+        token_hash = self._game_token_hash(token)
+        run_id = secrets.token_hex(12)
+        targets = tuple(
+            self.rng.randint(15, 85) for _ in range(self.settings.intercept_game_rounds)
+        )
+        current = now or utc_now()
+        result = await self.database.transaction(
+            lambda connection: self.repository.start_intercept_game(
+                connection,
+                chat_id=chat_id,
+                message_id=message_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                run_id=run_id,
+                token_hash=token_hash,
+                targets=targets,
+                now=current,
+            ),
+            immediate=True,
+        )
+        if result.status is InterceptGameStatus.READY:
+            return replace(result, launch_token=token)
+        return result
+
+    async def get_intercept_game(
+        self,
+        launch_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> InterceptGameRun:
+        if not self.settings.enabled:
+            return InterceptGameRun(InterceptGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.get_intercept_game(
+                connection,
+                self._game_token_hash(launch_token),
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def finish_intercept_game(
+        self,
+        launch_token: str,
+        locks: tuple[int, ...],
+        *,
+        now: datetime | None = None,
+    ) -> InterceptGameRun:
+        if not self.settings.enabled:
+            return InterceptGameRun(InterceptGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+        if len(locks) > self.settings.intercept_game_rounds or any(
+            type(value) is not int or not 0 <= value <= 100 for value in locks
+        ):
+            raise ValueError("invalid intercept locks")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.finish_intercept_game(
+                connection,
+                self._game_token_hash(launch_token),
+                locks,
+                current,
+            ),
+            immediate=True,
+        )
+
+    @staticmethod
+    def _game_token_hash(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     async def contribute_cooperative(
         self,

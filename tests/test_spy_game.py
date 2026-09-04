@@ -18,6 +18,7 @@ from spy_game.models import (
     DirectorState,
     EconomyStatus,
     EquipmentStatus,
+    InterceptGameStatus,
     InterceptStatus,
     NpcStatus,
     RecruitmentProgress,
@@ -1857,7 +1858,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 8
+        assert migration_count == 9
     finally:
         await second.close()
 
@@ -1933,6 +1934,10 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agency_history'"
                 ).fetchone()[0],
                 connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'intercept_game_runs'"
+                ).fetchone()[0],
+                connection.execute(
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
@@ -1943,7 +1948,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -1952,6 +1957,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "lore",
             "event_templates",
             "agency_history",
+            "intercept_game_runs",
             None,
             "balanced",
         )
@@ -2356,5 +2362,269 @@ async def test_spy_admin_activity_switches_profile_and_reports_settings(tmp_path
         assert "агрессивный (aggressive)" in message
         assert "Peak: score ≥ 1" in message
         assert "Cooldown: 1 мин." in message
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_intercept_failed_run_leaves_event_for_next_agent(tmp_path):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
+    await service.attach_message(event.event_id, 701)
+    try:
+        first = await service.start_intercept_game(
+            chat_id=CHAT_ID,
+            message_id=701,
+            user_id=1,
+            username="first",
+            display_name="Private First",
+            now=NOW + timedelta(seconds=1),
+        )
+        assert first.status is InterceptGameStatus.READY
+        assert first.targets == (15, 15, 15, 15, 15)
+        assert first.launch_token
+        stored_hash = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT token_hash FROM intercept_game_runs WHERE id = ?",
+                (first.run_id,),
+            ).fetchone()[0]
+        )
+        assert stored_hash != first.launch_token
+
+        failed = await service.finish_intercept_game(
+            first.launch_token,
+            (100, 100, 100, 100, 100),
+            now=NOW + timedelta(seconds=2),
+        )
+        assert failed.status is InterceptGameStatus.FAILED
+        assert failed.score == 0
+        assert (
+            await service.get_chat_status(CHAT_ID)
+        ).active_event_id == event.event_id
+
+        replay = await service.start_intercept_game(
+            chat_id=CHAT_ID,
+            message_id=701,
+            user_id=1,
+            username="first",
+            display_name="Private First",
+            now=NOW + timedelta(seconds=3),
+        )
+        assert replay.status is InterceptGameStatus.ALREADY_PLAYED
+
+        second = await service.start_intercept_game(
+            chat_id=CHAT_ID,
+            message_id=701,
+            user_id=2,
+            username="second",
+            display_name="Private Second",
+            now=NOW + timedelta(seconds=3),
+        )
+        won = await service.finish_intercept_game(
+            second.launch_token,
+            second.targets,
+            now=NOW + timedelta(seconds=4),
+        )
+        assert won.status is InterceptGameStatus.WON
+        assert won.score == 5000
+        assert won.public_name == "@second"
+        assert won.reward.reward_id == "access_code"
+        assert (await service.get_chat_status(CHAT_ID)).active_event_id is None
+
+        retry = await service.finish_intercept_game(
+            second.launch_token,
+            second.targets,
+            now=NOW + timedelta(seconds=5),
+        )
+        assert retry.status is InterceptGameStatus.WON
+        inventory = await service.get_inventory(2)
+        assert [(item.item_type, item.amount) for item in inventory.items] == [
+            ("access_code", 1)
+        ]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_intercept_concurrent_winners_credit_only_one_agent(tmp_path):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
+    await service.attach_message(event.event_id, 704)
+    try:
+        runs = []
+        for user_id in (11, 12):
+            runs.append(
+                await service.start_intercept_game(
+                    chat_id=CHAT_ID,
+                    message_id=704,
+                    user_id=user_id,
+                    username=f"agent{user_id}",
+                    display_name=f"Private {user_id}",
+                    now=NOW + timedelta(seconds=1),
+                )
+            )
+        results = await asyncio.gather(
+            *(
+                service.finish_intercept_game(
+                    run.launch_token,
+                    run.targets,
+                    now=NOW + timedelta(seconds=2),
+                )
+                for run in runs
+            )
+        )
+        assert {result.status for result in results} == {
+            InterceptGameStatus.WON,
+            InterceptGameStatus.ALREADY_RESOLVED,
+        }
+        rewarded = []
+        for user_id in (11, 12):
+            inventory = await service.get_inventory(user_id)
+            if inventory.items:
+                rewarded.append(user_id)
+        assert len(rewarded) == 1
+        run_statuses = await service.database.read(
+            lambda connection: {
+                row[0]
+                for row in connection.execute(
+                    "SELECT status FROM intercept_game_runs"
+                ).fetchall()
+            }
+        )
+        assert run_statuses == {"won", "lost_race"}
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_intercept_launch_token_survives_restart(tmp_path):
+    config = settings(tmp_path)
+    first = SpyGameService(config, rng=FixedRandom())
+    await first.initialize(now=NOW)
+    await first.enable_chat(CHAT_ID, now=NOW)
+    event = (await first.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
+    await first.attach_message(event.event_id, 705)
+    run = await first.start_intercept_game(
+        chat_id=CHAT_ID,
+        message_id=705,
+        user_id=21,
+        username="restart_agent",
+        display_name="Private Restart",
+        now=NOW + timedelta(seconds=1),
+    )
+    await first.close()
+
+    second = SpyGameService(config, rng=FixedRandom())
+    await second.initialize(now=NOW + timedelta(seconds=2))
+    try:
+        restored = await second.get_intercept_game(
+            run.launch_token,
+            now=NOW + timedelta(seconds=3),
+        )
+        assert restored.status is InterceptGameStatus.READY
+        assert restored.targets == run.targets
+        result = await second.finish_intercept_game(
+            run.launch_token,
+            run.targets,
+            now=NOW + timedelta(seconds=4),
+        )
+        assert result.status is InterceptGameStatus.WON
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_intercept_event_uses_spies_game_and_keeps_text_fallback(tmp_path):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
+    bot = SimpleNamespace(
+        send_game=AsyncMock(return_value=SimpleNamespace(message_id=702)),
+        token="TOKEN",
+    )
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+    )
+    context = SimpleNamespace(
+        bot=bot,
+        bot_data={"spy_game": service, "spy_webapp": webapp},
+    )
+    try:
+        message_id = await spy_handlers.publish_spy_event(context, event)
+        assert message_id == 702
+        kwargs = bot.send_game.await_args.kwargs
+        assert kwargs["game_short_name"] == "spies"
+        buttons = kwargs["reply_markup"].inline_keyboard
+        assert buttons[0][0].callback_game is not None
+        assert len(buttons) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_intercept_publication_falls_back_when_send_game_fails(
+    tmp_path,
+    monkeypatch,
+):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
+    bot = SimpleNamespace(
+        send_game=AsyncMock(side_effect=RuntimeError("BotFather rejected game")),
+        token="TOKEN",
+    )
+    send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 706}})
+    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+    )
+    context = SimpleNamespace(
+        bot=bot,
+        bot_data={"spy_game": service, "spy_webapp": webapp},
+    )
+    try:
+        message_id = await spy_handlers.publish_spy_event(context, event)
+        assert message_id == 706
+        buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert buttons[0][0]["callback_data"].startswith("spy:intercept_")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_spies_game_callback_returns_user_bound_launch_url(tmp_path):
+    service = await initialized_service(tmp_path)
+    current = datetime.now(timezone.utc)
+    event = (
+        await service.manual_spawn(CHAT_ID, event_type="intercept", now=current)
+    ).event
+    await service.attach_message(event.event_id, 703)
+    answer = AsyncMock()
+    query = SimpleNamespace(
+        message=SimpleNamespace(message_id=703),
+        game_short_name="spies",
+        answer=answer,
+    )
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(
+            id=7,
+            username="bond",
+            full_name="Private Bond",
+        ),
+        effective_chat=SimpleNamespace(id=CHAT_ID),
+    )
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+        game_launch_url=lambda token: f"https://spy.example/spy-app/game/#run={token}",
+    )
+    context = SimpleNamespace(bot_data={"spy_game": service, "spy_webapp": webapp})
+    try:
+        await spy_handlers.spy_html5_game_launch(update, context)
+        launch_url = answer.await_args.kwargs["url"]
+        assert launch_url.startswith("https://spy.example/spy-app/game/#run=")
+        assert str(CHAT_ID) not in launch_url
+        assert "Private Bond" not in launch_url
     finally:
         await service.close()

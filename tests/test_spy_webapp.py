@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
 import pytest
@@ -68,6 +69,7 @@ def game_settings(tmp_path: Path):
         database_path=tmp_path / "spy-webapp.sqlite3",
         allowed_chat_ids=frozenset({CHAT_ID}),
         activity_user_debounce_seconds=0,
+        allow_manual_spawn=True,
     )
 
 
@@ -162,6 +164,15 @@ def test_webapp_settings_require_https_launch_url():
         SpyWebAppSettings(enabled=True, launch_url="http://example.test/app")
     with pytest.raises(ValueError, match="Telegram direct link"):
         SpyWebAppSettings(enabled=True, launch_url="https://example.test/app")
+    with pytest.raises(ValueError, match="public HTTPS"):
+        SpyWebAppSettings(enabled=True, game_url="http://example.test/game")
+    assert (
+        SpyWebAppSettings(
+            enabled=True,
+            game_url="https://example.test/spy-app/game/",
+        ).game_short_name
+        == "spies"
+    )
 
 
 def test_rate_limiter_has_a_per_user_rolling_window():
@@ -346,6 +357,68 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
 
         health = await server.health(request())
         assert health.status == 200
-        assert json.loads(health.text) == {"ok": True, "game_enabled": True}
+        assert json.loads(health.text) == {
+            "ok": True,
+            "game_enabled": True,
+            "html5_game_enabled": False,
+        }
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_game_api_uses_persisted_token_and_announces_once(tmp_path):
+    rng = SimpleNamespace(randint=lambda start, end: start)
+    service = SpyGameService(game_settings(tmp_path), rng=rng)
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    event = (await service.manual_spawn(CHAT_ID, event_type="intercept")).event
+    await service.attach_message(event.event_id, 900)
+    run = await service.start_intercept_game(
+        chat_id=CHAT_ID,
+        message_id=900,
+        user_id=USER_ID,
+        username="bond",
+        display_name="Private Bond",
+    )
+    bot = SimpleNamespace(
+        edit_message_reply_markup=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    settings = web_settings(game_url="https://spy.example/spy-app/game/")
+    server = SpyWebAppServer(service, BOT_TOKEN, settings, bot=bot)
+    headers = {"X-Spy-Game-Token": run.launch_token}
+    try:
+        assert server.game_enabled is True
+        assert server.game_launch_url(run.launch_token).startswith(
+            "https://spy.example/spy-app/game/#run="
+        )
+        with pytest.raises(web.HTTPUnauthorized):
+            await server.game_state(request())
+
+        response = await server.game_state(request(headers))
+        state = json.loads(response.text)
+        assert state["status"] == "ready"
+        assert state["targets"] == [15, 15, 15, 15, 15]
+
+        response = await server.game_finish(
+            request(headers, {"locks": state["targets"]})
+        )
+        result = json.loads(response.text)
+        assert result["status"] == "won"
+        assert result["score"] == 5000
+        assert result["reward"]["id"] == "access_code"
+        bot.send_message.assert_awaited_once()
+        assert "@bond" in bot.send_message.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+
+        await server.game_finish(request(headers, {"locks": state["targets"]}))
+        bot.send_message.assert_awaited_once()
+
+        game = await server.game(request())
+        assert game.status == 200
+        assert "Перехват сигнала" in (server.ASSETS / "game.html").read_text(
+            encoding="utf-8"
+        )
     finally:
         await service.close()

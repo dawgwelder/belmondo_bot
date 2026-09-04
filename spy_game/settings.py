@@ -279,6 +279,9 @@ class SpySettings:
     reputation_reward_cap: int = 5
     equipment_slots: int = 3
     wiretap_bonus_chance_percent: int = 20
+    intercept_game_rounds: int = 5
+    intercept_game_run_seconds: int = 45
+    intercept_game_success_score: int = 3000
     death_operation_success_percent: int = 35
     death_operation_confirmation_seconds: int = 60
     death_operation_reward_multiplier: int = 2
@@ -379,6 +382,14 @@ class SpySettings:
             raise ValueError("equipment slots must be positive")
         if not 0 <= self.wiretap_bonus_chance_percent <= 100:
             raise ValueError("wiretap bonus chance must be between 0 and 100")
+        if self.intercept_game_rounds <= 0 or self.intercept_game_run_seconds <= 0:
+            raise ValueError("intercept game rounds and duration must be positive")
+        if (
+            not 1
+            <= self.intercept_game_success_score
+            <= (self.intercept_game_rounds * 1000)
+        ):
+            raise ValueError("intercept game success score is out of range")
         if not 0 <= self.death_operation_success_percent <= 100:
             raise ValueError("death operation success chance must be between 0 and 100")
         if self.death_operation_confirmation_seconds <= 0:

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <title>Перехват · Spy Clicker</title>
+    <link rel="stylesheet" href="game.css">
+    <script src="game.js" defer></script>
+  </head>
+  <body>
+    <main class="console">
+      <header class="console-header">
+        <div>
+          <p class="eyebrow">СЕКРЕТНЫЙ КАНАЛ</p>
+          <h1>Перехват сигнала</h1>
+        </div>
+        <div id="timer" class="timer">--</div>
+      </header>
+
+      <section id="loading" class="screen active" aria-live="polite">
+        <div class="loader"></div>
+        <p>Подключение к частоте…</p>
+      </section>
+
+      <section id="mission" class="screen hidden">
+        <p id="prompt" class="prompt"></p>
+        <div class="progress-row">
+          <span id="round">Сигнал 1/5</span>
+          <span id="score-hint">Порог допуска: 3000</span>
+        </div>
+
+        <div class="scope" aria-hidden="true">
+          <div class="grid"></div>
+          <div id="wave" class="wave"></div>
+          <div class="crosshair"></div>
+        </div>
+
+        <div class="meter" aria-label="Сила сигнала">
+          <div id="meter-fill" class="meter-fill"></div>
+        </div>
+        <p id="strength" class="strength">ШУМ</p>
+
+        <label class="dial-label" for="frequency">Настройка частоты</label>
+        <input id="frequency" type="range" min="0" max="100" value="50">
+        <div class="dial-scale"><span>НЧ</span><span>ВЧ</span></div>
+
+        <button id="lock" class="lock-button" type="button">
+          Зафиксировать канал
+        </button>
+        <p id="feedback" class="feedback" aria-live="polite"></p>
+      </section>
+
+      <section id="result" class="screen hidden" aria-live="polite">
+        <div id="result-icon" class="result-icon">✓</div>
+        <p class="eyebrow">РЕЗУЛЬТАТ ОПЕРАЦИИ</p>
+        <h2 id="result-title"></h2>
+        <p id="result-copy"></p>
+        <strong id="result-score" class="result-score"></strong>
+        <p id="reward" class="reward"></p>
+      </section>
+
+      <section id="error" class="screen hidden" aria-live="assertive">
+        <div class="result-icon danger">!</div>
+        <h2>Канал недоступен</h2>
+        <p id="error-copy"></p>
+      </section>
+    </main>
+  </body>
+</html>
