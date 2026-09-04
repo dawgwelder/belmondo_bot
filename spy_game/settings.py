@@ -282,6 +282,9 @@ class SpySettings:
     intercept_game_rounds: int = 5
     intercept_game_run_seconds: int = 45
     intercept_game_success_score: int = 3000
+    dead_drop_game_code_length: int = 3
+    dead_drop_game_attempts: int = 6
+    dead_drop_game_run_seconds: int = 60
     death_operation_success_percent: int = 35
     death_operation_confirmation_seconds: int = 60
     death_operation_reward_multiplier: int = 2
@@ -390,6 +393,10 @@ class SpySettings:
             <= (self.intercept_game_rounds * 1000)
         ):
             raise ValueError("intercept game success score is out of range")
+        if not 2 <= self.dead_drop_game_code_length <= 6:
+            raise ValueError("dead drop game code length must be between 2 and 6")
+        if self.dead_drop_game_attempts <= 0 or self.dead_drop_game_run_seconds <= 0:
+            raise ValueError("dead drop game attempts and duration must be positive")
         if not 0 <= self.death_operation_success_percent <= 100:
             raise ValueError("death operation success chance must be between 0 and 100")
         if self.death_operation_confirmation_seconds <= 0:

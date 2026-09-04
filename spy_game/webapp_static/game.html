@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark">
-    <title>Перехват · Spy Clicker</title>
+    <title>Операция · Spy Clicker</title>
     <link rel="stylesheet" href="game.css">
     <script src="game.js" defer></script>
   </head>
@@ -12,18 +12,18 @@
     <main class="console">
       <header class="console-header">
         <div>
-          <p class="eyebrow">СЕКРЕТНЫЙ КАНАЛ</p>
-          <h1>Перехват сигнала</h1>
+          <p id="eyebrow" class="eyebrow">СЕКРЕТНАЯ ОПЕРАЦИЯ</p>
+          <h1 id="operation-title">Перехват сигнала / Вскрытие тайника</h1>
         </div>
         <div id="timer" class="timer">--</div>
       </header>
 
       <section id="loading" class="screen active" aria-live="polite">
         <div class="loader"></div>
-        <p>Подключение к частоте…</p>
+        <p>Установка защищённого соединения…</p>
       </section>
 
-      <section id="mission" class="screen hidden">
+      <section id="intercept-mission" class="screen hidden">
         <p id="prompt" class="prompt"></p>
         <div class="progress-row">
           <span id="round">Сигнал 1/5</span>
@@ -45,10 +45,28 @@
         <input id="frequency" type="range" min="0" max="100" value="50">
         <div class="dial-scale"><span>НЧ</span><span>ВЧ</span></div>
 
-        <button id="lock" class="lock-button" type="button">
+        <button id="lock" class="action-button" type="button">
           Зафиксировать канал
         </button>
         <p id="feedback" class="feedback" aria-live="polite"></p>
+      </section>
+
+      <section id="dead-drop-mission" class="screen hidden">
+        <p class="prompt">
+          Подберите код. После проверки Центр покажет цифры на своих местах и
+          верные цифры на других местах.
+        </p>
+        <div class="progress-row">
+          <span id="attempts">Попытка 1/6</span>
+          <span>● место &nbsp; ◐ другая позиция</span>
+        </div>
+
+        <div id="code-lock" class="code-lock" aria-label="Кодовый замок"></div>
+        <button id="try-code" class="action-button" type="button">
+          Проверить код
+        </button>
+        <p id="code-feedback" class="feedback" aria-live="polite"></p>
+        <ol id="attempt-history" class="attempt-history"></ol>
       </section>
 
       <section id="result" class="screen hidden" aria-live="polite">
@@ -62,7 +80,7 @@
 
       <section id="error" class="screen hidden" aria-live="assertive">
         <div class="result-icon danger">!</div>
-        <h2>Канал недоступен</h2>
+        <h2>Операция недоступна</h2>
         <p id="error-copy"></p>
       </section>
     </main>

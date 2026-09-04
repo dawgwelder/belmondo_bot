@@ -18,6 +18,7 @@ from spy_game.models import (
     ChatStatus,
     ClaimStatus,
     CooperativeStatus,
+    DeadDropGameStatus,
     DeathOperationStatus,
     EconomyStatus,
     EquipmentStatus,
@@ -265,12 +266,13 @@ def _public_username(user) -> str | None:
     return f"@{user.username.lstrip('@')}"
 
 
-def _intercept_game_keyboard() -> InlineKeyboardMarkup:
+def _html5_game_keyboard(event_type: str) -> InlineKeyboardMarkup:
+    label = "📦 Вскрыть тайник" if event_type == "dead_drop" else "📡 Настроить перехват"
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    "📡 Настроить перехват",
+                    label,
                     callback_game=CallbackGame(),
                 )
             ]
@@ -793,31 +795,27 @@ async def publish_spy_event(
         else 3
     )
     webapp = context.bot_data.get("spy_webapp")
-    if (
-        is_intercept
-        and scenario is not None
-        and getattr(
-            webapp,
-            "game_enabled",
-            False,
-        )
+    if (is_dead_drop or (is_intercept and scenario is not None)) and getattr(
+        webapp, "game_enabled", False
     ):
         try:
             message = await context.bot.send_game(
                 chat_id=event.chat_id,
                 game_short_name=webapp.settings.game_short_name,
-                reply_markup=_intercept_game_keyboard(),
+                reply_markup=_html5_game_keyboard(event.event_type),
             )
             logger.info(
-                "spy_narrative_selected event_id=%s source=html5_game",
+                "spy_narrative_selected event_id=%s event_type=%s source=html5_game",
                 event.event_id,
+                event.event_type,
             )
             return message.message_id
         except Exception:
             logger.exception(
-                "spy_game: HTML5 intercept publication failed, using fallback "
-                "event_id=%s",
+                "spy_game: HTML5 game publication failed, using fallback "
+                "event_id=%s event_type=%s",
                 event.event_id,
+                event.event_type,
             )
     narrative = await _narrator(context).narrate(event)
     if event.event_type == "recruitment":
@@ -916,39 +914,58 @@ async def spy_html5_game_launch(
         or query.game_short_name != webapp.settings.game_short_name
     ):
         await query.answer(
-            "HTML5-перехват временно недоступен. Используйте текстовый вариант.",
+            "HTML5-операция временно недоступна. Используйте текстовый вариант.",
             show_alert=True,
         )
         return
     try:
-        result = await _service(context).start_intercept_game(
+        service = _service(context)
+        result = await service.start_intercept_game(
             chat_id=chat.id,
             message_id=message.message_id,
             user_id=user.id,
             username=user.username,
             display_name=_display_name(user),
         )
+        if result.status is InterceptGameStatus.NOT_FOUND:
+            result = await service.start_dead_drop_game(
+                chat_id=chat.id,
+                message_id=message.message_id,
+                user_id=user.id,
+                username=user.username,
+                display_name=_display_name(user),
+            )
     except Exception:
         logger.exception(
-            "spy_game: failed to start HTML5 intercept chat_id=%s message_id=%s",
+            "spy_game: failed to start HTML5 operation chat_id=%s message_id=%s",
             chat.id,
             message.message_id,
         )
-        await query.answer("Не удалось открыть канал.", show_alert=True)
+        await query.answer("Не удалось открыть операцию.", show_alert=True)
         return
-    if result.status is InterceptGameStatus.READY:
+    if result.status in {InterceptGameStatus.READY, DeadDropGameStatus.READY}:
         launch_url = webapp.game_launch_url(result.launch_token)
         if launch_url:
             await query.answer(url=launch_url)
             return
-    messages = {
-        InterceptGameStatus.ALREADY_PLAYED: "Вы уже использовали попытку.",
-        InterceptGameStatus.ALREADY_RESOLVED: "Канал уже перехвачен.",
-        InterceptGameStatus.EXPIRED: "Канал уже замолчал.",
-        InterceptGameStatus.DISABLED: "Разведсеть сейчас отключена.",
-    }
+    if isinstance(result.status, DeadDropGameStatus):
+        messages = {
+            DeadDropGameStatus.ALREADY_PLAYED: "Вы уже использовали попытку.",
+            DeadDropGameStatus.ALREADY_RESOLVED: "Тайник уже вскрыт.",
+            DeadDropGameStatus.EXPIRED: "Тайник уже изъят Центром.",
+            DeadDropGameStatus.DISABLED: "Разведсеть сейчас отключена.",
+        }
+        fallback = "Этот тайник больше недоступен."
+    else:
+        messages = {
+            InterceptGameStatus.ALREADY_PLAYED: "Вы уже использовали попытку.",
+            InterceptGameStatus.ALREADY_RESOLVED: "Канал уже перехвачен.",
+            InterceptGameStatus.EXPIRED: "Канал уже замолчал.",
+            InterceptGameStatus.DISABLED: "Разведсеть сейчас отключена.",
+        }
+        fallback = "Этот сигнал больше недоступен."
     await query.answer(
-        messages.get(result.status, "Этот сигнал больше недоступен."),
+        messages.get(result.status, fallback),
         show_alert=True,
     )
 

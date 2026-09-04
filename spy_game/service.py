@@ -23,6 +23,8 @@ from .models import (
     ClaimStatus,
     CooperativeResult,
     CooperativeStatus,
+    DeadDropGameRun,
+    DeadDropGameStatus,
     DeadDropResult,
     DeathOperationResult,
     DeathOperationStatus,
@@ -457,6 +459,91 @@ class SpyGameService:
         if result.status is InterceptGameStatus.READY:
             return replace(result, launch_token=token)
         return result
+
+    async def start_dead_drop_game(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        user_id: int,
+        username: str | None,
+        display_name: str | None,
+        now: datetime | None = None,
+    ) -> DeadDropGameRun:
+        if not self.chat_is_available(chat_id):
+            return DeadDropGameRun(DeadDropGameStatus.DISABLED)
+        token = secrets.token_urlsafe(32)
+        token_hash = self._game_token_hash(token)
+        run_id = secrets.token_hex(12)
+        code = tuple(
+            self.rng.randint(0, 9)
+            for _ in range(self.settings.dead_drop_game_code_length)
+        )
+        current = now or utc_now()
+        result = await self.database.transaction(
+            lambda connection: self.repository.start_dead_drop_game(
+                connection,
+                chat_id=chat_id,
+                message_id=message_id,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+                run_id=run_id,
+                token_hash=token_hash,
+                code=code,
+                now=current,
+            ),
+            immediate=True,
+        )
+        if result.status is DeadDropGameStatus.READY:
+            return replace(result, launch_token=token)
+        return result
+
+    async def get_dead_drop_game(
+        self,
+        launch_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> DeadDropGameRun:
+        if not self.settings.enabled:
+            return DeadDropGameRun(DeadDropGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return DeadDropGameRun(DeadDropGameStatus.NOT_FOUND)
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.get_dead_drop_game(
+                connection,
+                self._game_token_hash(launch_token),
+                current,
+            ),
+            immediate=True,
+        )
+
+    async def guess_dead_drop_game(
+        self,
+        launch_token: str,
+        guess: tuple[int, ...],
+        *,
+        now: datetime | None = None,
+    ) -> DeadDropGameRun:
+        if not self.settings.enabled:
+            return DeadDropGameRun(DeadDropGameStatus.DISABLED)
+        if not launch_token or len(launch_token) > 256:
+            return DeadDropGameRun(DeadDropGameStatus.NOT_FOUND)
+        if len(guess) != self.settings.dead_drop_game_code_length or any(
+            type(value) is not int or not 0 <= value <= 9 for value in guess
+        ):
+            raise ValueError("invalid dead drop code")
+        current = now or utc_now()
+        return await self.database.transaction(
+            lambda connection: self.repository.guess_dead_drop_game(
+                connection,
+                self._game_token_hash(launch_token),
+                guess,
+                current,
+            ),
+            immediate=True,
+        )
 
     async def get_intercept_game(
         self,

@@ -15,6 +15,8 @@ from config import logger
 
 from .models import (
     AgencyStatus,
+    DeadDropGameRun,
+    DeadDropGameStatus,
     EconomyStatus,
     EquipmentStatus,
     InterceptGameRun,
@@ -188,6 +190,7 @@ class SpyWebAppServer:
                 web.post(f"{self.BASE_PATH}/api/agency", self.agency),
                 web.get(f"{self.BASE_PATH}/api/game/state", self.game_state),
                 web.post(f"{self.BASE_PATH}/api/game/finish", self.game_finish),
+                web.post(f"{self.BASE_PATH}/api/game/guess", self.game_guess),
             ]
         )
         return app
@@ -593,6 +596,23 @@ class SpyWebAppServer:
             raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
         return result
 
+    async def _game_session(
+        self,
+        request: web.Request,
+    ) -> tuple[str, InterceptGameRun | DeadDropGameRun]:
+        launch_token = request.headers.get("X-Spy-Game-Token", "")
+        intercept = await self.service.get_intercept_game(launch_token)
+        if intercept.status is not InterceptGameStatus.NOT_FOUND:
+            if intercept.status is InterceptGameStatus.DISABLED:
+                raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
+            return "intercept", intercept
+        dead_drop = await self.service.get_dead_drop_game(launch_token)
+        if dead_drop.status is DeadDropGameStatus.NOT_FOUND:
+            raise web.HTTPUnauthorized(text="Откройте игру заново из Telegram")
+        if dead_drop.status is DeadDropGameStatus.DISABLED:
+            raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
+        return "dead_drop", dead_drop
+
     def _intercept_game_payload(self, result: InterceptGameRun) -> dict:
         reward = None
         if result.reward is not None and result.reward.reward_id in ITEM_TYPES:
@@ -604,6 +624,7 @@ class SpyWebAppServer:
                 "amount": result.reward.amount,
             }
         return {
+            "game_type": "intercept",
             "status": result.status.value,
             "prompt": result.prompt,
             "targets": list(result.targets),
@@ -613,9 +634,63 @@ class SpyWebAppServer:
             "reward": reward,
         }
 
+    def _dead_drop_game_payload(self, result: DeadDropGameRun) -> dict:
+        reward = None
+        if result.reward is not None:
+            if (
+                result.reward.reward_type == "item"
+                and result.reward.reward_id in ITEM_TYPES
+            ):
+                item = ITEM_TYPES[result.reward.reward_id]
+                reward = {
+                    "type": "item",
+                    "id": item.id,
+                    "name": item.display_name,
+                    "emoji": item.emoji,
+                    "amount": result.reward.amount,
+                }
+            elif (
+                result.reward.reward_type == "agent"
+                and result.reward.reward_id in AGENT_TYPES
+            ):
+                agent = AGENT_TYPES[result.reward.reward_id]
+                reward = {
+                    "type": "agent",
+                    "id": agent.id,
+                    "name": agent.display_name,
+                    "emoji": agent.emoji,
+                    "amount": result.reward.amount,
+                }
+            else:
+                reward = {
+                    "type": "empty",
+                    "id": None,
+                    "name": "Тайник пуст",
+                    "emoji": "∅",
+                    "amount": 0,
+                }
+        return {
+            "game_type": "dead_drop",
+            "status": result.status.value,
+            "code_length": result.code_length,
+            "attempts_allowed": result.attempts_allowed,
+            "attempts": [
+                {
+                    "digits": list(attempt.digits),
+                    "exact": attempt.exact,
+                    "misplaced": attempt.misplaced,
+                }
+                for attempt in result.attempts
+            ],
+            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
+            "reward": reward,
+        }
+
     async def game_state(self, request: web.Request) -> web.Response:
-        result = await self._intercept_game_run(request)
-        return self._json_response(self._intercept_game_payload(result))
+        game_type, result = await self._game_session(request)
+        if game_type == "intercept":
+            return self._json_response(self._intercept_game_payload(result))
+        return self._json_response(self._dead_drop_game_payload(result))
 
     async def game_finish(self, request: web.Request) -> web.Response:
         active = await self._intercept_game_run(request)
@@ -635,6 +710,27 @@ class SpyWebAppServer:
         if result.status is InterceptGameStatus.WON and self.bot is not None:
             await self._announce_intercept_win(result)
         return self._json_response(self._intercept_game_payload(result))
+
+    async def game_guess(self, request: web.Request) -> web.Response:
+        game_type, active = await self._game_session(request)
+        if game_type != "dead_drop":
+            raise web.HTTPBadRequest(text="Эта операция не использует кодовый замок")
+        if active.status is not DeadDropGameStatus.READY:
+            return self._json_response(self._dead_drop_game_payload(active))
+        payload = await self._json_object(request)
+        guess = payload.get("guess")
+        if not isinstance(guess, list):
+            raise web.HTTPBadRequest(text="Некорректный код тайника")
+        try:
+            result = await self.service.guess_dead_drop_game(
+                request.headers.get("X-Spy-Game-Token", ""),
+                tuple(guess),
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        if result.status is DeadDropGameStatus.WON and self.bot is not None:
+            await self._announce_dead_drop_win(result)
+        return self._json_response(self._dead_drop_game_payload(result))
 
     async def _announce_intercept_win(self, result: InterceptGameRun) -> None:
         if result.chat_id is None or result.reward is None:
@@ -669,5 +765,51 @@ class SpyWebAppServer:
         except Exception:
             logger.exception(
                 "spy_game: HTML5 intercept announcement failed event_id=%s",
+                result.event_id,
+            )
+
+    async def _announce_dead_drop_win(self, result: DeadDropGameRun) -> None:
+        if result.chat_id is None or result.reward is None:
+            return
+        if result.reward.reward_type == "item":
+            item = ITEM_TYPES.get(result.reward.reward_id or "")
+            reward_text = (
+                f"{item.emoji} {item.display_name} ×{result.reward.amount}"
+                if item is not None
+                else "предмет Центра"
+            )
+        elif result.reward.reward_type == "agent":
+            agent = AGENT_TYPES.get(result.reward.reward_id or "")
+            reward_text = (
+                f"{agent.emoji} {agent.display_name} ×{result.reward.amount}"
+                if agent is not None
+                else "агент Центра"
+            )
+        else:
+            reward_text = "ничего — тайник оказался пуст"
+        try:
+            if result.message_id is not None:
+                await self.bot.edit_message_reply_markup(
+                    chat_id=result.chat_id,
+                    message_id=result.message_id,
+                    reply_markup=None,
+                )
+        except Exception:
+            logger.warning(
+                "spy_game: HTML5 dead drop keyboard remained event_id=%s",
+                result.event_id,
+            )
+        try:
+            await self.bot.send_message(
+                chat_id=result.chat_id,
+                text=(
+                    "✅ ТАЙНИК ВСКРЫТ\n"
+                    f"{result.public_name or 'Скрытый агент'} подобрал код "
+                    f"и нашёл: {reward_text}."
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "spy_game: HTML5 dead drop announcement failed event_id=%s",
                 result.event_id,
             )

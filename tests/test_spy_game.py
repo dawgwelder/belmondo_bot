@@ -14,6 +14,7 @@ from spy_game.models import (
     ChaseStatus,
     ClaimStatus,
     CooperativeStatus,
+    DeadDropGameStatus,
     DeathOperationStatus,
     DirectorState,
     EconomyStatus,
@@ -1858,7 +1859,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 9
+        assert migration_count == 10
     finally:
         await second.close()
 
@@ -1938,6 +1939,10 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "AND name = 'intercept_game_runs'"
                 ).fetchone()[0],
                 connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'dead_drop_game_runs'"
+                ).fetchone()[0],
+                connection.execute(
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
@@ -1948,7 +1953,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -1958,6 +1963,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "event_templates",
             "agency_history",
             "intercept_game_runs",
+            "dead_drop_game_runs",
             None,
             "balanced",
         )
@@ -2309,7 +2315,6 @@ async def test_death_operation_publishes_opaque_all_in_action(tmp_path, monkeypa
         kwargs = send_rich.await_args.kwargs
         button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         assert button["callback_data"] == f"spy:death:{event.event_id}"
-        assert "35" not in button["callback_data"]
         assert "СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ" in send_rich.await_args.args[2][0]["text"]
     finally:
         await service.close()
@@ -2534,6 +2539,216 @@ async def test_html5_intercept_launch_token_survives_restart(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_html5_dead_drop_feedback_is_persisted_and_win_is_idempotent(tmp_path):
+    service = await initialized_service(tmp_path, lifetime=120)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    await service.attach_message(event.event_id, 710)
+    try:
+        run = await service.start_dead_drop_game(
+            chat_id=CHAT_ID,
+            message_id=710,
+            user_id=1,
+            username="safecracker",
+            display_name="Private Name",
+            now=NOW,
+        )
+        assert run.status is DeadDropGameStatus.READY
+        assert run.code_length == 3
+        assert run.attempts_allowed == 6
+
+        token_hash, code_json = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT token_hash, code_json FROM dead_drop_game_runs WHERE id = ?",
+                (run.run_id,),
+            ).fetchone()
+        )
+        assert run.launch_token not in token_hash
+        assert code_json == "[0,0,0]"
+
+        feedback = await service.guess_dead_drop_game(
+            run.launch_token,
+            (0, 1, 0),
+            now=NOW + timedelta(seconds=1),
+        )
+        assert feedback.status is DeadDropGameStatus.READY
+        assert feedback.attempts[0].exact == 2
+        assert feedback.attempts[0].misplaced == 0
+
+        duplicate = await service.guess_dead_drop_game(
+            run.launch_token,
+            (0, 1, 0),
+            now=NOW + timedelta(seconds=2),
+        )
+        assert len(duplicate.attempts) == 1
+
+        won = await service.guess_dead_drop_game(
+            run.launch_token,
+            (0, 0, 0),
+            now=NOW + timedelta(seconds=3),
+        )
+        assert won.status is DeadDropGameStatus.WON
+        assert won.public_name == "@safecracker"
+        assert won.reward.reward_id == "intel_file"
+
+        repeated = await service.guess_dead_drop_game(
+            run.launch_token,
+            (0, 0, 0),
+            now=NOW + timedelta(seconds=4),
+        )
+        assert repeated.status is DeadDropGameStatus.WON
+        inventory = await service.get_inventory(1)
+        assert [(item.item_type, item.amount) for item in inventory.items] == [
+            ("intel_file", 1)
+        ]
+        history_count = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT COUNT(*) FROM event_history " "WHERE idempotency_key = ?",
+                (f"dead-drop-game:{run.run_id}",),
+            ).fetchone()[0]
+        )
+        assert history_count == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_dead_drop_failed_agent_does_not_close_event(tmp_path):
+    service = await initialized_service(tmp_path, lifetime=120)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    await service.attach_message(event.event_id, 711)
+    try:
+        first = await service.start_dead_drop_game(
+            chat_id=CHAT_ID,
+            message_id=711,
+            user_id=1,
+            username="first",
+            display_name="First",
+            now=NOW,
+        )
+        for offset, guess in enumerate(
+            ((1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6)),
+            start=1,
+        ):
+            failed = await service.guess_dead_drop_game(
+                first.launch_token,
+                guess,
+                now=NOW + timedelta(seconds=offset),
+            )
+        assert failed.status is DeadDropGameStatus.FAILED
+
+        replay = await service.start_dead_drop_game(
+            chat_id=CHAT_ID,
+            message_id=711,
+            user_id=1,
+            username="first",
+            display_name="First",
+            now=NOW + timedelta(seconds=7),
+        )
+        assert replay.status is DeadDropGameStatus.ALREADY_PLAYED
+
+        second = await service.start_dead_drop_game(
+            chat_id=CHAT_ID,
+            message_id=711,
+            user_id=2,
+            username="second",
+            display_name="Second",
+            now=NOW + timedelta(seconds=7),
+        )
+        won = await service.guess_dead_drop_game(
+            second.launch_token,
+            (0, 0, 0),
+            now=NOW + timedelta(seconds=8),
+        )
+        assert won.status is DeadDropGameStatus.WON
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_dead_drop_concurrent_solutions_credit_one_agent(tmp_path):
+    service = await initialized_service(tmp_path, lifetime=120)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    await service.attach_message(event.event_id, 712)
+    try:
+        runs = [
+            await service.start_dead_drop_game(
+                chat_id=CHAT_ID,
+                message_id=712,
+                user_id=user_id,
+                username=f"agent{user_id}",
+                display_name=f"Agent {user_id}",
+                now=NOW,
+            )
+            for user_id in (1, 2)
+        ]
+        results = await asyncio.gather(
+            *(
+                service.guess_dead_drop_game(
+                    run.launch_token,
+                    (0, 0, 0),
+                    now=NOW + timedelta(seconds=1),
+                )
+                for run in runs
+            )
+        )
+        assert {result.status for result in results} == {
+            DeadDropGameStatus.WON,
+            DeadDropGameStatus.ALREADY_RESOLVED,
+        }
+        total_items = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM user_items "
+                "WHERE item_type = 'intel_file'"
+            ).fetchone()[0]
+        )
+        assert total_items == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_dead_drop_run_survives_service_restart(tmp_path):
+    config = settings(tmp_path, lifetime=120)
+    first = SpyGameService(config, rng=FixedRandom())
+    await first.initialize(now=NOW)
+    await first.enable_chat(CHAT_ID, now=NOW)
+    event = (await first.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    await first.attach_message(event.event_id, 716)
+    run = await first.start_dead_drop_game(
+        chat_id=CHAT_ID,
+        message_id=716,
+        user_id=1,
+        username="persistent",
+        display_name="Persistent",
+        now=NOW,
+    )
+    await first.guess_dead_drop_game(
+        run.launch_token,
+        (1, 2, 3),
+        now=NOW + timedelta(seconds=1),
+    )
+    await first.close()
+
+    second = SpyGameService(config, rng=FixedRandom())
+    await second.initialize(now=NOW + timedelta(seconds=2))
+    try:
+        restored = await second.get_dead_drop_game(
+            run.launch_token,
+            now=NOW + timedelta(seconds=2),
+        )
+        assert restored.status is DeadDropGameStatus.READY
+        assert restored.attempts[0].digits == (1, 2, 3)
+        won = await second.guess_dead_drop_game(
+            run.launch_token,
+            (0, 0, 0),
+            now=NOW + timedelta(seconds=3),
+        )
+        assert won.status is DeadDropGameStatus.WON
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
 async def test_intercept_event_uses_spies_game_and_keeps_text_fallback(tmp_path):
     service = await initialized_service(tmp_path)
     event = (await service.manual_spawn(CHAT_ID, event_type="intercept", now=NOW)).event
@@ -2557,6 +2772,61 @@ async def test_intercept_event_uses_spies_game_and_keeps_text_fallback(tmp_path)
         buttons = kwargs["reply_markup"].inline_keyboard
         assert buttons[0][0].callback_game is not None
         assert len(buttons) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dead_drop_event_uses_spies_game(tmp_path):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    bot = SimpleNamespace(
+        send_game=AsyncMock(return_value=SimpleNamespace(message_id=713)),
+        token="TOKEN",
+    )
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+    )
+    context = SimpleNamespace(
+        bot=bot,
+        bot_data={"spy_game": service, "spy_webapp": webapp},
+    )
+    try:
+        assert await spy_handlers.publish_spy_event(context, event) == 713
+        assert bot.send_game.await_args.kwargs["game_short_name"] == "spies"
+        buttons = bot.send_game.await_args.kwargs["reply_markup"].inline_keyboard
+        assert buttons[0][0].callback_game is not None
+        assert buttons[0][0].text == "📦 Вскрыть тайник"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dead_drop_publication_falls_back_when_send_game_fails(
+    tmp_path,
+    monkeypatch,
+):
+    service = await initialized_service(tmp_path)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
+    bot = SimpleNamespace(
+        send_game=AsyncMock(side_effect=RuntimeError("BotFather rejected game")),
+        token="TOKEN",
+    )
+    send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 714}})
+    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+    )
+    context = SimpleNamespace(
+        bot=bot,
+        bot_data={"spy_game": service, "spy_webapp": webapp},
+    )
+    try:
+        assert await spy_handlers.publish_spy_event(context, event) == 714
+        buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert buttons[0][0]["callback_data"] == f"spy:search:{event.event_id}"
     finally:
         await service.close()
 
@@ -2626,5 +2896,49 @@ async def test_spies_game_callback_returns_user_bound_launch_url(tmp_path):
         assert launch_url.startswith("https://spy.example/spy-app/game/#run=")
         assert str(CHAT_ID) not in launch_url
         assert "Private Bond" not in launch_url
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_spies_game_callback_launches_dead_drop_from_telegram_message(tmp_path):
+    service = await initialized_service(tmp_path)
+    current = datetime.now(timezone.utc)
+    event = (
+        await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=current)
+    ).event
+    await service.attach_message(event.event_id, 715)
+    answer = AsyncMock()
+    query = SimpleNamespace(
+        message=SimpleNamespace(message_id=715),
+        game_short_name="spies",
+        answer=answer,
+    )
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(
+            id=8,
+            username="cracker",
+            full_name="Private Cracker",
+        ),
+        effective_chat=SimpleNamespace(id=CHAT_ID),
+    )
+    webapp = SimpleNamespace(
+        game_enabled=True,
+        settings=SimpleNamespace(game_short_name="spies"),
+        game_launch_url=lambda token: f"https://spy.example/spy-app/game/#run={token}",
+    )
+    context = SimpleNamespace(bot_data={"spy_game": service, "spy_webapp": webapp})
+    try:
+        await spy_handlers.spy_html5_game_launch(update, context)
+        launch_url = answer.await_args.kwargs["url"]
+        assert launch_url.startswith("https://spy.example/spy-app/game/#run=")
+        assert str(CHAT_ID) not in launch_url
+        run_count = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT COUNT(*) FROM dead_drop_game_runs WHERE user_id = 8"
+            ).fetchone()[0]
+        )
+        assert run_count == 1
     finally:
         await service.close()

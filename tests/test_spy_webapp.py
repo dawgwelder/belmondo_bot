@@ -422,3 +422,58 @@ async def test_html5_game_api_uses_persisted_token_and_announces_once(tmp_path):
         )
     finally:
         await service.close()
+
+
+@pytest.mark.asyncio
+async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp_path):
+    rng = SimpleNamespace(randint=lambda start, end: start)
+    service = SpyGameService(game_settings(tmp_path), rng=rng)
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop")).event
+    await service.attach_message(event.event_id, 901)
+    run = await service.start_dead_drop_game(
+        chat_id=CHAT_ID,
+        message_id=901,
+        user_id=USER_ID,
+        username="bond",
+        display_name="Private Bond",
+    )
+    bot = SimpleNamespace(
+        edit_message_reply_markup=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    server = SpyWebAppServer(
+        service,
+        BOT_TOKEN,
+        web_settings(game_url="https://spy.example/spy-app/game/"),
+        bot=bot,
+    )
+    headers = {"X-Spy-Game-Token": run.launch_token}
+    try:
+        response = await server.game_state(request(headers))
+        state = json.loads(response.text)
+        assert state["game_type"] == "dead_drop"
+        assert state["status"] == "ready"
+        assert state["code_length"] == 3
+        assert "code" not in state
+
+        response = await server.game_guess(request(headers, {"guess": [1, 2, 3]}))
+        feedback = json.loads(response.text)
+        assert feedback["status"] == "ready"
+        assert feedback["attempts"] == [
+            {"digits": [1, 2, 3], "exact": 0, "misplaced": 0}
+        ]
+
+        response = await server.game_guess(request(headers, {"guess": [0, 0, 0]}))
+        result = json.loads(response.text)
+        assert result["status"] == "won"
+        assert result["reward"]["id"] == "intel_file"
+        bot.send_message.assert_awaited_once()
+        assert "@bond" in bot.send_message.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+
+        await server.game_guess(request(headers, {"guess": [0, 0, 0]}))
+        bot.send_message.assert_awaited_once()
+    finally:
+        await service.close()

@@ -76,6 +76,17 @@ class InterceptGameStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class DeadDropGameStatus(str, Enum):
+    READY = "ready"
+    WON = "won"
+    FAILED = "failed"
+    ALREADY_PLAYED = "already_played"
+    ALREADY_RESOLVED = "already_resolved"
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    DISABLED = "disabled"
+
+
 class CooperativeStatus(str, Enum):
     CONTRIBUTED = "contributed"
     COMPLETED = "completed"
@@ -315,6 +326,29 @@ class InterceptGameRun:
     expires_at: datetime | None = None
     success_score: int = 0
     score: int | None = None
+    reward: DropReward | None = None
+
+
+@dataclass(frozen=True)
+class DeadDropGuess:
+    digits: tuple[int, ...]
+    exact: int
+    misplaced: int
+
+
+@dataclass(frozen=True)
+class DeadDropGameRun:
+    status: DeadDropGameStatus
+    run_id: str | None = None
+    launch_token: str | None = None
+    event_id: str | None = None
+    chat_id: int | None = None
+    message_id: int | None = None
+    public_name: str | None = None
+    code_length: int = 0
+    attempts_allowed: int = 0
+    attempts: tuple[DeadDropGuess, ...] = ()
+    expires_at: datetime | None = None
     reward: DropReward | None = None
 
 
