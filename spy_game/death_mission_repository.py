@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import death_mission as engine
 from .models import Reward
+from .persistence.economy import EconomyRepository
 from .settings import AGENT_TYPES
 
 
@@ -45,8 +46,8 @@ class DeathMissionRun:
 
 
 class DeathMissionRepository:
-    def __init__(self, repository):
-        self.repo = repository
+    def __init__(self, economy: EconomyRepository) -> None:
+        self.economy = economy
 
     @staticmethod
     def row(connection, *, token_hash=None, run_id=None):
@@ -60,7 +61,7 @@ class DeathMissionRepository:
 
     def stake(self, connection, user_id):
         return {
-            a.agent_type: a.amount for a in self.repo.get_agents(connection, user_id)
+            a.agent_type: a.amount for a in self.economy.get_agents(connection, user_id)
         }
 
     @staticmethod
@@ -167,8 +168,8 @@ class DeathMissionRepository:
             return DeathMissionRun(
                 {"game_type": "death_operation", "status": "lost_race"}
             )
-        self.repo._ensure_user(connection, user_id, username, display_name, iso(now))
-        settings = self.repo.settings
+        self.economy.ensure_user(connection, user_id, username, display_name, iso(now))
+        settings = self.economy.settings
         rules = dict(
             version=engine.VERSION,
             all_in_percent=settings.death_operation_success_percent,
@@ -424,7 +425,9 @@ class DeathMissionRepository:
             bonus[agent] = 2 if row["mode"] == "mission" and tier == "tier3" else 1
         for bundle in (returned, bonus):
             for agent, amount in bundle.items():
-                self.repo._add_reward(connection, row["user_id"], Reward(agent, amount))
+                self.economy.add_reward(
+                    connection, row["user_id"], Reward(agent, amount)
+                )
         if row["mode"] == "mission" and outcome != "cancelled_refunded":
             achievements = []
             if state.get("node", 0) >= 3:

@@ -114,6 +114,9 @@ kill switch. LLM Narrator и LLM Director включаются независи�
 
 ## Структура проекта
 
+Границы слоёв, карта модулей и правила транзакций Spy Clicker описаны в
+[архитектуре Spy Clicker](docs/architecture/spy-game-modules.md).
+
 ```
 belmondo_bot/
 ├── main.py                 # Тонкий shim: делегирует в app.run_bot (fire)
@@ -139,7 +142,8 @@ belmondo_bot/
 │   ├── games.py            # LLM group games: lobby, callbacks, reply moves, timeouts
 │   ├── godnoscope.py       # godnoscope, button_godnoscope, get_horoscope
 │   ├── roulette.py         # Рулетка с inline-кнопкой
-│   ├── spy_game.py         # Rich menu, фоновые события, callbacks и master UI
+│   ├── spy_game.py         # Стабильные импорты обработчиков Spy Clicker
+│   ├── spy/                # Команды, callback-маршрутизация, представление и доставка
 │   └── messages.py         # parse_message, spam_gif_detector, delete_dice
 ├── games/
 │   ├── engine.py           # GameState, фазы, submit/join/start/timeout lifecycle
@@ -148,11 +152,16 @@ belmondo_bot/
 │   ├── scenarios.py        # alibi, operation, pitch prompts and formatters
 │   └── base.py             # dict-helpers для сценарных snapshot-структур
 ├── spy_game/
-│   ├── service.py          # Telegram-independent use cases
+│   ├── service.py          # Сборка сервиса, жизненный цикл и tick
+│   ├── use_cases/          # Сценарии, проверки и границы транзакций
 │   ├── director.py         # RuleBased/LLM Director + strict fallback
 │   ├── narrator.py         # Structured LLM prose + persistent cache/fallback
 │   ├── rewards.py          # Server-side reward resolution
-│   ├── repositories.py     # Atomic SQLite operations
+│   ├── repositories.py     # Сборка SQL-компонентов и совместимость вызовов
+│   ├── persistence/        # SQL по режимам, общая экономика и lifecycle событий
+│   ├── webapp.py           # HTTP-маршруты и авторизация в процессе бота
+│   ├── webapp_presenters.py # Формирование JSON для Mini App и HTML5
+│   ├── webapp_notifications.py # Telegram-уведомления после HTTP-действий
 │   ├── scheduler.py        # Activity decay и интервалы событий
 │   ├── activity.py         # In-memory aggregation с anti-spam debounce
 │   ├── settings.py         # Feature flags, allowlist и typed balance

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import handlers.spy_game as spy_handlers
+from handlers.spy import transport as spy_transport
 from spy_game.models import SpawnEvent
 from spy_game.narrator import (
     EventNarrative,
@@ -162,7 +163,7 @@ async def test_recruitment_publisher_uses_editable_plain_message(monkeypatch):
             return EventNarrative("Сгенерированная кинематографичная завязка.", "llm")
 
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 55}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     send_message = AsyncMock(return_value=SimpleNamespace(message_id=55))
     context = SimpleNamespace(
         bot_data={"spy_narrator": FakeNarrator()},

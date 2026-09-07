@@ -37,6 +37,7 @@ class SQLiteDatabase:
             thread_name_prefix="spy-sqlite",
         )
         self._closed = False
+        self.before_commit: Callable[[sqlite3.Connection], None] | None = None
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -116,6 +117,8 @@ class SQLiteDatabase:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 result = operation(connection)
+                if self.before_commit is not None:
+                    self.before_commit(connection)
                 connection.commit()
                 return result
             except Exception:

@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="dark light">
     <title>Spy Clicker</title>
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="styles.css?v=3">
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
-    <script src="app.js?v=2" defer></script>
+    <script src="app.js?v=3" defer></script>
   </head>
   <body>
     <div class="shell">
@@ -16,6 +16,7 @@
           <p class="eyebrow">ОПЕРАТИВНЫЙ ЦЕНТР</p>
           <h1>Spy Clicker</h1>
           <p id="identity" class="identity">Установка защищённого канала…</p>
+          <p id="achievement-notice" class="muted" role="status"></p>
         </div>
         <div class="seal" aria-hidden="true">B</div>
       </header>
@@ -101,6 +102,17 @@
           <div id="contact-list" class="stack"></div>
         </section>
 
+        <section id="achievements" class="panel" aria-label="Заслуги">
+          <div class="section-heading">
+            <p class="eyebrow">АРХИВ ОСОБЫХ ЗАСЛУГ</p>
+            <h2 id="achievement-summary">Достижения</h2>
+            <p class="muted">Заслуги сохраняются навсегда. Выберите открытое достижение как титул в досье.</p>
+            <button id="title-clear" class="small-button" type="button">Снять титул</button>
+            <button id="achievements-seen" class="small-button" type="button">Отметить прочитанными</button>
+          </div>
+          <div id="achievement-list" class="stack"></div>
+        </section>
+
         <section id="leaderboard" class="panel" aria-label="Рейтинг">
           <div class="section-heading">
             <p class="eyebrow">АРХИВ ЦЕНТРА</p>
@@ -125,6 +137,9 @@
         </button>
         <button class="nav-button" data-target="leaderboard" type="button">
           <span>◇</span>Рейтинг
+        </button>
+        <button class="nav-button" data-target="achievements" type="button">
+          <span>🎖</span>Заслуги
         </button>
       </nav>
     </div>

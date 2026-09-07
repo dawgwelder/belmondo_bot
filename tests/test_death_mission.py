@@ -168,6 +168,9 @@ async def test_all_in_settles_immediately_and_replay_cannot_double_reward(
     )
     assert replay.payload == state.payload
     assert await counts(service) == {"reserve": 1, "settle": 1}
+    medals = {a["id"]: a for a in (await service.get_achievements(1))["entries"]}
+    assert medals["death10"]["progress"] == 1
+    assert medals["personal10"]["progress"] == 0
 
 
 @pytest.mark.asyncio
@@ -190,6 +193,9 @@ async def test_full_mission_pays_selected_higher_bonus_and_keeps_later_income(
     assert holdings["informant"] == 10
     assert result.payload["progress"]["checkpoint"] == 1
     assert result.payload["progress"]["won"] == 1
+    medals = {a["id"]: a for a in (await service.get_achievements(1))["entries"]}
+    assert medals["personal1"]["unlocked"]
+    assert medals["personal10"]["progress"] == 1
     assert await service.reserved_mission_agents(1) == []
     assert await counts(service) == {"reserve": 1, "settle": 1}
 
@@ -471,6 +477,9 @@ async def test_extraction_racing_timeout_settles_once(service, monkeypatch):
     assert extraction.status == timeout.status == "extracted"
     assert await counts(service) == {"reserve": 1, "settle": 1}
     assert extraction.payload["result"]["returned"] == state.payload["extraction"]
+    medals = {a["id"]: a for a in (await service.get_achievements(1))["entries"]}
+    assert medals["extract"]["unlocked"]
+    assert not medals["death1"]["unlocked"]
 
 
 @pytest.mark.asyncio

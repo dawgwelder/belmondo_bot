@@ -1,19 +1,12 @@
-"""Small same-process HTTP adapter for the Spy Game Telegram Mini App."""
-
+"""Same-process Spy Clicker HTTP routes, authentication and server lifecycle."""
 from __future__ import annotations
 
 import hashlib
 import re
-import time
-from collections import defaultdict, deque
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
 from aiohttp import web
-
 from config import logger
-
 from .models import (
     AgencyStatus,
     DeadDropGameRun,
@@ -27,130 +20,16 @@ from .models import (
     NpcStatus,
 )
 from .service import SpyGameService
-from .settings import AGENT_TYPES, ITEM_TYPES
+from .settings import ITEM_TYPES
 from .death_mission_repository import DeathMissionRun
-from .death_mission_ui import publish_pending, text as mission_text
-from .webapp_auth import (
-    LaunchContextSigner,
-    WebAppAuthError,
-    WebAppIdentity,
-    validate_init_data,
-)
+from .death_mission_ui import publish_pending
+from .webapp_auth import LaunchContextSigner, WebAppAuthError, validate_init_data
+from . import webapp_presenters as presenters
+from . import webapp_notifications as notifications
+from .webapp_settings import SpyWebAppSettings
+from .webapp_support import RequestIdentity, _RateLimiter
 
-
-def _env_bool(name: str, default: bool) -> bool:
-    import os
-
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean")
-
-
-def _env_int(name: str, default: int) -> int:
-    import os
-
-    value = os.getenv(name)
-    try:
-        return default if value is None else int(value)
-    except ValueError as error:
-        raise ValueError(f"{name} must be an integer") from error
-
-
-@dataclass(frozen=True)
-class SpyWebAppSettings:
-    enabled: bool = False
-    host: str = "127.0.0.1"
-    port: int = 8080
-    launch_url: str | None = None
-    game_url: str | None = None
-    game_short_name: str = "spies"
-    init_data_max_age_seconds: int = 5 * 60
-    launch_context_ttl_seconds: int = 10 * 60
-    rate_limit_per_minute: int = 60
-
-    def __post_init__(self) -> None:
-        if not 1 <= self.port <= 65_535:
-            raise ValueError("SPY_GAME_WEBAPP_PORT must be between 1 and 65535")
-        if (
-            self.init_data_max_age_seconds <= 0
-            or self.launch_context_ttl_seconds <= 0
-            or self.rate_limit_per_minute <= 0
-        ):
-            raise ValueError(
-                "Spy Game Web App timeouts and rate limit must be positive"
-            )
-        if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", self.game_short_name):
-            raise ValueError("SPY_GAME_HTML5_SHORT_NAME is invalid")
-        if self.enabled:
-            if not self.launch_url and not self.game_url:
-                raise ValueError(
-                    "a Mini App launch URL or HTML5 Game URL is required when "
-                    "the Web App server is enabled"
-                )
-        if self.launch_url:
-            parsed = urlsplit(self.launch_url)
-            path_parts = [part for part in parsed.path.split("/") if part]
-            if (
-                parsed.scheme != "https"
-                or parsed.hostname not in {"t.me", "telegram.me"}
-                or len(path_parts) != 2
-            ):
-                raise ValueError(
-                    "SPY_GAME_WEBAPP_LAUNCH_URL must be an HTTPS Telegram "
-                    "direct link such as https://t.me/bot/app"
-                )
-        if self.game_url:
-            parsed = urlsplit(self.game_url)
-            if parsed.scheme != "https" or not parsed.hostname:
-                raise ValueError("SPY_GAME_HTML5_URL must be a public HTTPS URL")
-
-    @classmethod
-    def from_env(cls) -> "SpyWebAppSettings":
-        import os
-
-        return cls(
-            enabled=_env_bool("SPY_GAME_WEBAPP_ENABLED", False),
-            host=os.getenv("SPY_GAME_WEBAPP_HOST", "127.0.0.1"),
-            port=_env_int("SPY_GAME_WEBAPP_PORT", 8080),
-            launch_url=os.getenv("SPY_GAME_WEBAPP_LAUNCH_URL") or None,
-            game_url=os.getenv("SPY_GAME_HTML5_URL") or None,
-            game_short_name=os.getenv("SPY_GAME_HTML5_SHORT_NAME", "spies"),
-            init_data_max_age_seconds=_env_int(
-                "SPY_GAME_WEBAPP_INIT_DATA_MAX_AGE_SECONDS", 5 * 60
-            ),
-            launch_context_ttl_seconds=_env_int(
-                "SPY_GAME_WEBAPP_CONTEXT_TTL_SECONDS", 10 * 60
-            ),
-            rate_limit_per_minute=_env_int("SPY_GAME_WEBAPP_RATE_LIMIT_PER_MINUTE", 60),
-        )
-
-
-@dataclass(frozen=True)
-class RequestIdentity:
-    user: WebAppIdentity
-    chat_id: int | None
-
-
-class _RateLimiter:
-    def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self._requests: dict[int | str, deque[float]] = defaultdict(deque)
-
-    def allow(self, subject: int | str, *, now: float | None = None) -> bool:
-        current = time.monotonic() if now is None else now
-        requests = self._requests[subject]
-        while requests and requests[0] <= current - 60:
-            requests.popleft()
-        if len(requests) >= self.limit:
-            return False
-        requests.append(current)
-        return True
+__all__ = ["SpyWebAppServer", "SpyWebAppSettings", "RequestIdentity", "_RateLimiter"]
 
 
 class SpyWebAppServer:
@@ -196,6 +75,12 @@ class SpyWebAppServer:
                 ),
                 web.get(f"{self.BASE_PATH}/health", self.health),
                 web.get(f"{self.BASE_PATH}/api/state", self.state),
+                web.post(
+                    f"{self.BASE_PATH}/api/achievements/title", self.achievement_title
+                ),
+                web.post(
+                    f"{self.BASE_PATH}/api/achievements/seen", self.achievements_seen
+                ),
                 web.post(f"{self.BASE_PATH}/api/equipment/equip", self.equip),
                 web.post(f"{self.BASE_PATH}/api/equipment/unequip", self.unequip),
                 web.post(f"{self.BASE_PATH}/api/prestige", self.prestige),
@@ -407,202 +292,35 @@ class SpyWebAppServer:
             raise web.HTTPBadRequest(text="Ожидался JSON-объект")
         return payload
 
-    async def _state_payload(self, identity: RequestIdentity) -> dict:
-        user = identity.user
-        profile = await self.service.get_profile(
-            user_id=user.user_id,
-            username=user.username,
-            display_name=user.display_name,
-        )
-        agents = await self.service.get_agents(user.user_id)
-        inventory = await self.service.get_inventory(user.user_id)
-        leaderboard = await self.service.get_leaderboard()
-        chat_status = (
-            await self.service.get_chat_status(identity.chat_id)
-            if identity.chat_id is not None
-            else None
-        )
-        prestige_costs = self.service.settings.prestige_costs(profile.reputation)
-        agency_at_cap = profile.agency_level >= self.service.settings.agency_max_level
-        agency_costs = (
-            ()
-            if agency_at_cap
-            else self.service.settings.agency_requirements(profile.agency_level)
-        )
-        contact_names = {
-            "handler": "Куратор",
-            "recruiter": "Рекрутер",
-            "operations_chief": "Начальник операций",
-            "counterintelligence": "Контрразведка",
-        }
-        return {
-            "profile": {
-                "username": f"@{profile.username.lstrip('@')}"
-                if profile.username
-                else None,
-                "reputation": profile.reputation,
-                "agency_level": profile.agency_level,
-                "agency_max_level": self.service.settings.agency_max_level,
-                "total_agents": profile.total_agents,
-            },
-            "reserved_agents": await self.service.reserved_mission_agents(user.user_id),
-            "agents": [
-                {
-                    "id": holding.agent_type,
-                    "name": AGENT_TYPES[holding.agent_type].display_name,
-                    "emoji": AGENT_TYPES[holding.agent_type].emoji,
-                    "tier": AGENT_TYPES[holding.agent_type].tier,
-                    "amount": holding.amount,
-                }
-                for holding in agents
-                if holding.agent_type in AGENT_TYPES
-            ],
-            "inventory": {
-                "slot_count": inventory.slot_count,
-                "items": [
-                    {
-                        "id": holding.item_type,
-                        "name": ITEM_TYPES[holding.item_type].display_name,
-                        "emoji": ITEM_TYPES[holding.item_type].emoji,
-                        "category": ITEM_TYPES[holding.item_type].category.value,
-                        "amount": holding.amount,
-                    }
-                    for holding in inventory.items
-                    if holding.item_type in ITEM_TYPES
-                ],
-                "equipped": [
-                    {
-                        "slot": item.slot,
-                        "item_type": item.item_type,
-                        "name": ITEM_TYPES[item.item_type].display_name,
-                        "emoji": ITEM_TYPES[item.item_type].emoji,
-                    }
-                    for item in inventory.equipped
-                    if item.item_type in ITEM_TYPES
-                ],
-            },
-            "leaderboard": [
-                {
-                    "rank": entry.rank,
-                    "name": entry.display_name,
-                    "total_agents": entry.total_agents,
-                    "rare_agents": entry.rare_agents,
-                    "reputation": entry.reputation,
-                    "agency_level": entry.agency_level,
-                }
-                for entry in leaderboard
-            ],
-            "prestige": {
-                "expected_reputation": profile.reputation,
-                "costs": self._agent_costs(prestige_costs),
-            },
-            "agency": {
-                "at_cap": agency_at_cap,
-                "expected_level": profile.agency_level,
-                "required_reputation": (
-                    0
-                    if agency_at_cap
-                    else self.service.settings.agency_reputation_requirement(
-                        profile.agency_level
-                    )
-                ),
-                "costs": self._agent_costs(agency_costs),
-                "rare_bonus_percent": min(
-                    profile.agency_level
-                    * self.service.settings.agency_rare_bonus_percent,
-                    self.service.settings.agency_max_level
-                    * self.service.settings.agency_rare_bonus_percent,
-                ),
-            },
-            "contacts": [
-                {
-                    "id": recipe.id,
-                    "npc_id": recipe.npc_id,
-                    "npc_name": contact_names[recipe.npc_id],
-                    "name": recipe.display_name,
-                    "agent_costs": self._agent_costs(recipe.agent_costs),
-                    "item_costs": self._item_costs(recipe.item_costs),
-                    "reward": self._contact_reward(recipe),
-                }
-                for recipe in self.service.settings.permanent_contact_recipes
-            ],
-            "context": {
-                "chat_bound": identity.chat_id is not None,
-                "can_mutate": bool(chat_status and chat_status.enabled),
-                "network_enabled": bool(chat_status and chat_status.enabled),
-                "activity_score": chat_status.activity_score if chat_status else None,
-                "activity_profile": chat_status.activity_profile
-                if chat_status
-                else None,
-                "active_event": bool(chat_status and chat_status.active_event_id),
-            },
-        }
-
-    @staticmethod
-    def _agent_costs(costs) -> list[dict]:
-        return [
-            {
-                "id": cost.agent_type,
-                "name": AGENT_TYPES[cost.agent_type].display_name,
-                "emoji": AGENT_TYPES[cost.agent_type].emoji,
-                "amount": cost.amount,
-            }
-            for cost in costs
-        ]
-
-    @staticmethod
-    def _item_costs(costs) -> list[dict]:
-        return [
-            {
-                "id": cost.item_type,
-                "name": ITEM_TYPES[cost.item_type].display_name,
-                "emoji": ITEM_TYPES[cost.item_type].emoji,
-                "amount": cost.amount,
-            }
-            for cost in costs
-        ]
-
-    @staticmethod
-    def _drop_entry(reward) -> dict:
-        registry = AGENT_TYPES if reward.reward_type == "agent" else ITEM_TYPES
-        definition = registry[reward.reward_id]
-        return {
-            "type": reward.reward_type,
-            "id": reward.reward_id,
-            "name": definition.display_name,
-            "emoji": definition.emoji,
-            "amount": reward.amount,
-        }
-
-    @staticmethod
-    def _contact_reward(recipe) -> dict:
-        if len(recipe.rewards) == 1:
-            return SpyWebAppServer._drop_entry(recipe.rewards[0])
-        if all(reward.reward_type == "agent" for reward in recipe.rewards):
-            tiers = sorted(
-                {
-                    AGENT_TYPES[reward.reward_id].tier
-                    for reward in recipe.rewards
-                    if reward.reward_id in AGENT_TYPES
-                }
-            )
-            tier_label = (
-                f"Tier {tiers[0]}–{tiers[-1]}" if len(tiers) > 1 else f"Tier {tiers[0]}"
-            )
-            name = f"Случайный агент {tier_label}"
-        else:
-            name = "Случайный результат"
-        return {
-            "type": "random",
-            "id": None,
-            "name": name,
-            "emoji": "🎲",
-            "amount": recipe.rewards[0].amount,
-        }
-
     async def state(self, request: web.Request) -> web.Response:
         identity = await self._authenticate(request, require_chat=False)
-        return self._json_response(await self._state_payload(identity))
+        return self._json_response(
+            await presenters.state_payload(self.service, identity)
+        )
+
+    async def achievement_title(self, request: web.Request) -> web.Response:
+        identity = await self._authenticate(request, require_chat=False)
+        payload = await self._json_object(request)
+        if "achievement_id" not in payload:
+            raise web.HTTPBadRequest(text="Укажите титул")
+        key = payload["achievement_id"]
+        if key is not None and (not isinstance(key, str) or len(key) > 40):
+            raise web.HTTPBadRequest(text="Некорректный титул")
+        ok = await self.service.select_achievement_title(identity.user.user_id, key)
+        return self._json_response({"ok": ok, "status": "success" if ok else "locked"})
+
+    async def achievements_seen(self, request: web.Request) -> web.Response:
+        identity = await self._authenticate(request, require_chat=False)
+        payload = await self._json_object(request)
+        keys = payload.get("achievement_ids")
+        if (
+            not isinstance(keys, list)
+            or len(keys) > 100
+            or any(not isinstance(key, str) or len(key) > 40 for key in keys)
+        ):
+            raise web.HTTPBadRequest(text="Некорректный список достижений")
+        await self.service.mark_achievements_seen(identity.user.user_id, keys)
+        return self._json_response({"ok": True, "status": "success"})
 
     async def equip(self, request: web.Request) -> web.Response:
         identity = await self._authenticate(request, require_chat=True)
@@ -659,7 +377,7 @@ class SpyWebAppServer:
                 "ok": result.status is EconomyStatus.SUCCESS,
                 "status": result.status.value,
                 "reputation": result.reputation,
-                "required": self._agent_costs(result.required),
+                "required": presenters.agent_costs(result.required),
             }
         )
 
@@ -682,7 +400,7 @@ class SpyWebAppServer:
                 "status": result.status.value,
                 "agency_level": result.agency_level,
                 "required_reputation": result.required_reputation,
-                "required_agents": self._agent_costs(result.required_agents),
+                "required_agents": presenters.agent_costs(result.required_agents),
             }
         )
 
@@ -709,9 +427,11 @@ class SpyWebAppServer:
             {
                 "ok": result.status is NpcStatus.SUCCESS,
                 "status": result.status.value,
-                "reward": self._drop_entry(result.reward) if result.reward else None,
-                "required_agents": self._agent_costs(result.required_agents),
-                "required_items": self._item_costs(result.required_items),
+                "reward": presenters.drop_entry(result.reward)
+                if result.reward
+                else None,
+                "required_agents": presenters.agent_costs(result.required_agents),
+                "required_items": presenters.item_costs(result.required_items),
             }
         )
 
@@ -750,137 +470,15 @@ class SpyWebAppServer:
                 text="Слишком много игровых запросов. Повторите через минуту."
             )
 
-    def _intercept_game_payload(self, result: InterceptGameRun) -> dict:
-        reward = None
-        if result.reward is not None and result.reward.reward_id in ITEM_TYPES:
-            item = ITEM_TYPES[result.reward.reward_id]
-            reward = {
-                "id": item.id,
-                "name": item.display_name,
-                "emoji": item.emoji,
-                "amount": result.reward.amount,
-            }
-        return {
-            "game_type": "intercept",
-            "status": result.status.value,
-            "prompt": result.prompt,
-            "targets": list(result.targets),
-            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
-            "success_score": result.success_score,
-            "score": result.score,
-            "reward": reward,
-        }
-
-    def _dead_drop_game_payload(self, result: DeadDropGameRun) -> dict:
-        reward = None
-        if result.reward is not None:
-            if (
-                result.reward.reward_type == "item"
-                and result.reward.reward_id in ITEM_TYPES
-            ):
-                item = ITEM_TYPES[result.reward.reward_id]
-                reward = {
-                    "type": "item",
-                    "id": item.id,
-                    "name": item.display_name,
-                    "emoji": item.emoji,
-                    "amount": result.reward.amount,
-                }
-            elif (
-                result.reward.reward_type == "agent"
-                and result.reward.reward_id in AGENT_TYPES
-            ):
-                agent = AGENT_TYPES[result.reward.reward_id]
-                reward = {
-                    "type": "agent",
-                    "id": agent.id,
-                    "name": agent.display_name,
-                    "emoji": agent.emoji,
-                    "amount": result.reward.amount,
-                }
-            else:
-                reward = {
-                    "type": "empty",
-                    "id": None,
-                    "name": "Тайник пуст",
-                    "emoji": "∅",
-                    "amount": 0,
-                }
-        return {
-            "game_type": "dead_drop",
-            "status": result.status.value,
-            "code_length": result.code_length,
-            "attempts": [
-                {
-                    "digits": list(attempt.digits),
-                    "exact": attempt.exact,
-                    "misplaced": attempt.misplaced,
-                }
-                for attempt in result.attempts
-            ],
-            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
-            "reward": reward,
-        }
-
-    def _find_mole_game_payload(self, result: FindMoleGameRun) -> dict:
-        rewards = []
-        if result.item_reward is not None:
-            item = ITEM_TYPES.get(result.item_reward.reward_id or "")
-            if item is not None:
-                rewards.append(
-                    {
-                        "type": "item",
-                        "id": item.id,
-                        "name": item.display_name,
-                        "emoji": item.emoji,
-                        "amount": result.item_reward.amount,
-                    }
-                )
-        if result.agent_reward is not None:
-            agent = AGENT_TYPES.get(result.agent_reward.agent_type)
-            if agent is not None:
-                rewards.append(
-                    {
-                        "type": "agent",
-                        "id": agent.id,
-                        "name": agent.display_name,
-                        "emoji": agent.emoji,
-                        "amount": result.agent_reward.amount,
-                    }
-                )
-        return {
-            "game_type": "find_mole",
-            "status": result.status.value,
-            "title": result.title,
-            "briefing": result.briefing,
-            "clues": list(result.clues),
-            "suspects": [
-                {
-                    "id": suspect.id,
-                    "codename": suspect.codename,
-                    "role": suspect.role,
-                    "dossier": suspect.dossier,
-                }
-                for suspect in result.suspects
-            ],
-            "revision": result.revision,
-            "expires_at": result.expires_at.isoformat() if result.expires_at else None,
-            "rewards": rewards,
-        }
-
     async def game_state(self, request: web.Request) -> web.Response:
         game_type, result = await self._game_session(request)
         if game_type == "death_operation":
-            return self._json_response(self._death_payload(result))
+            return self._json_response(presenters.death_payload(result))
         if game_type == "intercept":
-            return self._json_response(self._intercept_game_payload(result))
+            return self._json_response(presenters.intercept_game_payload(result))
         if game_type == "find_mole":
-            return self._json_response(self._find_mole_game_payload(result))
-        return self._json_response(self._dead_drop_game_payload(result))
-
-    @staticmethod
-    def _death_payload(result):
-        return {**result.payload, "text": mission_text(result.payload)}
+            return self._json_response(presenters.find_mole_game_payload(result))
+        return self._json_response(presenters.dead_drop_game_payload(result))
 
     async def game_death_action(self, request: web.Request) -> web.Response:
         self._limit_game_mutation(request)
@@ -900,13 +498,13 @@ class SpyWebAppServer:
             raise web.HTTPBadRequest(text=str(error)) from error
         if self.bot is not None:
             await publish_pending(self.service, self.bot)
-        return self._json_response(self._death_payload(result))
+        return self._json_response(presenters.death_payload(result))
 
     async def game_finish(self, request: web.Request) -> web.Response:
         self._limit_game_mutation(request)
         active = await self._intercept_game_run(request)
         if active.status is not InterceptGameStatus.READY:
-            return self._json_response(self._intercept_game_payload(active))
+            return self._json_response(presenters.intercept_game_payload(active))
         payload = await self._json_object(request)
         locks = payload.get("locks")
         if not isinstance(locks, list):
@@ -919,8 +517,8 @@ class SpyWebAppServer:
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error)) from error
         if result.status is InterceptGameStatus.WON and self.bot is not None:
-            await self._announce_intercept_win(result)
-        return self._json_response(self._intercept_game_payload(result))
+            await notifications.announce_intercept_win(self.bot, result)
+        return self._json_response(presenters.intercept_game_payload(result))
 
     async def game_guess(self, request: web.Request) -> web.Response:
         self._limit_game_mutation(request)
@@ -928,7 +526,7 @@ class SpyWebAppServer:
         if game_type != "dead_drop":
             raise web.HTTPBadRequest(text="Эта операция не использует кодовый замок")
         if active.status is not DeadDropGameStatus.READY:
-            return self._json_response(self._dead_drop_game_payload(active))
+            return self._json_response(presenters.dead_drop_game_payload(active))
         payload = await self._json_object(request)
         guess = payload.get("guess")
         if not isinstance(guess, list):
@@ -941,8 +539,8 @@ class SpyWebAppServer:
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error)) from error
         if result.status is DeadDropGameStatus.WON and self.bot is not None:
-            await self._announce_dead_drop_win(result)
-        return self._json_response(self._dead_drop_game_payload(result))
+            await notifications.announce_dead_drop_win(self.bot, result)
+        return self._json_response(presenters.dead_drop_game_payload(result))
 
     async def game_mole_accuse(self, request: web.Request) -> web.Response:
         self._limit_game_mutation(request)
@@ -950,7 +548,7 @@ class SpyWebAppServer:
         if game_type != "find_mole":
             raise web.HTTPBadRequest(text="Эта операция не содержит дела о кроте")
         if active.status is not FindMoleGameStatus.READY:
-            return self._json_response(self._find_mole_game_payload(active))
+            return self._json_response(presenters.find_mole_game_payload(active))
         payload = await self._json_object(request)
         suspect_id = payload.get("suspect_id")
         revision = payload.get("revision")
@@ -967,133 +565,5 @@ class SpyWebAppServer:
         except (TypeError, ValueError) as error:
             raise web.HTTPBadRequest(text=str(error)) from error
         if result.newly_won and self.bot is not None:
-            await self._announce_find_mole_win(result)
-        return self._json_response(self._find_mole_game_payload(result))
-
-    async def _announce_intercept_win(self, result: InterceptGameRun) -> None:
-        if result.chat_id is None or result.reward is None:
-            return
-        item = ITEM_TYPES.get(result.reward.reward_id or "")
-        reward_text = (
-            f"{item.emoji} {item.display_name} ×{result.reward.amount}"
-            if item is not None
-            else "награда Центра"
-        )
-        try:
-            if result.message_id is not None:
-                await self.bot.edit_message_reply_markup(
-                    chat_id=result.chat_id,
-                    message_id=result.message_id,
-                    reply_markup=None,
-                )
-        except Exception:
-            logger.warning(
-                "spy_game: HTML5 intercept keyboard remained event_id=%s",
-                result.event_id,
-            )
-        try:
-            await self.bot.send_message(
-                chat_id=result.chat_id,
-                text=(
-                    "✅ ШИФР РАСКРЫТ\n"
-                    f"{result.public_name or 'Скрытый агент'} восстановил канал "
-                    f"и получил {reward_text}."
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "spy_game: HTML5 intercept announcement failed event_id=%s",
-                result.event_id,
-            )
-
-    async def _announce_dead_drop_win(self, result: DeadDropGameRun) -> None:
-        if result.chat_id is None or result.reward is None:
-            return
-        if result.reward.reward_type == "item":
-            item = ITEM_TYPES.get(result.reward.reward_id or "")
-            reward_text = (
-                f"{item.emoji} {item.display_name} ×{result.reward.amount}"
-                if item is not None
-                else "предмет Центра"
-            )
-        elif result.reward.reward_type == "agent":
-            agent = AGENT_TYPES.get(result.reward.reward_id or "")
-            reward_text = (
-                f"{agent.emoji} {agent.display_name} ×{result.reward.amount}"
-                if agent is not None
-                else "агент Центра"
-            )
-        else:
-            reward_text = "ничего — тайник оказался пуст"
-        try:
-            if result.message_id is not None:
-                await self.bot.edit_message_reply_markup(
-                    chat_id=result.chat_id,
-                    message_id=result.message_id,
-                    reply_markup=None,
-                )
-        except Exception:
-            logger.warning(
-                "spy_game: HTML5 dead drop keyboard remained event_id=%s",
-                result.event_id,
-            )
-        try:
-            await self.bot.send_message(
-                chat_id=result.chat_id,
-                text=(
-                    "✅ ТАЙНИК ВСКРЫТ\n"
-                    f"{result.public_name or 'Скрытый агент'} подобрал код "
-                    f"и нашёл: {reward_text}."
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "spy_game: HTML5 dead drop announcement failed event_id=%s",
-                result.event_id,
-            )
-
-    async def _announce_find_mole_win(self, result: FindMoleGameRun) -> None:
-        if (
-            result.chat_id is None
-            or result.item_reward is None
-            or result.agent_reward is None
-        ):
-            return
-        item = ITEM_TYPES.get(result.item_reward.reward_id or "")
-        agent = AGENT_TYPES.get(result.agent_reward.agent_type)
-        item_text = (
-            f"{item.emoji} {item.display_name} ×{result.item_reward.amount}"
-            if item is not None
-            else "предмет Центра"
-        )
-        agent_text = (
-            f"{agent.emoji} {agent.display_name} ×{result.agent_reward.amount}"
-            if agent is not None
-            else "агенты Tier 1"
-        )
-        try:
-            if result.message_id is not None:
-                await self.bot.edit_message_reply_markup(
-                    chat_id=result.chat_id,
-                    message_id=result.message_id,
-                    reply_markup=None,
-                )
-        except Exception:
-            logger.warning(
-                "spy_game: HTML5 mole keyboard remained event_id=%s",
-                result.event_id,
-            )
-        try:
-            await self.bot.send_message(
-                chat_id=result.chat_id,
-                text=(
-                    "✅ КРОТ РАСКРЫТ\n"
-                    f"{result.public_name or 'Скрытый агент'} завершил расследование "
-                    f"и получил {item_text} и {agent_text}."
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "spy_game: HTML5 mole announcement failed event_id=%s",
-                result.event_id,
-            )
+            await notifications.announce_find_mole_win(self.bot, result)
+        return self._json_response(presenters.find_mole_game_payload(result))

@@ -236,6 +236,18 @@ h2 {
   white-space: pre-line;
 }
 
+.achievement-row .row-title {
+  white-space: normal;
+}
+
+.achievement-row .row-meta {
+  white-space: pre-line;
+}
+
+.achievement-rare {
+  border-color: var(--accent);
+}
+
 .row-side {
   flex: 0 0 auto;
   gap: 8px;
@@ -361,7 +373,7 @@ button:disabled {
   max-width: 720px;
   margin: 0 auto;
   padding: 7px;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -394,6 +406,16 @@ button:disabled {
 
 .hidden {
   display: none !important;
+}
+
+@media (max-width: 380px) {
+  .navigation {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .shell {
+    padding-bottom: calc(160px + env(safe-area-inset-bottom));
+  }
 }
 
 @media (min-width: 640px) {

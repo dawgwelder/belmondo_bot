@@ -99,7 +99,10 @@
 
   function renderOverview() {
     const profile = state.profile;
-    $("identity").textContent = profile.username || "Скрытый агент";
+    $("identity").textContent = [profile.username || "Скрытый агент", state.achievements.title].filter(Boolean).join(" · ");
+    $("achievement-notice").textContent = state.achievements.new_count
+      ? `🎖 Новые заслуги: ${state.achievements.new_count}. Откройте архив «Заслуги».`
+      : `🎖 Заслуги: ${state.achievements.unlocked}/${state.achievements.total} · ${state.achievements.points} очков`;
     $("total-agents").textContent = profile.total_agents;
     $("reputation").textContent = profile.reputation;
     $("agency-level").textContent = `${profile.agency_level}/${profile.agency_max_level}`;
@@ -232,12 +235,39 @@
     });
   }
 
+  function renderAchievements() {
+    const archive = state.achievements;
+    $("achievement-summary").textContent = `${archive.unlocked}/${archive.total} · ${archive.points} очков`;
+    $("title-clear").disabled = !archive.title_id;
+    $("achievements-seen").disabled = !archive.new_count;
+    const target = $("achievement-list");
+    clear(target);
+    archive.entries.forEach((entry) => {
+      const selected = archive.title_id === entry.id;
+      const button = actionButton(selected ? "Выбран" : "Титул", () =>
+        mutate("achievements/title", { achievement_id: entry.id }, "Титул обновлён."));
+      button.disabled = !entry.unlocked || selected;
+      const progress = entry.target === null ? "" : ` · ${entry.progress}/${entry.target}`;
+      const note = entry.note ? `\n«${entry.note}»` : "";
+      const card = row(
+        entry.is_new ? "🆕" : entry.unlocked ? "🎖" : "🔒",
+        entry.name,
+        `${entry.description}${progress} · ${entry.points} очков${note}`,
+        entry.unlocked ? button : "",
+        "achievement-row"
+      );
+      if (entry.unlocked && entry.points >= 50) card.classList.add("achievement-rare");
+      target.append(card);
+    });
+  }
+
   function render() {
     renderOverview();
     renderAgents();
     renderInventory();
     renderContacts();
     renderLeaderboard();
+    renderAchievements();
   }
 
   async function reload() {
@@ -274,6 +304,13 @@
     if (tg?.showConfirm) tg.showConfirm(message, (confirmed) => confirmed && callback());
     else if (window.confirm(message)) callback();
   }
+
+  $("title-clear").addEventListener("click", () =>
+    mutate("achievements/title", { achievement_id: null }, "Титул снят."));
+  $("achievements-seen").addEventListener("click", () =>
+    mutate("achievements/seen", {
+      achievement_ids: state.achievements.entries.filter((e) => e.is_new).map((e) => e.id)
+    }, "Архив просмотрен."));
 
   $("prestige-button").addEventListener("click", () => {
     confirmAction("Списать указанных агентов и повысить репутацию?", () => {
