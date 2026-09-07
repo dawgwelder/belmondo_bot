@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import handlers.spy_game as spy_handlers
+from handlers.spy import transport as spy_transport
 from spy_game.director import DirectorDecision, RuleBasedDirector
 from spy_game.models import (
     AgencyStatus,
@@ -2098,7 +2099,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 13
+        assert migration_count == 14
     finally:
         await second.close()
 
@@ -2208,7 +2209,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -2350,7 +2351,7 @@ async def test_player_has_one_menu_command_with_inline_navigation(
 ):
     service = await initialized_service(tmp_path)
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 44}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     user = SimpleNamespace(id=1, username="bond", full_name="James", is_bot=False)
     update = SimpleNamespace(
         effective_user=user,
@@ -2374,6 +2375,7 @@ async def test_player_has_one_menu_command_with_inline_navigation(
             "spy:menu:refresh",
             "spy:prestige:0",
             "spy:agency:status",
+            "spy:menu:achievements",
             "spy:menu:contacts",
         ]
     finally:
@@ -2386,7 +2388,7 @@ async def test_spy_menu_adds_webapp_launch_and_keeps_telegram_fallback(
 ):
     service = await initialized_service(tmp_path)
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 44}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     user = SimpleNamespace(id=1, username="bond", full_name="James", is_bot=False)
     update = SimpleNamespace(
         effective_user=user,
@@ -2422,7 +2424,7 @@ async def test_telegram_fallback_lists_and_executes_permanent_contact_exchange(
     await grant_agents(service, 1, {"operative": 1})
     await grant_items(service, 1, {"fake_passport": 1})
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 49}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     user = SimpleNamespace(id=1, username="bond", full_name="Private Bond")
     context = SimpleNamespace(
         bot_data={"spy_game": service, "paused": False},
@@ -2484,7 +2486,7 @@ async def test_recruitment_clicks_edit_original_message_without_public_names(
     service = await initialized_service(tmp_path)
     event = (await service.manual_spawn(CHAT_ID, now=datetime.now(timezone.utc))).event
     send_rich = AsyncMock()
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     send_message = AsyncMock()
     context = SimpleNamespace(
         bot_data={"spy_game": service, "paused": False},
@@ -2548,7 +2550,7 @@ async def test_handler_event_publishes_server_side_exchange_recipes(
     service = await initialized_service(tmp_path)
     event = (await service.manual_spawn(CHAT_ID, event_type="handler", now=NOW)).event
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 45}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     context = SimpleNamespace(
         bot_data={"spy_game": service},
         bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
@@ -2577,7 +2579,7 @@ async def test_npc_event_publishes_only_selected_server_side_recipes(
     service = await initialized_service(tmp_path)
     event = (await service.manual_spawn(CHAT_ID, event_type="npc", now=NOW)).event
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 48}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     context = SimpleNamespace(
         bot_data={"spy_game": service},
         bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
@@ -2604,7 +2606,7 @@ async def test_dead_drop_event_publishes_only_opaque_search_action(
     service = await initialized_service(tmp_path)
     event = (await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=NOW)).event
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 46}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     context = SimpleNamespace(
         bot_data={"spy_game": service},
         bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
@@ -2631,7 +2633,7 @@ async def test_death_operation_publishes_opaque_all_in_action(tmp_path, monkeypa
         )
     ).event
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 47}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     context = SimpleNamespace(
         bot_data={"spy_game": service},
         bot=SimpleNamespace(token="TOKEN", send_message=AsyncMock()),
@@ -3503,7 +3505,7 @@ async def test_find_mole_publication_uses_feature_gate_and_keeps_inline_fallback
         assert keyboard.inline_keyboard[0][0].text == "🔎 Изучить досье"
 
         send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 724}})
-        monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+        monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
         context.bot_data["spy_webapp"] = SimpleNamespace(
             game_enabled=True,
             mole_game_enabled=False,
@@ -3557,7 +3559,7 @@ async def test_dead_drop_publication_falls_back_when_send_game_fails(
         token="TOKEN",
     )
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 714}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     webapp = SimpleNamespace(
         game_enabled=True,
         settings=SimpleNamespace(game_short_name="spies"),
@@ -3586,7 +3588,7 @@ async def test_intercept_publication_falls_back_when_send_game_fails(
         token="TOKEN",
     )
     send_rich = AsyncMock(return_value={"ok": True, "result": {"message_id": 706}})
-    monkeypatch.setattr(spy_handlers, "send_rich_message", send_rich)
+    monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     webapp = SimpleNamespace(
         game_enabled=True,
         settings=SimpleNamespace(game_short_name="spies"),
