@@ -2,6 +2,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .context import _service
+from .cleanup import schedule_menu_cleanup
 
 
 PAGE_SIZE = 6
@@ -70,9 +71,10 @@ async def send_archive(update, context, page=0, *, edit=False):
         if message.text != text or message.reply_markup != keyboard:
             await update.callback_query.edit_message_text(text, reply_markup=keyboard)
     else:
-        await context.bot.send_message(
+        message = await context.bot.send_message(
             update.effective_chat.id, text, reply_markup=keyboard
         )
+    schedule_menu_cleanup(context, update.effective_chat, message.message_id)
     await service.mark_achievements_seen(
         uid, [e["id"] for e in entries if e["unlocked"]]
     )

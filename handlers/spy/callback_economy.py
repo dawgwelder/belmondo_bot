@@ -15,7 +15,7 @@ from .formatting import (
     _public_label,
 )
 from .menu import _profile_for_update, _send_menu
-from .transport import _send_rich
+from .transport import _send_temporary_rich
 
 
 async def handle_contact(
@@ -124,9 +124,9 @@ async def handle_agency(
                 ]
             ]
         )
-    await _send_rich(
+    await _send_temporary_rich(
         context,
-        chat.id,
+        chat,
         blocks,
         fallback_text=(
             f"Служба уровня {profile.agency_level}. Требуется репутация "
@@ -175,9 +175,9 @@ async def handle_agency_found(
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             logger.warning("spy_game: agency confirmation keyboard remained")
-        await _send_rich(
+        await _send_temporary_rich(
             context,
-            chat.id,
+            chat,
             [
                 {"type": "paragraph", "text": "🏛 СЛУЖБА УЧРЕЖДЕНА"},
                 {

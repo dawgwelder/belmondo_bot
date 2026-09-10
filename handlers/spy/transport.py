@@ -5,6 +5,7 @@ from telegram import InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from config import logger
 from telegram_utils import send_rich_message
+from .cleanup import schedule_menu_cleanup
 
 
 def _markup_payload(markup: InlineKeyboardMarkup | None) -> dict | None:
@@ -37,6 +38,16 @@ async def _send_rich(
             reply_markup=reply_markup,
         )
         return message.message_id
+
+
+async def _send_temporary_rich(
+    context, chat, blocks, *, fallback_text, reply_markup=None
+) -> int:
+    message_id = await _send_rich(
+        context, chat.id, blocks, fallback_text=fallback_text, reply_markup=reply_markup
+    )
+    schedule_menu_cleanup(context, chat, message_id)
+    return message_id
 
 
 async def _remove_event_keyboard(context, chat_id: int, message_id: int | None) -> None:

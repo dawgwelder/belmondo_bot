@@ -10,7 +10,7 @@ from spy_game.service import SpyGameService
 from .context import _service
 from .formatting import _display_name
 from .menu_views import _menu_keyboard, build_menu_blocks
-from .transport import _send_rich
+from .transport import _send_temporary_rich
 
 
 async def _profile_for_update(update: Update, service: SpyGameService) -> Profile:
@@ -42,9 +42,9 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if achievements["title"]:
         archive_line += f"\nТитул: {achievements['title']}"
     blocks.append({"type": "paragraph", "text": archive_line})
-    await _send_rich(
+    await _send_temporary_rich(
         context,
-        update.effective_chat.id,
+        update.effective_chat,
         blocks,
         fallback_text=(
             "🕵️ Spy Clicker\n"

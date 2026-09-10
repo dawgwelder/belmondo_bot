@@ -17,7 +17,7 @@ from .menu_views import (
     build_profile_blocks,
     build_status_blocks,
 )
-from .transport import _send_rich
+from .transport import _send_temporary_rich
 from .achievements import send_archive
 
 
@@ -107,9 +107,9 @@ async def handle_menu(
             f"Активность: {status.activity_score:.1f}. "
             "Триггеры: пик, инерция, случайный сигнал."
         )
-    await _send_rich(
+    await _send_temporary_rich(
         context,
-        chat.id,
+        chat,
         blocks,
         fallback_text=fallback,
         reply_markup=reply_markup,
