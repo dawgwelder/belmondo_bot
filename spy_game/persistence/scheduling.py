@@ -73,8 +73,16 @@ class SchedulingRepository(RepositoryComponent):
         ).fetchall()
         expired: list[ExpiredEvent] = []
         for row in expired_rows:
-            self.lifecycle.expire_row(connection, row, now_value)
-            expired.append(ExpiredEvent(row["id"], row["chat_id"], row["message_id"]))
+            result_managed = self.lifecycle.expire_row(connection, row, now_value)
+            expired.append(
+                ExpiredEvent(
+                    row["id"],
+                    row["chat_id"],
+                    row["message_id"],
+                    row["event_type"],
+                    result_managed,
+                )
+            )
 
         due: list[DirectorState] = []
         if allowed_chat_ids:

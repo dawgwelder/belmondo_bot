@@ -508,6 +508,7 @@ async def test_html5_game_api_uses_persisted_token_and_announces_once(tmp_path):
     )
     bot = SimpleNamespace(
         edit_message_reply_markup=AsyncMock(),
+        edit_message_text=AsyncMock(),
         send_message=AsyncMock(),
     )
     settings = web_settings(game_url="https://spy.example/spy-app/game/")
@@ -534,11 +535,15 @@ async def test_html5_game_api_uses_persisted_token_and_announces_once(tmp_path):
         assert result["score"] == 5000
         assert result["reward"]["id"] == "access_code"
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
         assert "@bond" in bot.send_message.await_args.kwargs["text"]
         assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
 
         await server.game_finish(request(headers, {"locks": state["targets"]}))
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
 
         game = await server.game(request())
         assert game.status == 200
@@ -566,6 +571,7 @@ async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp
     )
     bot = SimpleNamespace(
         edit_message_reply_markup=AsyncMock(),
+        edit_message_text=AsyncMock(),
         send_message=AsyncMock(),
     )
     server = SpyWebAppServer(
@@ -596,11 +602,15 @@ async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp
         assert result["status"] == "won"
         assert result["reward"]["id"] == "intel_file"
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
         assert "@bond" in bot.send_message.await_args.kwargs["text"]
         assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
 
         await server.game_guess(request(headers, {"guess": [0, 0, 0]}))
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
     finally:
         await service.close()
 
@@ -631,6 +641,7 @@ async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
     )
     bot = SimpleNamespace(
         edit_message_reply_markup=AsyncMock(),
+        edit_message_text=AsyncMock(),
         send_message=AsyncMock(),
     )
     server = SpyWebAppServer(
@@ -668,6 +679,8 @@ async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
         assert result["rewards"][1]["id"] == "informant"
         assert "solution" not in response.text
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
         assert "@bond" in bot.send_message.await_args.kwargs["text"]
         assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
 
@@ -682,5 +695,7 @@ async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
             )
         )
         bot.send_message.assert_awaited_once()
+        bot.edit_message_text.assert_awaited_once()
+        assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
     finally:
         await service.close()

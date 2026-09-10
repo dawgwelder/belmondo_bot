@@ -196,6 +196,16 @@ def _recruitment_message_text(
     narrative_or_current_text: str,
     progress: RecruitmentProgress,
 ) -> str:
+    if progress.completed:
+        status = (
+            "✅ Набор завершён."
+            if progress.claims >= progress.required_claims
+            else "⌛ Набор: время истекло."
+        )
+        lines = [status, f"Контакты: {progress.claims}/{progress.required_claims}"]
+        if progress.usernames:
+            lines.append("Подтверждены: " + ", ".join(progress.usernames))
+        return "\n".join(lines)
     if RECRUITMENT_PROGRESS_MARKER in narrative_or_current_text:
         intro = narrative_or_current_text.split(RECRUITMENT_PROGRESS_MARKER, 1)[
             0
@@ -213,12 +223,9 @@ def _recruitment_message_text(
     ]
     if progress.usernames:
         progress_lines.append("Подтверждены: " + ", ".join(progress.usernames))
-    if progress.completed:
-        progress_lines.append("✅ Набор завершён.")
-    else:
-        progress_lines.append(
-            f"Свободных контактов: {progress.required_claims - progress.claims}."
-        )
+    progress_lines.append(
+        f"Свободных контактов: {progress.required_claims - progress.claims}."
+    )
     return f"{intro}\n\n" + "\n".join(progress_lines)
 
 

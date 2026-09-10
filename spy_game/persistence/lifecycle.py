@@ -33,9 +33,15 @@ class LifecycleRepository(RepositoryComponent):
         ).fetchall()
         expired_events: list[ExpiredEvent] = []
         for row in expired:
-            self.expire_row(connection, row, now_value)
+            result_managed = self.expire_row(connection, row, now_value)
             expired_events.append(
-                ExpiredEvent(row["id"], row["chat_id"], row["message_id"])
+                ExpiredEvent(
+                    row["id"],
+                    row["chat_id"],
+                    row["message_id"],
+                    row["event_type"],
+                    result_managed,
+                )
             )
         active_rows = connection.execute(
             """
@@ -80,7 +86,13 @@ class LifecycleRepository(RepositoryComponent):
                 ),
             )
             expired_events.append(
-                ExpiredEvent(row["id"], row["chat_id"], row["message_id"])
+                ExpiredEvent(
+                    row["id"],
+                    row["chat_id"],
+                    row["message_id"],
+                    row["event_type"],
+                    cancelled=True,
+                )
             )
         orphaned = connection.execute(
             """
@@ -513,9 +525,10 @@ class LifecycleRepository(RepositoryComponent):
         connection: sqlite3.Connection,
         row: sqlite3.Row,
         now_value: str,
-    ) -> None:
+    ) -> bool:
+        """Expire the event; return whether a personal mission owns its result message."""
         if self.death_mission.finish_event(connection, row["id"], _datetime(now_value)):
-            return
+            return True
         cursor = connection.execute(
             """
             UPDATE game_events
@@ -540,3 +553,4 @@ class LifecycleRepository(RepositoryComponent):
                     now_value,
                 ),
             )
+        return False

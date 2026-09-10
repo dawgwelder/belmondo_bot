@@ -58,10 +58,7 @@ async def handle_claim(
         )
     elif result.status is ClaimStatus.EXPIRED:
         await query.answer("Окно контакта уже закрылось.", show_alert=True)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        await _edit_recruitment_progress(context, query, service, value)
     elif result.status is ClaimStatus.ALREADY_RESOLVED:
         await query.answer("Другой агент оказался быстрее.", show_alert=True)
     elif result.status is ClaimStatus.DISABLED:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
+from spy_game.telegram_messages import compact_event_query
 from spy_game.models import EconomyStatus, NpcStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
 from .context import _service
@@ -48,10 +49,7 @@ async def handle_npc(
                 f"{definition.emoji} {definition.display_name} ×{reward.amount}"
             )
         await query.answer(f"Сделка завершена: {reward_text}", show_alert=True)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: NPC event keyboard remained")
+        await compact_event_query(query, "✅ Специальная сделка завершена.")
         await _send_rich(
             context,
             chat.id,
@@ -76,6 +74,7 @@ async def handle_npc(
         )
     elif result.status is NpcStatus.EXPIRED:
         await query.answer("Специальный канал уже закрыт.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     elif result.status is NpcStatus.ALREADY_RESOLVED:
         await query.answer("Другой агент уже завершил сделку.", show_alert=True)
     else:
@@ -112,10 +111,7 @@ async def handle_exchange(
             f"Обмен завершён: {agent.display_name} ×{result.reward.amount}",
             show_alert=True,
         )
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: exchange could not remove event keyboard")
+        await compact_event_query(query, "✅ Обмен с куратором завершён.")
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_id=%s reward_amount=%s",
@@ -152,10 +148,7 @@ async def handle_exchange(
         )
     elif result.status is EconomyStatus.EXPIRED:
         await query.answer("Куратор уже ушёл.", show_alert=True)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        await compact_event_query(query, "⌛ Встреча с куратором: время истекло.")
     elif result.status is EconomyStatus.ALREADY_RESOLVED:
         await query.answer("Другой агент уже завершил обмен.", show_alert=True)
     else:

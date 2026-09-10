@@ -34,10 +34,11 @@ class ProgressionRepository(RepositoryComponent):
         if chat is None or not chat["enabled"]:
             return PrestigeResult(EconomyStatus.DISABLED, expected_reputation)
         self.economy.ensure_user(connection, user_id, username, display_name, now_value)
-        current = connection.execute(
-            "SELECT reputation FROM users WHERE user_id = ?",
+        user = connection.execute(
+            "SELECT reputation, agency_level FROM users WHERE user_id = ?",
             (user_id,),
-        ).fetchone()[0]
+        ).fetchone()
+        current = user["reputation"]
         if current != expected_reputation:
             return PrestigeResult(EconomyStatus.STALE, current)
         required = self.settings.prestige_costs(current)
@@ -74,7 +75,8 @@ class ProgressionRepository(RepositoryComponent):
             ) VALUES (?, ?, 'prestige', 'reputation', ?, ?)
             """,
             (
-                f"prestige:{user_id}:{current}",
+                # Founding an agency resets reputation and starts a new cycle.
+                f"prestige:{user_id}:{user['agency_level']}:{current}",
                 user_id,
                 metadata,
                 now_value,

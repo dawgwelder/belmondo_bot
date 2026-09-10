@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from config import logger
+from spy_game.telegram_messages import compact_event_query
 from spy_game.models import ChaseStatus, CooperativeStatus, DeathOperationStatus
 from spy_game.settings import AGENT_TYPES
 from .context import _service
@@ -41,10 +42,7 @@ async def handle_cooperate(
             show_alert=True,
         )
     elif result.status is CooperativeStatus.COMPLETED:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: cooperative event could not remove keyboard")
+        await compact_event_query(query, "✅ Совместная операция завершена.")
         agent = AGENT_TYPES[result.reward.agent_type]
         await query.answer(
             f"Цель достигнута. Каждый получает {agent.display_name} "
@@ -75,6 +73,7 @@ async def handle_cooperate(
         await query.answer("Операция уже укомплектована.", show_alert=True)
     elif result.status is CooperativeStatus.EXPIRED:
         await query.answer("Окно совместной операции закрыто.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     else:
         await query.answer("Операция недоступна.", show_alert=True)
     return
@@ -120,10 +119,7 @@ async def handle_chase(
         except Exception:
             logger.warning("spy_game: chase could not switch to stage two")
     elif result.status is ChaseStatus.COMPLETED:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: chase could not remove keyboard")
+        await compact_event_query(query, "✅ Погоня завершена.")
         await query.answer("Цель перехвачена. Награды начислены.", show_alert=True)
         starter_agent = AGENT_TYPES[result.starter_reward.agent_type]
         interceptor_agent = AGENT_TYPES[result.interceptor_reward.agent_type]
@@ -146,6 +142,7 @@ async def handle_chase(
         )
     elif result.status is ChaseStatus.EXPIRED:
         await query.answer("Цель ушла от преследования.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     elif result.status is ChaseStatus.ALREADY_RESOLVED:
         await query.answer("Погоня уже завершена.", show_alert=True)
     else:
@@ -197,10 +194,7 @@ async def handle_death(
         DeathOperationStatus.WON,
         DeathOperationStatus.LOST,
     }:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: death operation could not remove keyboard")
+        await compact_event_query(query, "💀 Смертельная операция завершена.")
         total_staked = sum(holding.amount for holding in result.staked)
         if result.status is DeathOperationStatus.WON:
             bonus = AGENT_TYPES[result.rewards[-1].agent_type]
@@ -243,6 +237,7 @@ async def handle_death(
         await query.answer("Для операции нужен хотя бы один агент.", show_alert=True)
     elif result.status is DeathOperationStatus.EXPIRED:
         await query.answer("Операция уже отменена Центром.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     elif result.status is DeathOperationStatus.ALREADY_RESOLVED:
         await query.answer("Другой игрок уже принял операцию.", show_alert=True)
     else:

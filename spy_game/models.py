@@ -303,6 +303,9 @@ class ExpiredEvent:
     event_id: str
     chat_id: int
     message_id: int | None
+    event_type: str = ""
+    result_managed: bool = False
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)

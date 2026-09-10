@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from config import logger
+from .telegram_messages import compact_event_message
 from .models import DeadDropGameRun, FindMoleGameRun, InterceptGameRun
 from .settings import AGENT_TYPES, ITEM_TYPES
 
@@ -15,18 +16,9 @@ async def announce_intercept_win(bot, result: InterceptGameRun) -> None:
         if item is not None
         else "награда Центра"
     )
-    try:
-        if result.message_id is not None:
-            await bot.edit_message_reply_markup(
-                chat_id=result.chat_id,
-                message_id=result.message_id,
-                reply_markup=None,
-            )
-    except Exception:
-        logger.warning(
-            "spy_game: HTML5 intercept keyboard remained event_id=%s",
-            result.event_id,
-        )
+    await compact_event_message(
+        bot, result.chat_id, result.message_id, "✅ Перехват завершён."
+    )
     try:
         await bot.send_message(
             chat_id=result.chat_id,
@@ -62,18 +54,9 @@ async def announce_dead_drop_win(bot, result: DeadDropGameRun) -> None:
         )
     else:
         reward_text = "ничего — тайник оказался пуст"
-    try:
-        if result.message_id is not None:
-            await bot.edit_message_reply_markup(
-                chat_id=result.chat_id,
-                message_id=result.message_id,
-                reply_markup=None,
-            )
-    except Exception:
-        logger.warning(
-            "spy_game: HTML5 dead drop keyboard remained event_id=%s",
-            result.event_id,
-        )
+    await compact_event_message(
+        bot, result.chat_id, result.message_id, "✅ Тайник вскрыт."
+    )
     try:
         await bot.send_message(
             chat_id=result.chat_id,
@@ -109,18 +92,9 @@ async def announce_find_mole_win(bot, result: FindMoleGameRun) -> None:
         if agent is not None
         else "агенты Tier 1"
     )
-    try:
-        if result.message_id is not None:
-            await bot.edit_message_reply_markup(
-                chat_id=result.chat_id,
-                message_id=result.message_id,
-                reply_markup=None,
-            )
-    except Exception:
-        logger.warning(
-            "spy_game: HTML5 mole keyboard remained event_id=%s",
-            result.event_id,
-        )
+    await compact_event_message(
+        bot, result.chat_id, result.message_id, "✅ Крот раскрыт."
+    )
     try:
         await bot.send_message(
             chat_id=result.chat_id,

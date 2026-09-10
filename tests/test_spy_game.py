@@ -2248,6 +2248,9 @@ async def test_restart_reports_expired_message_for_keyboard_cleanup(tmp_path):
         assert [(event.event_id, event.message_id) for event in tick.expired] == [
             (spawned.event.event_id, 777)
         ]
+        assert tick.expired[0].event_type == "recruitment"
+        assert not tick.expired[0].result_managed
+        assert not tick.expired[0].cancelled
     finally:
         await second.close()
 
@@ -2530,9 +2533,11 @@ async def test_recruitment_clicks_edit_original_message_without_public_names(
         assert "James Bond" not in edited_texts[2]
         assert "Eve" not in edited_texts[2]
         assert "✅ Набор завершён." in edited_texts[2]
-        assert edited_texts[2].count("🚨 СИГНАЛ РАЗВЕДСЕТИ") == 1
-        assert edited_texts[2].count("Первые 3 разных пользователя") == 1
-        assert edited_texts[2].count("📡 ПРОГРЕСС НАБОРА") == 1
+        assert "🚨 СИГНАЛ РАЗВЕДСЕТИ" not in edited_texts[2]
+        assert "Первые 3 разных пользователя" not in edited_texts[2]
+        assert "📡 ПРОГРЕСС НАБОРА" not in edited_texts[2]
+        assert "Завязка." not in edited_texts[2]
+        assert all("Завязка." in text for text in edited_texts[:2])
         assert "Контакты: 0/3" not in edited_texts[2]
         assert "Контакты: 1/3" not in edited_texts[2]
         assert "Контакты: 2/3" not in edited_texts[2]

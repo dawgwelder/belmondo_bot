@@ -4,11 +4,12 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
+from spy_game.telegram_messages import compact_event_query
 from spy_game.models import ClaimStatus, FindMoleGameStatus, InterceptStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
 from .context import _service
 from .formatting import _display_name, _public_label
-from .transport import _remove_event_keyboard, _send_rich
+from .transport import _send_rich
 
 
 async def handle_mole(
@@ -44,7 +45,7 @@ async def handle_mole(
             f"{agent.emoji} {agent.display_name} ×{result.agent_reward.amount}"
         )
         await query.answer(f"Крот раскрыт. Награда: {reward_text}", show_alert=True)
-        await _remove_event_keyboard(context, chat.id, result.message_id)
+        await compact_event_query(query, "✅ Крот раскрыт.")
         await _send_rich(
             context,
             chat.id,
@@ -72,6 +73,9 @@ async def handle_mole(
         await query.answer("Вы уже выдвинули финальную версию.", show_alert=True)
     elif result.status is FindMoleGameStatus.EXPIRED:
         await query.answer("Время расследования закончилось.", show_alert=True)
+        status = await service.get_chat_status(chat.id)
+        if status.active_event_id != value:
+            await compact_event_query(query, "⌛ Расследование: время истекло.")
     elif result.status is FindMoleGameStatus.ALREADY_RESOLVED:
         await query.answer("Другой агент уже раскрыл крота.", show_alert=True)
     else:
@@ -111,10 +115,7 @@ async def handle_search(
         else:
             reward_text = "тайник оказался пуст"
         await query.answer(f"Результат: {reward_text}", show_alert=True)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: dead drop could not remove keyboard")
+        await compact_event_query(query, "✅ Тайник обыскан.")
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_type=%s reward_id=%s reward_amount=%s",
@@ -139,6 +140,7 @@ async def handle_search(
         )
     elif result.status is ClaimStatus.EXPIRED:
         await query.answer("Тайник уже изъят Центром.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     elif result.status is ClaimStatus.ALREADY_RESOLVED:
         await query.answer("Тайник уже обыскали.", show_alert=True)
     else:
@@ -171,10 +173,7 @@ async def handle_intercept(
         )
         return
     if result.status in {InterceptStatus.CORRECT, InterceptStatus.INCORRECT}:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            logger.warning("spy_game: intercept could not remove keyboard")
+        await compact_event_query(query, "📡 Перехват завершён.")
         if result.status is InterceptStatus.CORRECT:
             item = ITEM_TYPES[result.reward.reward_id]
             answer = f"Верно: {item.display_name} зачислен."
@@ -199,6 +198,7 @@ async def handle_intercept(
         )
     elif result.status is InterceptStatus.EXPIRED:
         await query.answer("Канал уже замолчал.", show_alert=True)
+        await compact_event_query(query, "⌛ Событие закрыто: время истекло.")
     elif result.status is InterceptStatus.ALREADY_RESOLVED:
         await query.answer("Кто-то уже отправил ответ.", show_alert=True)
     else:
