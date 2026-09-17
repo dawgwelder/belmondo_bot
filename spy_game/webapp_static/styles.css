@@ -228,12 +228,43 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+#contact-list {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.contact-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .contact-row .row-main {
+  flex: 1 1 auto;
+  max-width: 100%;
   align-items: flex-start;
+}
+
+.contact-row .row-copy {
+  flex: 1 1 auto;
+}
+
+.contact-row .row-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .contact-row .row-meta {
   white-space: pre-line;
+}
+
+.contact-row .row-side,
+.contact-row .small-button {
+  max-width: 100%;
+}
+
+.contact-row .small-button {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .achievement-row .row-title {
@@ -373,7 +404,7 @@ button:disabled {
   max-width: 720px;
   margin: 0 auto;
   padding: 7px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -408,14 +439,31 @@ button:disabled {
   display: none !important;
 }
 
-@media (max-width: 380px) {
+@media (max-width: 520px) {
   .navigation {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
+  .nav-button {
+    flex: 0 0 72px;
+  }
+}
 
-  .shell {
-    padding-bottom: calc(160px + env(safe-area-inset-bottom));
-  }
+.slot-machine { text-align: center; }
+.slot-reels { display: flex; justify-content: center; gap: 12px; margin: 24px 0; }
+.slot-reels span {
+  display: grid; place-items: center; min-width: 0; width: 80px; height: 96px;
+  font-size: 2.5rem; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--surface); box-shadow: inset 0 3px 12px rgb(0 0 0 / 20%);
+}
+.slot-reels.spinning span { filter: blur(1px); }
+.slot-stakes { display: flex; justify-content: center; gap: 12px; margin-bottom: 16px; }
+.slot-stakes [aria-pressed="true"] { outline: 2px solid var(--accent); }
+.slot-list { padding-left: 22px; line-height: 1.9; overflow-wrap: anywhere; }
+#slot-result { min-height: 3em; }
+@media (prefers-reduced-motion: reduce) {
+  .slot-reels.spinning span { filter: none; }
 }
 
 @media (min-width: 640px) {

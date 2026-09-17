@@ -64,6 +64,7 @@ class SpyWebAppServer:
             [
                 web.get(f"{self.BASE_PATH}/", self.index),
                 web.get(f"{self.BASE_PATH}/app.js", self.javascript),
+                web.get(f"{self.BASE_PATH}/slots.js", self.slots_javascript),
                 web.get(f"{self.BASE_PATH}/styles.css", self.styles),
                 web.get(f"{self.BASE_PATH}/game/", self.game),
                 web.get(f"{self.BASE_PATH}/game/game.js", self.game_javascript),
@@ -75,6 +76,7 @@ class SpyWebAppServer:
                 ),
                 web.get(f"{self.BASE_PATH}/health", self.health),
                 web.get(f"{self.BASE_PATH}/api/state", self.state),
+                web.post(f"{self.BASE_PATH}/api/slots/spin", self.slot_spin),
                 web.post(
                     f"{self.BASE_PATH}/api/achievements/title", self.achievement_title
                 ),
@@ -198,6 +200,12 @@ class SpyWebAppServer:
     async def javascript(self, request: web.Request) -> web.Response:
         return web.FileResponse(
             self.ASSETS / "app.js",
+            headers=self._static_headers("public, max-age=300"),
+        )
+
+    async def slots_javascript(self, request: web.Request) -> web.Response:
+        return web.FileResponse(
+            self.ASSETS / "slots.js",
             headers=self._static_headers("public, max-age=300"),
         )
 
@@ -403,6 +411,22 @@ class SpyWebAppServer:
                 "required_agents": presenters.agent_costs(result.required_agents),
             }
         )
+
+    async def slot_spin(self, request: web.Request) -> web.Response:
+        identity = await self._authenticate(request, require_chat=True)
+        payload = await self._json_object(request)
+        try:
+            result = await self.service.spin_slots(
+                operation_id=payload.get("operation_id"),
+                stake=payload.get("stake"),
+                chat_id=identity.chat_id,
+                user_id=identity.user.user_id,
+                username=identity.user.username,
+                display_name=identity.user.display_name,
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        return self._json_response(result)
 
     async def contact_exchange(self, request: web.Request) -> web.Response:
         identity = await self._authenticate(request, require_chat=True)

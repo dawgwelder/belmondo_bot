@@ -24,6 +24,7 @@ from .persistence.cooperative import CooperativeRepository
 from .persistence.chase import ChaseRepository
 from .persistence.contacts import ContactsRepository
 from .persistence.progression import ProgressionRepository
+from .persistence.slots import SlotsRepository
 
 
 class SpyRepository(RepositoryComponent):
@@ -41,6 +42,7 @@ class SpyRepository(RepositoryComponent):
             )
         )
         self.economy = EconomyRepository(self.context)
+        self.slots = SlotsRepository(self.context, economy=self.economy)
         self.chase = ChaseRepository(self.context, economy=self.economy)
         self.death_mission = DeathMissionRepository(self.economy)
         self.lifecycle = LifecycleRepository(

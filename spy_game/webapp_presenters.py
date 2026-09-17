@@ -39,6 +39,7 @@ async def state_payload(service: SpyGameService, identity: RequestIdentity) -> d
         "counterintelligence": "Контрразведка",
     }
     return {
+        "slots": await service.slot_state(user.user_id, identity.chat_id),
         "achievements": achievements,
         "profile": {
             "username": f"@{profile.username.lstrip('@')}"

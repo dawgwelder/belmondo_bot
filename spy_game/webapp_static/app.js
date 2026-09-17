@@ -8,6 +8,15 @@
 
   const $ = (id) => document.getElementById(id);
   const notice = $("notice");
+  const slots = window.SpySlots ? new window.SpySlots({
+    api, reload, getState: () => state, operationId,
+    beginMutation: () => {
+      if (mutationInFlight) return false;
+      mutationInFlight = true;
+      return true;
+    },
+    endMutation: () => { mutationInFlight = false; }
+  }) : null;
 
   const statusMessages = {
     insufficient_resources: "Недостаточно ресурсов. Для обмена нужны новые ненадетые предметы.",
@@ -273,6 +282,7 @@
     renderContacts();
     renderLeaderboard();
     renderAchievements();
+    slots?.render();
   }
 
   async function reload() {
@@ -329,9 +339,9 @@
     });
   });
 
-  document.querySelectorAll(".nav-button").forEach((button) => {
+  document.querySelectorAll("[data-target]").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll(".nav-button").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".nav-button").forEach((item) => item.classList.toggle("active", item.dataset.target === button.dataset.target));
       document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === button.dataset.target));
       window.scrollTo({ top: 0, behavior: "auto" });
     });

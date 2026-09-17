@@ -24,6 +24,7 @@ from .use_cases.html5 import Html5UseCases
 from .use_cases.duels import DuelsUseCases
 from .use_cases.events import EventsUseCases
 from .use_cases.economy import EconomyUseCases
+from .use_cases.slots import SlotsUseCases
 from .use_cases.achievements import AchievementsUseCases
 from .persistence.achievements import AchievementsRepository
 
@@ -60,6 +61,9 @@ class SpyGameService(UseCases):
         self.duels = DuelsUseCases(self.context)
         self.events = EventsUseCases(self.context)
         self.economy = EconomyUseCases(self.context)
+        self.slots = SlotsUseCases(self.context)
+        self.spin_slots = self.slots.spin_slots
+        self.slot_state = self.slots.slot_state
         self.achievement_repository = AchievementsRepository(settings)
         self.achievements = AchievementsUseCases(
             self.context, self.achievement_repository
