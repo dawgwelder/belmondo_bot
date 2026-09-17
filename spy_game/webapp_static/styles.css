@@ -448,3 +448,9 @@ button:disabled {
     min-height: 40px;
   }
 }
+
+.inventory-row { align-items: flex-start; }
+.inventory-row .row-meta, .inventory-row .row-title {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

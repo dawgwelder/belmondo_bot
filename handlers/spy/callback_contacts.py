@@ -69,7 +69,9 @@ async def handle_npc(
         if result.required_items:
             requirements.append(_format_item_costs(result.required_items))
         await query.answer(
-            "Для сделки нужно: " + "; ".join(requirements),
+            ("Нужны новые ненадетые предметы. Для сделки: " + "; ".join(requirements))[
+                :195
+            ],
             show_alert=True,
         )
     elif result.status is NpcStatus.EXPIRED:

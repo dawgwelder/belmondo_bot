@@ -47,9 +47,9 @@ ITEM_TYPES: dict[str, ItemType] = {
         ItemType("fake_passport", "Поддельный паспорт", "🛂", ItemCategory.EQUIPMENT),
         ItemType("radio", "Полевая рация", "📻", ItemCategory.EQUIPMENT),
         ItemType("wiretap", "Комплект прослушки", "🎙", ItemCategory.EQUIPMENT),
-        ItemType("intel_file", "Разведданные", "📁", ItemCategory.CONSUMABLE),
-        ItemType("satellite_image", "Спутниковый снимок", "🛰", ItemCategory.CONSUMABLE),
-        ItemType("access_code", "Код доступа", "🔐", ItemCategory.CONSUMABLE),
+        ItemType("intel_file", "Разведданные", "📁", ItemCategory.EQUIPMENT),
+        ItemType("satellite_image", "Спутниковый снимок", "🛰", ItemCategory.EQUIPMENT),
+        ItemType("access_code", "Код доступа", "🔐", ItemCategory.EQUIPMENT),
     )
 }
 
@@ -190,14 +190,14 @@ DEFAULT_MOLE_CASES = (
 )
 
 DEFAULT_DEAD_DROP_ENTRIES = (
-    DropEntry("item", "intel_file", 1, 28),
-    DropEntry("item", "fake_passport", 1, 12),
+    DropEntry("item", "intel_file", 1, 25),
+    DropEntry("item", "fake_passport", 1, 20),
     DropEntry("item", "radio", 1, 10),
     DropEntry("item", "wiretap", 1, 8),
     DropEntry("item", "satellite_image", 1, 7),
     DropEntry("item", "access_code", 1, 5),
     DropEntry("agent", "informant", 2, 20),
-    DropEntry("empty", None, 0, 10),
+    DropEntry("empty", None, 0, 5),
 )
 
 DEFAULT_HANDLER_RECIPES = (
@@ -314,6 +314,22 @@ DEFAULT_NPC_RECIPES = (
         item_costs=(ItemCost("intel_file", 1),),
         rewards=(DropEntry("item", "satellite_image", 1, 1),),
     ),
+    NpcRecipe(
+        id="counter_passport",
+        npc_id="counterintelligence",
+        display_name="Поддельный паспорт · 10 осведомителей + разведданные ×2",
+        agent_costs=(AgentCost("informant", 10),),
+        item_costs=(ItemCost("intel_file", 2),),
+        rewards=(DropEntry("item", "fake_passport", 1, 1),),
+    ),
+    NpcRecipe(
+        id="counter_surveillance",
+        npc_id="counterintelligence",
+        display_name="Спутниковый снимок · рация + прослушка",
+        agent_costs=(),
+        item_costs=(ItemCost("radio", 1), ItemCost("wiretap", 1)),
+        rewards=(DropEntry("item", "satellite_image", 1, 1),),
+    ),
 )
 
 PERMANENT_CONTACT_NPC_IDS = frozenset(
@@ -380,6 +396,8 @@ class SpySettings:
     allow_manual_spawn: bool = False
     llm_narrator_enabled: bool = False
     llm_narrator_timeout_seconds: int = 8
+    narrator_generation_cooldown_seconds: int = 300
+    narrator_refresh_seconds: int = 6 * 60 * 60
     llm_director_enabled: bool = False
     llm_director_timeout_seconds: int = 8
     recruitment_agent_type: str = "informant"
@@ -392,6 +410,8 @@ class SpySettings:
     intercept_game_success_score: int = 3000
     dead_drop_game_code_length: int = 3
     dead_drop_game_run_seconds: int = 5 * 60
+    llm_mole_enabled: bool = True
+    llm_mole_timeout_seconds: int = 15
     html5_mole_enabled: bool = False
     mole_game_run_seconds: int = 5 * 60
     mole_suspect_count: int = 4
@@ -468,6 +488,11 @@ class SpySettings:
         ):
             raise ValueError("activity trigger settings are invalid")
         if (
+            self.narrator_generation_cooldown_seconds <= 0
+            or self.narrator_refresh_seconds <= 0
+        ):
+            raise ValueError("narrator cooldown and refresh interval must be positive")
+        if (
             self.llm_narrator_timeout_seconds <= 0
             or self.llm_director_timeout_seconds <= 0
         ):
@@ -527,6 +552,8 @@ class SpySettings:
             raise ValueError("dead drop game code length must be between 2 and 6")
         if self.dead_drop_game_run_seconds <= 0:
             raise ValueError("dead drop game duration must be positive")
+        if self.llm_mole_timeout_seconds <= 0:
+            raise ValueError("mole generation timeout must be positive")
         if self.mole_game_run_seconds <= 0 or self.mole_suspect_count != 4:
             raise ValueError("mole game requires four suspects and a positive duration")
         if (
@@ -606,7 +633,10 @@ class SpySettings:
         }:
             raise ValueError("NPC recipes must configure all NPC types")
         for recipe in self.npc_recipes:
-            self._validate_costs(recipe.agent_costs)
+            if recipe.agent_costs:
+                self._validate_costs(recipe.agent_costs)
+            elif not recipe.item_costs:
+                raise ValueError("NPC recipes require agent or item costs")
             self._validate_item_costs(recipe.item_costs)
             if not recipe.rewards:
                 raise ValueError("NPC reward pool must not be empty")
@@ -788,6 +818,12 @@ class SpySettings:
             tick_seconds=_env_int("SPY_GAME_TICK_SECONDS", 30),
             event_lifetime_seconds=_env_int("SPY_GAME_EVENT_LIFETIME_SECONDS", 3 * 60),
             allow_manual_spawn=_env_bool("SPY_GAME_ALLOW_MANUAL_SPAWN", mode == "dev"),
+            narrator_generation_cooldown_seconds=_env_int(
+                "SPY_GAME_NARRATOR_GENERATION_COOLDOWN_SECONDS", 300
+            ),
+            narrator_refresh_seconds=_env_int(
+                "SPY_GAME_NARRATOR_REFRESH_SECONDS", 6 * 60 * 60
+            ),
             llm_narrator_enabled=_env_bool("SPY_GAME_LLM_NARRATOR_ENABLED", False),
             llm_narrator_timeout_seconds=_env_int(
                 "SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS", 8
@@ -796,6 +832,8 @@ class SpySettings:
             llm_director_timeout_seconds=_env_int(
                 "SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS", 8
             ),
+            llm_mole_enabled=_env_bool("SPY_GAME_LLM_MOLE_ENABLED", True),
+            llm_mole_timeout_seconds=_env_int("SPY_GAME_LLM_MOLE_TIMEOUT_SECONDS", 15),
             html5_mole_enabled=_env_bool("SPY_GAME_HTML5_MOLE_ENABLED", False),
             death_mission_enabled=_env_bool("SPY_GAME_DEATH_ROGUELITE_ENABLED", False),
             death_mission_seconds=_env_int("SPY_GAME_DEATH_MISSION_SECONDS", 900),

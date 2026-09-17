@@ -12,6 +12,7 @@ from .activity import ActivityTracker
 from .database import SQLiteDatabase
 from .director import GameDirector, build_director
 from .duels import SpyDuelRepository
+from .mole_generator import MoleCaseGenerator
 from .models import AdminResult, ChatStatus, TickResult
 from .repositories import SpyRepository
 from .rewards import RewardResolver
@@ -52,6 +53,7 @@ class SpyGameService(UseCases):
         )
         self.activity = ActivityTracker(settings.activity_user_debounce_seconds)
         self.director = director or build_director(settings, self.rng)
+        self.mole_generator = MoleCaseGenerator(settings, self.rng)
         self._startup_expired = ()
         self.missions = MissionsUseCases(self.context)
         self.html5 = Html5UseCases(self.context, missions=self.missions)
@@ -104,6 +106,9 @@ class SpyGameService(UseCases):
         self.answer_intercept = self.events.answer_intercept
         self.contribute_cooperative = self.events.contribute_cooperative
         self.advance_chase = self.events.advance_chase
+        self.get_chase = self.events.get_chase
+        self.settle_chases = self.events.settle_chases
+        self.mark_chase_notified = self.events.mark_chase_notified
         self.interact_with_npc = self.events.interact_with_npc
         self.exchange_with_contact = self.economy.exchange_with_contact
         self.increase_reputation = self.economy.increase_reputation
@@ -175,13 +180,20 @@ class SpyGameService(UseCases):
             spawned = []
             for state in prepared.due:
                 decision = await self.director.choose_event(state)
+                mole_case = (
+                    await self.mole_generator.generate()
+                    if decision.event_type == "find_mole"
+                    else None
+                )
+                spawn_time = current if now is not None else utc_now()
                 event = await self.database.transaction(
                     lambda connection, state=state, decision=decision: (
                         self.repository.scheduling.spawn_due(
                             connection,
                             state,
-                            current,
+                            spawn_time,
                             decision,
+                            mole_case,
                         )
                     ),
                     immediate=True,
@@ -288,6 +300,16 @@ class SpyGameService(UseCases):
             "find_mole",
         }:
             return AdminResult(False, "Неизвестный тип события.")
+        if event_type == "find_mole":
+            status = await self.get_chat_status(chat_id)
+            if not status.enabled or status.active_event_id is not None:
+                return AdminResult(
+                    False,
+                    "Нельзя создать событие: игра выключена или уже есть активное.",
+                )
+            mole_case = await self.mole_generator.generate()
+        else:
+            mole_case = None
         current = now or utc_now()
         return await self.database.transaction(
             lambda connection: self.repository.scheduling.manual_spawn(
@@ -295,6 +317,7 @@ class SpyGameService(UseCases):
                 chat_id,
                 current,
                 event_type,
+                mole_case,
             ),
             immediate=True,
         )

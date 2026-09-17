@@ -16,6 +16,7 @@ async def test_reputation_after_agency_reset_preserves_history_and_spends_once(
     tmp_path, legacy_history
 ):
     settings = SpySettings(
+        llm_mole_enabled=False,
         mode="dev",
         enabled=True,
         database_path=tmp_path / "progression.sqlite3",

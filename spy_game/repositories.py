@@ -41,9 +41,10 @@ class SpyRepository(RepositoryComponent):
             )
         )
         self.economy = EconomyRepository(self.context)
+        self.chase = ChaseRepository(self.context, economy=self.economy)
         self.death_mission = DeathMissionRepository(self.economy)
         self.lifecycle = LifecycleRepository(
-            self.context, death_mission=self.death_mission
+            self.context, death_mission=self.death_mission, chase=self.chase
         )
         self.scheduling = SchedulingRepository(self.context, lifecycle=self.lifecycle)
         self.recruitment = RecruitmentRepository(
@@ -62,9 +63,6 @@ class SpyRepository(RepositoryComponent):
             self.context, economy=self.economy, lifecycle=self.lifecycle
         )
         self.cooperative = CooperativeRepository(
-            self.context, economy=self.economy, lifecycle=self.lifecycle
-        )
-        self.chase = ChaseRepository(
             self.context, economy=self.economy, lifecycle=self.lifecycle
         )
         self.contacts = ContactsRepository(

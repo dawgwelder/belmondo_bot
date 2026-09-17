@@ -7,6 +7,8 @@ from config import logger
 from spy_game.models import AgencyStatus, EconomyStatus, EquipmentStatus, NpcStatus
 from spy_game.settings import ITEM_TYPES
 from .context import _service
+from .cleanup import schedule_menu_cleanup
+from .menu_views import build_inventory_text, _inventory_keyboard
 from .formatting import (
     _display_name,
     _format_costs,
@@ -57,7 +59,9 @@ async def handle_contact(
         if result.required_items:
             requirements.append(_format_item_costs(result.required_items))
         await query.answer(
-            "Для сделки нужно: " + "; ".join(requirements),
+            ("Нужны новые ненадетые предметы. Для сделки: " + "; ".join(requirements))[
+                :195
+            ],
             show_alert=True,
         )
     else:
@@ -211,6 +215,22 @@ async def handle_agency_found(
     return
 
 
+async def _refresh_inventory(update, context, service):
+    try:
+        inventory = await service.get_inventory(update.effective_user.id)
+        await update.callback_query.edit_message_text(
+            text=build_inventory_text(inventory),
+            reply_markup=_inventory_keyboard(inventory),
+        )
+        schedule_menu_cleanup(
+            context, update.effective_chat, update.callback_query.message.message_id
+        )
+    except Exception:
+        logger.warning(
+            "spy_game: inventory refresh failed user_id=%s", update.effective_user.id
+        )
+
+
 async def handle_equip(
     update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, value: str
 ) -> None:
@@ -229,6 +249,7 @@ async def handle_equip(
             f"{item.display_name} установлен в слот {result.slot}.",
             show_alert=True,
         )
+        await _refresh_inventory(update, context, service)
     elif result.status is EquipmentStatus.NO_FREE_SLOT:
         await query.answer("Все слоты заняты.", show_alert=True)
     elif result.status is EquipmentStatus.ALREADY_EQUIPPED:
@@ -256,7 +277,8 @@ async def handle_unequip(
         slot=slot,
     )
     if result.status is EquipmentStatus.SUCCESS:
-        await query.answer("Предмет снят.", show_alert=True)
+        await query.answer("Предмет снят. Оставшийся ресурс сохранён.", show_alert=True)
+        await _refresh_inventory(update, context, service)
     else:
         await query.answer("Этот слот уже пуст.", show_alert=True)
     return

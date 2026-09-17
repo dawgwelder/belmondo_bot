@@ -32,62 +32,69 @@ class GameDirector(Protocol):
         ...
 
 
+def selection_candidates(state: DirectorState) -> tuple[str, ...]:
+    """Engine constraints shared by local and LLM directors."""
+    allowed = tuple(
+        event
+        for event in state.allowed_events
+        if event != "find_mole"
+        or (state.story_arc == "mole_hunt" and state.story_stage >= 3)
+    )
+    recent = state.recent_events
+    if (
+        "recruitment" in allowed
+        and len(recent) >= 3
+        and "recruitment" not in recent[:3]
+    ):
+        return ("recruitment",)
+    if (
+        "find_mole" in allowed
+        and state.story_stage == 3
+        and "find_mole" not in recent[:3]
+    ):
+        return ("find_mole",)
+    if len(recent) >= 2 and recent[0] == recent[1]:
+        alternatives = tuple(event for event in allowed if event != recent[0])
+        if alternatives:
+            return alternatives
+    return allowed
+
+
+def selection_weights(
+    settings: SpySettings, state: DirectorState
+) -> tuple[tuple[str, int], ...]:
+    candidates = selection_candidates(state)
+    weighted = []
+    for configured in settings.event_weights:
+        event = configured.event_type
+        if event not in candidates:
+            continue
+        weight = configured.weight
+        if event == "cooperative_operation":
+            weight = weight + 2 if state.active_players >= 3 else max(1, weight // 2)
+        if state.story_arc == "mole_hunt" and (
+            (state.story_stage == 1 and event == "cooperative_operation")
+            or (state.story_stage == 2 and event == "handler")
+        ):
+            weight += 3
+        weight = max(1, weight // (1 + state.recent_events[:5].count(event)))
+        if state.recent_events and event == state.recent_events[0]:
+            weight = max(1, weight // 3)
+        weighted.append((event, weight))
+    return tuple(weighted)
+
+
 class RuleBasedDirector:
-    """Weighted director with anti-repeat, activity and story modifiers."""
+    """Weighted variety, a recruitment floor, and bounded story priorities."""
 
     def __init__(self, settings: SpySettings, rng: RandomSource) -> None:
         self.settings = settings
         self.rng = rng
 
     async def choose_event(self, state: DirectorState) -> DirectorDecision:
-        previous = state.recent_events[0] if state.recent_events else None
-        if previous in {
-            "handler",
-            "dead_drop",
-            "death_operation",
-            "intercept",
-            "cooperative_operation",
-            "chase",
-            "npc",
-            "find_mole",
-        }:
-            return DirectorDecision("recruitment", "bureaucratic", state.story_arc, 1)
-
-        if (
-            state.story_arc == "mole_hunt"
-            and state.story_stage == 3
-            and "find_mole" in state.allowed_events
-        ):
-            return DirectorDecision("find_mole", "paranoid", "mole_hunt", 3)
-
-        recent_counts = {
-            event_type: state.recent_events.count(event_type)
-            for event_type in state.allowed_events
-        }
-        weighted: list[tuple[str, int]] = []
-        for configured in self.settings.event_weights:
-            if configured.event_type not in state.allowed_events:
-                continue
-            if configured.event_type == "find_mole" and not (
-                state.story_arc == "mole_hunt" and state.story_stage >= 3
-            ):
-                continue
-            weight = max(1, configured.weight - recent_counts[configured.event_type])
-            if (
-                configured.event_type == "cooperative_operation"
-                and state.active_players >= 3
-            ):
-                weight += 2
-            if state.story_arc == "mole_hunt" and state.story_stage == 1:
-                if configured.event_type == "cooperative_operation":
-                    weight += 3
-            if state.story_arc == "mole_hunt" and state.story_stage == 2:
-                if configured.event_type == "handler":
-                    weight += 3
-            weighted.append((configured.event_type, weight))
+        weighted = selection_weights(self.settings, state)
         if not weighted:
             raise RuntimeError("director has no allowed events")
-
         roll = self.rng.randint(1, sum(weight for _, weight in weighted))
         cumulative = 0
         selected = weighted[-1][0]
@@ -96,7 +103,8 @@ class RuleBasedDirector:
             if roll <= cumulative:
                 selected = event_type
                 break
-        tone = TONES[(roll - 1) % len(TONES)]
+        # Tone is a separate draw, not correlated with the selected event's weight.
+        tone = TONES[self.rng.randint(0, len(TONES) - 1)]
         intensity = (
             3 if state.activity_score >= 30 else 2 if state.activity_score >= 15 else 1
         )
@@ -116,9 +124,11 @@ class LLMDirector:
         self,
         request: RequestJSON = request_json,
         timeout_seconds: float = 8,
+        settings: SpySettings | None = None,
     ) -> None:
         self._request = request
         self.timeout_seconds = timeout_seconds
+        self.settings = settings
 
     async def choose_event(self, state: DirectorState) -> DirectorDecision:
         snapshot = {
@@ -130,7 +140,10 @@ class LLMDirector:
             "recent_events": state.recent_events,
             "story": {"arc": state.story_arc, "stage": state.story_stage},
             "constraints": {
-                "allowed_events": state.allowed_events,
+                "allowed_events": selection_candidates(state),
+                "weights": dict(selection_weights(self.settings, state))
+                if self.settings
+                else {},
                 "allowed_tones": TONES,
                 "allowed_story_hooks": sorted(KNOWN_STORY_HOOKS),
                 "intensity": {"minimum": 1, "maximum": 3},
@@ -140,7 +153,8 @@ class LLMDirector:
             "Ты AI Director шпионской Telegram-игры. Выбери только значения из "
             "переданных constraints. Не рассчитывай награды и не добавляй механику. "
             "Верни строго JSON с ключами event_type, tone, story_hook, intensity; "
-            "story_hook может быть null.\n\n"
+            "story_hook может быть null. Избегай недавних повторов, учитывай weights: "
+            "это относительные приоритеты сервера, а не награды.\n\n"
             f"{untrusted_json_block(snapshot)}"
         )
         payload = await asyncio.wait_for(
@@ -151,7 +165,7 @@ class LLMDirector:
             ),
             timeout=self.timeout_seconds,
         )
-        if payload is None:
+        if self._validate(payload, state) is None:
             raise RuntimeError("LLM director returned no valid decision")
         return DirectorDecision(**payload)
 
@@ -171,9 +185,15 @@ class LLMDirector:
         tone = payload.get("tone")
         story_hook = payload.get("story_hook")
         intensity = payload.get("intensity")
-        if event_type not in state.allowed_events or tone not in TONES:
+        if (
+            not isinstance(event_type, str)
+            or event_type not in selection_candidates(state)
+            or tone not in TONES
+        ):
             return None
-        if story_hook is not None and story_hook not in KNOWN_STORY_HOOKS:
+        if story_hook is not None and (
+            not isinstance(story_hook, str) or story_hook not in KNOWN_STORY_HOOKS
+        ):
             return None
         if not isinstance(intensity, int) or isinstance(intensity, bool):
             return None
@@ -209,6 +229,8 @@ def build_director(settings: SpySettings, rng: RandomSource) -> GameDirector:
     if not settings.llm_director_enabled:
         return fallback
     return ResilientDirector(
-        LLMDirector(timeout_seconds=settings.llm_director_timeout_seconds),
+        LLMDirector(
+            timeout_seconds=settings.llm_director_timeout_seconds, settings=settings
+        ),
         fallback,
     )

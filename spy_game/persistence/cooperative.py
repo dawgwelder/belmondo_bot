@@ -154,8 +154,19 @@ class CooperativeRepository(RepositoryComponent):
             self.settings.cooperative_reward_agent,
             self.settings.cooperative_reward_amount,
         )
+        radio_bonus_user_ids = []
         for participant_id in participant_ids:
-            self.economy.add_reward(connection, participant_id, reward)
+            participant_reward = reward
+            if self.economy.equipment.consume(
+                connection,
+                participant_id,
+                "radio",
+                f"cooperative:{event_id}",
+                now_value,
+            ):
+                radio_bonus_user_ids.append(participant_id)
+                participant_reward = Reward(reward.agent_type, reward.amount + 1)
+            self.economy.add_reward(connection, participant_id, participant_reward)
             connection.execute(
                 """
                 INSERT INTO event_history(
@@ -170,8 +181,8 @@ class CooperativeRepository(RepositoryComponent):
                     event_id,
                     chat_id,
                     participant_id,
-                    reward.agent_type,
-                    reward.amount,
+                    participant_reward.agent_type,
+                    participant_reward.amount,
                     json.dumps(
                         {"participants": participant_ids, "required": required},
                         separators=(",", ":"),
@@ -192,4 +203,5 @@ class CooperativeRepository(RepositoryComponent):
             required,
             participant_ids,
             reward,
+            tuple(radio_bonus_user_ids),
         )

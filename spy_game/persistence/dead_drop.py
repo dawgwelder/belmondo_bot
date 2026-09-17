@@ -81,6 +81,9 @@ class DeadDropRepository(RepositoryComponent):
             )
 
         reward = self.reward_resolver.resolve_dead_drop(self.rng)
+        reward = self.economy.equipment.modify_drop(
+            connection, user_id, "dead_drop", reward, f"dead_drop:{event_id}", now_value
+        )
         if reward.reward_type == "item":
             connection.execute(
                 """
@@ -321,6 +324,14 @@ class DeadDropRepository(RepositoryComponent):
                 result_status = DeadDropGameStatus.ALREADY_RESOLVED
             else:
                 reward = self.reward_resolver.resolve_dead_drop(self.rng)
+                reward = self.economy.equipment.modify_drop(
+                    connection,
+                    row["user_id"],
+                    "dead_drop",
+                    reward,
+                    f"dead_drop:{row['event_id']}",
+                    now_value,
+                )
                 self.economy.add_drop_reward(connection, row["user_id"], reward)
                 run_status = "won"
                 result_status = DeadDropGameStatus.WON

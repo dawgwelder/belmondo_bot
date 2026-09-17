@@ -10,7 +10,7 @@
   const notice = $("notice");
 
   const statusMessages = {
-    insufficient_resources: "Недостаточно ресурсов для операции.",
+    insufficient_resources: "Недостаточно ресурсов. Для обмена нужны новые ненадетые предметы.",
     already_equipped: "Этот предмет уже экипирован.",
     no_free_slot: "Все слоты экипировки заняты.",
     not_owned: "Предмета больше нет в инвентаре.",
@@ -158,6 +158,7 @@
       empty(target, "Инвентарь пуст. Ищите тайники разведсети.");
       return;
     }
+    if (inventory.exchange_rule) target.append(element("p", "row-meta", inventory.exchange_rule));
     inventory.items.forEach((item) => {
       const active = equipped.get(item.id);
       let side = `×${item.amount}`;
@@ -167,10 +168,14 @@
           : actionButton("Надеть", () => mutate("equipment/equip", { item_type: item.id }, "Предмет экипирован."));
         side.disabled = !state.context.can_mutate;
       }
-      const meta = item.category === "equipment"
-        ? `${active ? `Экипировано в слот ${active.slot}` : "Экипировка"} · ×${item.amount}`
-        : `Расходный материал · ×${item.amount}`;
-      target.append(row(item.emoji, item.name, meta, side));
+      const uses = item.uses_remaining ?? item.max_uses;
+      const meta = [
+        `${active ? `Надето · слот ${active.slot}` : "В рюкзаке"} · всего ×${item.amount}`,
+        `Ресурс экземпляра: ${uses}/${item.max_uses} срабатываний · для обмена ×${item.exchangeable_amount}`,
+        item.effect,
+        item.uses_remaining != null && uses < item.max_uses ? "Использованный экземпляр нельзя обменять; при надевании продолжится его ресурс." : "После первого бонуса этот экземпляр нельзя обменять.",
+      ].filter(Boolean).join("\n");
+      target.append(row(item.emoji, item.name, meta, side, "inventory-row"));
     });
   }
 

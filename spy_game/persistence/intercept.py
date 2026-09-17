@@ -93,6 +93,14 @@ class InterceptRepository(RepositoryComponent):
                 scenario.reward_item,
                 scenario.reward_amount,
             )
+            reward = self.economy.equipment.modify_drop(
+                connection,
+                user_id,
+                "intercept",
+                reward,
+                f"intercept:{event_id}",
+                now_value,
+            )
             connection.execute(
                 """
                 INSERT INTO user_items(user_id, item_type, amount)
@@ -373,6 +381,14 @@ class InterceptRepository(RepositoryComponent):
                     scenario.reward_item,
                     scenario.reward_amount,
                 )
+                reward = self.economy.equipment.modify_drop(
+                    connection,
+                    row["user_id"],
+                    "intercept",
+                    reward,
+                    f"intercept:{row['event_id']}",
+                    now_value,
+                )
                 self.economy.add_drop_reward(connection, row["user_id"], reward)
                 self.lifecycle.advance_story(
                     connection,
@@ -386,10 +402,17 @@ class InterceptRepository(RepositoryComponent):
         connection.execute(
             """
             UPDATE intercept_game_runs
-            SET status = ?, score = ?, completed_at = ?
+            SET status = ?, score = ?, completed_at = ?, reward_id = ?, reward_amount = ?
             WHERE id = ? AND status = 'ready'
             """,
-            (run_status, score, now_value, row["id"]),
+            (
+                run_status,
+                score,
+                now_value,
+                reward.reward_id if reward else None,
+                reward.amount if reward else None,
+                row["id"],
+            ),
         )
         metadata = json.dumps(
             {"run_id": row["id"], "score": score, "locks": locks},
@@ -440,7 +463,7 @@ class InterceptRepository(RepositoryComponent):
         return connection.execute(
             """
             SELECT r.id, r.event_id, r.chat_id, r.message_id, r.user_id,
-                   r.targets_json, r.status AS run_status, r.score,
+                   r.targets_json, r.status AS run_status, r.score, r.reward_id, r.reward_amount,
                    r.expires_at AS run_expires_at,
                    e.status AS event_status,
                    e.expires_at AS event_expires_at,
@@ -509,6 +532,12 @@ class InterceptRepository(RepositoryComponent):
                     scenario.reward_item,
                     scenario.reward_amount,
                 )
+        if (
+            status is InterceptGameStatus.WON
+            and "reward_amount" in row.keys()
+            and row["reward_amount"] is not None
+        ):
+            reward = DropReward("item", row["reward_id"], row["reward_amount"])
         return InterceptGameRun(
             status,
             run_id=row["id"],

@@ -126,6 +126,8 @@ class CooperativeStatus(str, Enum):
 
 
 class ChaseStatus(str, Enum):
+    ALREADY_LEADING = "already_leading"
+    LIMIT_REACHED = "limit_reached"
     STARTED = "started"
     COMPLETED = "completed"
     ALREADY_RESOLVED = "already_resolved"
@@ -296,6 +298,8 @@ class SpawnEvent:
     story_hook: str | None = None
     lore_context: tuple[str, ...] = ()
     trigger_reason: str = "manual"
+    mole_case: MoleCaseTemplate | None = None
+    recent_narratives: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -476,6 +480,7 @@ class CooperativeResult:
     required_contributions: int = 0
     participant_user_ids: tuple[int, ...] = ()
     reward: Reward | None = None
+    radio_bonus_user_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -488,6 +493,14 @@ class ChaseResult:
     interceptor_reward: Reward | None = None
     starter_name: str | None = None
     interceptor_name: str | None = None
+    hold_seconds: int = 0
+    leader_user_id: int | None = None
+    leader_name: str | None = None
+    turn: int = 0
+    deadline: datetime | None = None
+    rewards: tuple[DropReward, ...] = ()
+    chat_id: int | None = None
+    message_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -544,12 +557,18 @@ class AgentHolding:
 class ItemHolding:
     item_type: str
     amount: int
+    exchangeable_amount: int = 0
+    uses_remaining: int | None = None
+    max_uses: int = 0
+    effect: str = ""
 
 
 @dataclass(frozen=True)
 class EquippedItem:
     slot: int
     item_type: str
+    uses_remaining: int = 0
+    max_uses: int = 0
 
 
 @dataclass(frozen=True)

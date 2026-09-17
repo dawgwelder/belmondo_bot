@@ -109,7 +109,7 @@ async def publish_spy_event(
             None,
         )
     )
-    mole_case = (
+    mole_case = event.mole_case or (
         service.settings.mole_case(event.config_id or "")
         if isinstance(service, SpyGameService)
         else next(
@@ -221,8 +221,15 @@ async def publish_spy_event(
             mole_case=mole_case,
         ),
         fallback_text=(
-            "🔎 Найти крота\nИзучите улики и выберите одного подозреваемого. "
-            "У каждого игрока только одна финальная версия."
+            "🔎 Найти крота\n"
+            + mole_case.briefing
+            + "\n\nУлики:\n"
+            + "\n".join(mole_case.clues)
+            + "\n\nДосье:\n"
+            + "\n".join(
+                f"{s.codename} · {s.role}: {s.dossier}" for s in mole_case.suspects
+            )
+            + "\nОдна финальная версия на игрока. Первый верный ответ получает предмет и 3 осведомителей."
             if is_mole
             else "💀 Смертельная операция\n"
             f"Поставьте всех агентов: {death_success_percent}% на возврат состава "
@@ -232,7 +239,8 @@ async def publish_spy_event(
             if is_intercept
             else f"🤝 Совместная операция\nНужно участников: {cooperative_required}."
             if is_cooperative
-            else "🏎 Погоня\nНачните преследование, затем перехватите цель."
+            else "🏎 Погоня\nУдержите цель 30 секунд. Перехват другим игроком увеличивает приз "
+            "и сокращает таймер: 25, 20, 15, 10, 5 секунд. Всего 6 ходов."
             if is_chase
             else "🗝 Специальный куратор\nРедкая встреча удваивает результат сделки."
             if is_npc
@@ -259,11 +267,7 @@ async def publish_spy_event(
             ),
             handler_reward_multiplier,
             npc_reward_multiplier,
-            (
-                service.settings.mole_cases
-                if isinstance(service, SpyGameService)
-                else DEFAULT_MOLE_CASES
-            ),
+            ((mole_case,) if mole_case is not None else DEFAULT_MOLE_CASES),
         ),
     )
     logger.info(

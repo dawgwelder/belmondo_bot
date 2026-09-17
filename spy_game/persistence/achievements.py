@@ -190,6 +190,8 @@ class AchievementsRepository:
         elif event == "cooperative_operation" and outcome == "rewarded":
             self.increment(connection, uid, "coop")
         elif event == "chase" and outcome == "rewarded":
+            if meta.get("turn") == 1:
+                self.peak(connection, uid, "solo", 1)
             role = meta.get("role")
             if role in {"starter", "interceptor"}:
                 self.member(connection, uid, "chase_roles", role)

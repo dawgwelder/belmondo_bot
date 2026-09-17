@@ -58,6 +58,7 @@ async def test_llm_narrator_reuses_structured_games_contract():
         tone="paranoid",
         story_hook="section_7",
         lore_context=("Секция 7 внедряет двойных агентов.",),
+        recent_narratives=("Недавняя сцена у закрытого вокзала.",),
     )
 
     async def request(prompt, validator, *, corrective_hint):
@@ -78,6 +79,8 @@ async def test_llm_narrator_reuses_structured_games_contract():
     assert "<untrusted_json>" in captured["prompt"]
     assert '"event_type": "intercept"' in captured["prompt"]
     assert "Секция 7 внедряет двойных агентов" in captured["prompt"]
+    assert "Недавняя сцена у закрытого вокзала" in captured["prompt"]
+    assert "avoid_repeating" in captured["prompt"]
     assert '"body"' in captured["hint"]
 
 
@@ -149,11 +152,15 @@ def test_narrator_settings_are_read_from_environment(monkeypatch):
     monkeypatch.setenv("SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS", "11")
     monkeypatch.setenv("SPY_GAME_LLM_DIRECTOR_ENABLED", "true")
     monkeypatch.setenv("SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("SPY_GAME_NARRATOR_GENERATION_COOLDOWN_SECONDS", "600")
+    monkeypatch.setenv("SPY_GAME_NARRATOR_REFRESH_SECONDS", "43200")
     config = SpySettings.from_env("dev")
     assert config.llm_narrator_enabled is True
     assert config.llm_narrator_timeout_seconds == 11
     assert config.llm_director_enabled is True
     assert config.llm_director_timeout_seconds == 12
+    assert config.narrator_generation_cooldown_seconds == 600
+    assert config.narrator_refresh_seconds == 43200
 
 
 @pytest.mark.asyncio

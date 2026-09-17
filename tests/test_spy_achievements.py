@@ -24,6 +24,7 @@ CHAT = -1234
 
 def config(path):
     return SpySettings(
+        llm_mole_enabled=False,
         mode="dev",
         enabled=True,
         database_path=path / "ach.sqlite3",
@@ -318,7 +319,9 @@ async def test_event_counters_count_success_and_completed_cooperation_only(servi
 
 
 @pytest.mark.asyncio
-async def test_chase_roles_require_rewards_and_solo_requires_same_event(service):
+async def test_chase_roles_require_rewards_and_solo_requires_uncontested_finish(
+    service,
+):
     await service.database.transaction(
         lambda c: event_fact(c, "start", "chase", "started"), immediate=True
     )
@@ -342,6 +345,8 @@ async def test_chase_roles_require_rewards_and_solo_requires_same_event(service)
             display_name="Private",
             now=NOW,
         )
+    assert not (await archive(service))["solo"]["unlocked"]
+    await service.settle_chases(now=NOW + timedelta(seconds=30))
     assert (await archive(service))["solo"]["unlocked"]
 
 

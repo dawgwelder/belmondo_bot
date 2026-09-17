@@ -324,9 +324,20 @@ class FindMoleRepository(RepositoryComponent):
                     item_id,
                     self.settings.mole_reward_item_amount,
                 )
+                intel_bonus = (
+                    2
+                    if self.economy.equipment.consume(
+                        connection,
+                        row["user_id"],
+                        "intel_file",
+                        f"find_mole:{row['event_id']}",
+                        now_value,
+                    )
+                    else 0
+                )
                 agent_reward = Reward(
                     self.settings.mole_reward_agent_type,
-                    self.settings.mole_reward_agent_amount,
+                    self.settings.mole_reward_agent_amount + intel_bonus,
                 )
                 self.economy.add_drop_reward(connection, row["user_id"], item_reward)
                 self.economy.add_reward(connection, row["user_id"], agent_reward)

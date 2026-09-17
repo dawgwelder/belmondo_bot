@@ -17,7 +17,7 @@ class Element {
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function setup() {
+function setup(inventory) {
   const nodes = new Map();
   const calls = [];
   const entries = [
@@ -31,6 +31,7 @@ function setup() {
     prestige:{costs:[]},agency:{costs:[],at_cap:false,rare_bonus_percent:0,required_reputation:3},
     achievements:{entries,total:2,unlocked:1,points:50,new_count:1,title_id:null,title:null}
   };
+  if (inventory) state.inventory = inventory;
   const document = {
     getElementById(id) { if (!nodes.has(id)) nodes.set(id,new Element()); return nodes.get(id); },
     createElement(tag) { return new Element(tag); }, querySelectorAll() { return []; }
@@ -85,4 +86,19 @@ test("seen acknowledges only displayed new achievements and clear removes title"
   nodes.get("title-clear").fire();
   await flush();
   assert.equal(nodes.get("identity").textContent,"@bond");
+});
+
+
+test("inventory distinguishes worn charges and fresh trade copies",async()=>{
+  const {nodes} = setup({slot_count:3,equipped:[{item_type:"wiretap",slot:1}],items:[
+    {id:"wiretap",name:"Прослушка",emoji:"W",category:"equipment",amount:2,exchangeable_amount:1,
+     uses_remaining:4,max_uses:5,effect:"Шанс 20% получить бонус."}
+  ]});
+  await flush();
+  const card = nodes.get("inventory-list").children[0];
+  const labels = card.children[0].children[1];
+  assert.match(labels.children[1].textContent,/4\/5 срабатываний/);
+  assert.match(labels.children[1].textContent,/для обмена ×1/);
+  assert.match(labels.children[1].textContent,/нельзя обменять/);
+  assert.match(card.children[1].children[0].textContent,/Снять/);
 });

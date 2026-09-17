@@ -73,6 +73,7 @@ def game_settings(tmp_path: Path, **overrides):
     }
     values.update(overrides)
     return SpySettings(
+        llm_mole_enabled=False,
         **values,
     )
 
@@ -222,6 +223,10 @@ async def test_webapp_state_and_equipment_use_same_service_and_database(tmp_path
             item for item in payload["inventory"]["items"] if item["id"] == "radio"
         )
         assert radio["category"] == "equipment"
+        assert radio["max_uses"] == 3 and radio["uses_remaining"] is None
+        assert (
+            radio["exchangeable_amount"] == 1 and "+1 осведомитель" in radio["effect"]
+        )
 
         response = await server.equip(request(headers, {"item_type": "radio"}))
         assert response.status == 200
@@ -234,6 +239,13 @@ async def test_webapp_state_and_equipment_use_same_service_and_database(tmp_path
         assert [(item.slot, item.item_type) for item in inventory.equipped] == [
             (1, "radio")
         ]
+        equipped_state = json.loads((await server.state(request(headers))).text)
+        radio = next(
+            item
+            for item in equipped_state["inventory"]["items"]
+            if item["id"] == "radio"
+        )
+        assert radio["uses_remaining"] == 3 and radio["exchangeable_amount"] == 0
     finally:
         await service.close()
 
@@ -385,7 +397,7 @@ async def test_webapp_exposes_all_npc_exchanges_as_permanent_contacts(
     try:
         response = await server.state(request(headers))
         state = json.loads(response.text)
-        assert len(state["contacts"]) == 12
+        assert len(state["contacts"]) == 14
         assert {contact["npc_id"] for contact in state["contacts"]} == {
             "handler",
             "recruiter",

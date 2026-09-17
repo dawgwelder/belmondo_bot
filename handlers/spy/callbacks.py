@@ -14,7 +14,8 @@ from .callback_economy import (
 )
 from .callback_investigation import handle_intercept, handle_mole, handle_search
 from .callback_menu import handle_menu
-from .callback_operations import handle_chase, handle_cooperate, handle_death
+from .callback_operations import handle_cooperate, handle_death
+from .chase import handle_chase
 from .callback_recruitment import handle_claim
 from .context import _service
 from .missions import _death_mission_callback

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from spy_game.equipment import EQUIPMENT_EXCHANGE_RULE
 from spy_game.models import Inventory, Profile
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
 from .formatting import (
@@ -103,7 +104,7 @@ def build_contact_blocks(recipes) -> list[dict]:
             "type": "footer",
             "text": (
                 "Эти сделки доступны постоянно. Редкая встреча с NPC даёт "
-                "увеличенный результат."
+                "увеличенный результат. Для обмена нужны новые ненадетые предметы."
             ),
         }
     )
@@ -228,63 +229,47 @@ def build_agents_blocks(holdings) -> list[dict]:
 
 def build_inventory_blocks(inventory: Inventory) -> list[dict]:
     equipped_by_type = {item.item_type: item.slot for item in inventory.equipped}
-    blocks: list[dict] = [{"type": "paragraph", "text": "🎒 ИНВЕНТАРЬ"}]
+    blocks = [{"type": "paragraph", "text": "🎒 ИНВЕНТАРЬ"}]
     if not inventory.items:
+        blocks.append(
+            {"type": "paragraph", "text": "Инвентарь пуст. Ищите тайники разведсети."}
+        )
+    for holding in inventory.items:
+        item = ITEM_TYPES.get(holding.item_type)
+        if item is None:
+            continue
+        slot = equipped_by_type.get(item.id)
+        remaining = (
+            holding.uses_remaining
+            if holding.uses_remaining is not None
+            else holding.max_uses
+        )
+        status = f"надето · слот {slot}" if slot else "в рюкзаке"
         blocks.append(
             {
                 "type": "paragraph",
-                "text": "Инвентарь пуст. Ищите тайники разведсети.",
+                "text": (
+                    f"{item.emoji} {item.display_name} ×{holding.amount} · {status}\n"
+                    f"Ресурс экземпляра: {remaining}/{holding.max_uses} срабатываний. "
+                    f"Для обмена: {holding.exchangeable_amount}.\n{holding.effect}"
+                ),
             }
         )
-    else:
-        equipment_lines = []
-        consumable_lines = []
-        for holding in inventory.items:
-            item = ITEM_TYPES.get(holding.item_type)
-            if item is None:
-                continue
-            suffix = (
-                f" · слот {equipped_by_type[item.id]}"
-                if item.id in equipped_by_type
-                else ""
-            )
-            line = f"{item.emoji} {item.display_name}: {holding.amount}{suffix}"
-            target = (
-                equipment_lines
-                if item.category.value == "equipment"
-                else consumable_lines
-            )
-            target.append(line)
-        if equipment_lines:
-            blocks.append(
-                {
-                    "type": "details",
-                    "summary": "Экипировка",
-                    "blocks": [
-                        {"type": "paragraph", "text": "\n".join(equipment_lines)}
-                    ],
-                }
-            )
-        if consumable_lines:
-            blocks.append(
-                {
-                    "type": "details",
-                    "summary": "Расходные материалы",
-                    "blocks": [
-                        {"type": "paragraph", "text": "\n".join(consumable_lines)}
-                    ],
-                }
-            )
     blocks.append(
         {
             "type": "footer",
             "text": (
                 f"Занято слотов: {len(inventory.equipped)}/{inventory.slot_count}. "
-                "Прослушка может усилить награду Recruitment."
+                + EQUIPMENT_EXCHANGE_RULE
+                + " Сначала используется уже начатый экземпляр; запасной автоматически не надевается."
             ),
         }
     )
     return blocks
+
+
+def build_inventory_text(inventory: Inventory) -> str:
+    return "\n\n".join(block["text"] for block in build_inventory_blocks(inventory))
 
 
 def _inventory_keyboard(inventory: Inventory) -> InlineKeyboardMarkup | None:

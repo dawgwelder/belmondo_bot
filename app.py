@@ -205,6 +205,15 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
         if application.job_queue is None:
             await spy_service.close()
             raise RuntimeError("Spy Game requires python-telegram-bot JobQueue")
+        from handlers.spy.chase import chase_tick
+
+        application.job_queue.run_repeating(
+            chase_tick,
+            interval=1,
+            first=1,
+            name="spy-chase-tick",
+            job_kwargs={"max_instances": 1, "coalesce": True},
+        )
         application.job_queue.run_repeating(
             spy_game_tick,
             interval=spy_settings.tick_seconds,
@@ -237,6 +246,7 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
             except Exception:
                 logger.exception("Error while stopping Spy Game Web App")
         try:
+            await application.updater.stop()
             await application.stop()
         except Exception:
             logger.exception("Error while stopping bot")

@@ -1,6 +1,7 @@
 """JSON presentation for Mini App state and HTML5 game results."""
 from __future__ import annotations
 
+from .equipment import EQUIPMENT_EXCHANGE_RULE
 from .models import DeadDropGameRun, FindMoleGameRun, InterceptGameRun
 from .service import SpyGameService
 from .settings import AGENT_TYPES, ITEM_TYPES
@@ -62,6 +63,7 @@ async def state_payload(service: SpyGameService, identity: RequestIdentity) -> d
         ],
         "inventory": {
             "slot_count": inventory.slot_count,
+            "exchange_rule": EQUIPMENT_EXCHANGE_RULE,
             "items": [
                 {
                     "id": holding.item_type,
@@ -69,6 +71,10 @@ async def state_payload(service: SpyGameService, identity: RequestIdentity) -> d
                     "emoji": ITEM_TYPES[holding.item_type].emoji,
                     "category": ITEM_TYPES[holding.item_type].category.value,
                     "amount": holding.amount,
+                    "exchangeable_amount": holding.exchangeable_amount,
+                    "uses_remaining": holding.uses_remaining,
+                    "max_uses": holding.max_uses,
+                    "effect": holding.effect,
                 }
                 for holding in inventory.items
                 if holding.item_type in ITEM_TYPES
@@ -76,6 +82,8 @@ async def state_payload(service: SpyGameService, identity: RequestIdentity) -> d
             "equipped": [
                 {
                     "slot": item.slot,
+                    "uses_remaining": item.uses_remaining,
+                    "max_uses": item.max_uses,
                     "item_type": item.item_type,
                     "name": ITEM_TYPES[item.item_type].display_name,
                     "emoji": ITEM_TYPES[item.item_type].emoji,

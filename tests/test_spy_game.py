@@ -13,7 +13,6 @@ from handlers.spy import transport as spy_transport
 from spy_game.director import DirectorDecision, RuleBasedDirector
 from spy_game.models import (
     AgencyStatus,
-    ChaseStatus,
     ClaimStatus,
     CooperativeStatus,
     DeadDropGameStatus,
@@ -72,6 +71,7 @@ def settings(
     html5_mole=False,
 ) -> SpySettings:
     return SpySettings(
+        llm_mole_enabled=False,
         mode="dev",
         enabled=True,
         database_path=tmp_path / "spy.sqlite3",
@@ -167,32 +167,64 @@ async def test_director_and_reward_resolver_keep_economy_server_side(tmp_path):
         await RuleBasedDirector(config, FixedRandom(1)).choose_event(state)
     ).event_type == "recruitment"
     assert (
-        await RuleBasedDirector(config, FixedRandom(9)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(9, 0)).choose_event(state)
     ).event_type == "dead_drop"
     assert (
-        await RuleBasedDirector(config, FixedRandom(12)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(12, 0)).choose_event(state)
     ).event_type == "intercept"
     assert (
-        await RuleBasedDirector(config, FixedRandom(15)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(15, 0)).choose_event(state)
     ).event_type == "cooperative_operation"
     assert (
-        await RuleBasedDirector(config, FixedRandom(17)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(16, 0)).choose_event(state)
     ).event_type == "chase"
     assert (
-        await RuleBasedDirector(config, FixedRandom(19)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(18, 0)).choose_event(state)
     ).event_type == "handler"
     assert (
-        await RuleBasedDirector(config, FixedRandom(21)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(20, 0)).choose_event(state)
     ).event_type == "npc"
     assert (
-        await RuleBasedDirector(config, FixedRandom(22)).choose_event(state)
+        await RuleBasedDirector(config, SequenceRandom(21, 0)).choose_event(state)
     ).event_type == "death_operation"
     rare_state = DirectorState(**{**state.__dict__, "recent_events": ("handler",)})
     assert (
-        await RuleBasedDirector(config, FixedRandom(5)).choose_event(rare_state)
+        await RuleBasedDirector(config, SequenceRandom(5, 0)).choose_event(rare_state)
     ).event_type == "recruitment"
     reward = RewardResolver(config).resolve("recruitment", reputation=2)
     assert (reward.agent_type, reward.amount) == ("informant", 3)
+
+
+@pytest.mark.asyncio
+async def test_director_history_ignores_unpublished_events_and_orders_timestamp_ties(
+    tmp_path,
+):
+    service = await initialized_service(tmp_path)
+    try:
+        for index, event_type in enumerate(("recruitment", "dead_drop", "handler")):
+            result = await spawn_event(service, event_type)
+            if index < 2:
+                await service.attach_message(result.event.event_id, 100 + index)
+            await service.database.transaction(
+                lambda c: c.execute(
+                    "UPDATE game_events SET status='expired' WHERE id=?",
+                    (result.event.event_id,),
+                ),
+                immediate=True,
+            )
+        prepared = await service.database.transaction(
+            lambda c: service.repository.scheduling.prepare_tick(
+                c,
+                {CHAT_ID: 2},
+                service.settings.allowed_chat_ids,
+                NOW + timedelta(minutes=10),
+            ),
+            immediate=True,
+        )
+        assert len(prepared.due) == 1
+        assert prepared.due[0].recent_events == ("dead_drop", "recruitment")
+    finally:
+        await service.close()
 
 
 @pytest.mark.asyncio
@@ -324,6 +356,7 @@ def test_policy_supports_inertia_and_random_channels(tmp_path):
 
 def test_activity_profiles_resolve_to_distinct_trigger_settings(tmp_path):
     config = SpySettings(
+        llm_mole_enabled=False,
         mode="dev",
         enabled=True,
         database_path=tmp_path / "profiles.sqlite3",
@@ -409,7 +442,7 @@ async def test_inertia_channel_spawns_in_short_activity_tail(tmp_path):
         peak_messages=4,
         inertia_one_in=2,
     )
-    rng = SequenceRandom(1, 1, 2, 1)
+    rng = SequenceRandom(1, 1, 2, 1, 0)
     service = SpyGameService(config, rng=rng)
     await service.initialize(now=NOW)
     await service.enable_chat(CHAT_ID, now=NOW)
@@ -1366,71 +1399,6 @@ async def test_significant_events_advance_persisted_story_arc(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_chase_rewards_starter_and_interceptor_in_two_atomic_stages(tmp_path):
-    service = await initialized_service(tmp_path)
-    try:
-        event = (await service.manual_spawn(CHAT_ID, event_type="chase", now=NOW)).event
-        started = await service.advance_chase(
-            event_id=event.event_id,
-            chat_id=CHAT_ID,
-            user_id=1,
-            username="starter_agent",
-            display_name="Starter",
-            now=NOW + timedelta(seconds=1),
-        )
-        assert started.status is ChaseStatus.STARTED
-        assert started.starter_user_id == 1
-        assert started.starter_name == "@starter_agent"
-        assert await service.get_agents(1) == ()
-
-        completed = await service.advance_chase(
-            event_id=event.event_id,
-            chat_id=CHAT_ID,
-            user_id=2,
-            username="interceptor_agent",
-            display_name="Interceptor",
-            now=NOW + timedelta(seconds=2),
-        )
-        assert completed.status is ChaseStatus.COMPLETED
-        assert (completed.starter_user_id, completed.interceptor_user_id) == (1, 2)
-        assert (completed.starter_name, completed.interceptor_name) == (
-            "@starter_agent",
-            "@interceptor_agent",
-        )
-        assert (
-            completed.starter_reward.agent_type,
-            completed.starter_reward.amount,
-        ) == (
-            "informant",
-            1,
-        )
-        assert (
-            completed.interceptor_reward.agent_type,
-            completed.interceptor_reward.amount,
-        ) == ("operative", 1)
-        assert [
-            (holding.agent_type, holding.amount)
-            for holding in await service.get_agents(1)
-        ] == [("informant", 1)]
-        assert [
-            (holding.agent_type, holding.amount)
-            for holding in await service.get_agents(2)
-        ] == [("operative", 1)]
-
-        duplicate = await service.advance_chase(
-            event_id=event.event_id,
-            chat_id=CHAT_ID,
-            user_id=3,
-            username=None,
-            display_name="Late",
-            now=NOW + timedelta(seconds=3),
-        )
-        assert duplicate.status is ChaseStatus.ALREADY_RESOLVED
-    finally:
-        await service.close()
-
-
-@pytest.mark.asyncio
 async def test_recruiter_npc_atomically_spends_cost_and_applies_agency_bonus(tmp_path):
     config = settings(tmp_path)
     base_reward = RewardResolver(config).resolve_npc(
@@ -1507,7 +1475,10 @@ async def test_all_permanent_contacts_can_also_spawn_as_bonus_npc_events(tmp_pat
             ).fetchone()[0]
         )
         assert '"config_id":"counterintelligence"' in payload
-        assert '"counter_double","counter_ghost","counter_cache"' in payload
+        assert (
+            '"counter_double","counter_ghost","counter_cache","counter_passport","counter_surveillance"'
+            in payload
+        )
         assert '"reward_multiplier":2' in payload
 
         await grant_agents(service, 1, {"operative": 1})
@@ -1912,7 +1883,7 @@ async def test_equipment_slots_and_wiretap_modify_recruitment_reward(tmp_path):
             },
         )
         consumable = await service.equip_item(
-            chat_id=CHAT_ID, user_id=1, item_type="intel_file"
+            chat_id=CHAT_ID, user_id=1, item_type="unknown_item"
         )
         passport = await service.equip_item(
             chat_id=CHAT_ID, user_id=1, item_type="fake_passport"
@@ -2099,7 +2070,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 14
+        assert migration_count == 17
     finally:
         await second.close()
 
@@ -2209,7 +2180,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -2449,7 +2420,7 @@ async def test_telegram_fallback_lists_and_executes_permanent_contact_exchange(
         )
         buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
         callback_data = [row[0]["callback_data"] for row in buttons]
-        assert len(callback_data) == 12
+        assert len(callback_data) == 14
         assert "spy:contact_handler_tier2:0" in callback_data
         assert "spy:contact_recruiter_network:0" in callback_data
         assert "spy:contact_chief_illegal:0" in callback_data
@@ -2656,6 +2627,7 @@ async def test_death_operation_publishes_opaque_all_in_action(tmp_path, monkeypa
 def test_enabled_settings_require_explicit_allowlist(tmp_path):
     with pytest.raises(ValueError, match="allowlist"):
         SpySettings(
+            llm_mole_enabled=False,
             mode="prod",
             enabled=True,
             database_path=tmp_path / "spy.sqlite3",

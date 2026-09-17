@@ -7,6 +7,7 @@ from datetime import datetime
 from ..models import AdminResult, ChatStatus, ExpiredEvent
 import logging
 from ..death_mission_repository import DeathMissionRepository
+from .chase import ChaseRepository
 from .base import RepositoryComponent, RepositoryContext, _iso, _datetime
 
 logger = logging.getLogger("Belmondo Logger")
@@ -14,10 +15,15 @@ logger = logging.getLogger("Belmondo Logger")
 
 class LifecycleRepository(RepositoryComponent):
     def __init__(
-        self, context: RepositoryContext, *, death_mission: DeathMissionRepository
+        self,
+        context: RepositoryContext,
+        *,
+        death_mission: DeathMissionRepository,
+        chase: ChaseRepository,
     ) -> None:
         super().__init__(context)
         self.death_mission = death_mission
+        self.chase = chase
 
     def reconcile(
         self, connection: sqlite3.Connection, now: datetime
@@ -379,7 +385,10 @@ class LifecycleRepository(RepositoryComponent):
         if event_type == "find_mole":
             return (
                 payload.get("action") == "accuse"
-                and self.settings.mole_case(payload.get("config_id", "")) is not None
+                and (
+                    self.settings.mole_case(payload.get("config_id", "")) is not None
+                    or str(payload.get("config_id", "")).startswith("generated_")
+                )
                 and isinstance(payload.get("manual"), bool)
             )
         if event_type == "cooperative_operation":
@@ -393,7 +402,7 @@ class LifecycleRepository(RepositoryComponent):
         if event_type == "chase":
             return (
                 payload.get("action") == "chase"
-                and payload.get("config_id") == "two_stage_v1"
+                and payload.get("config_id") in {"two_stage_v1", "chase_v2"}
                 and isinstance(payload.get("manual"), bool)
             )
         if event_type == "npc":
@@ -402,8 +411,13 @@ class LifecycleRepository(RepositoryComponent):
             return (
                 payload.get("action") == "npc_exchange"
                 and npc_id in self.settings.npc_ids
-                and payload.get("recipe_ids")
-                == [recipe.id for recipe in self.settings.npc_recipes_for(npc_id)]
+                and isinstance(payload.get("recipe_ids"), list)
+                and bool(payload["recipe_ids"])
+                and all(
+                    recipe_id
+                    in [recipe.id for recipe in self.settings.npc_recipes_for(npc_id)]
+                    for recipe_id in payload["recipe_ids"]
+                )
                 and type(reward_multiplier) is int
                 and reward_multiplier in {1, self.settings.npc_event_reward_multiplier}
                 and isinstance(payload.get("manual"), bool)
@@ -527,6 +541,10 @@ class LifecycleRepository(RepositoryComponent):
         now_value: str,
     ) -> bool:
         """Expire the event; return whether a personal mission owns its result message."""
+        if row["event_type"] == "chase" and self.chase.finish_event(
+            connection, row["id"], now_value
+        ):
+            return True
         if self.death_mission.finish_event(connection, row["id"], _datetime(now_value)):
             return True
         cursor = connection.execute(

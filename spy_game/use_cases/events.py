@@ -261,3 +261,24 @@ class EventsUseCases(UseCases):
             ),
             immediate=True,
         )
+
+    async def get_chase(self, event_id):
+        return await self.database.read(
+            lambda connection: self.repository.chase.get_result(connection, event_id)
+        )
+
+    async def settle_chases(self, *, now=None):
+        return await self.database.transaction(
+            lambda connection: self.repository.chase.settle_due(
+                connection, now or utc_now()
+            ),
+            immediate=True,
+        )
+
+    async def mark_chase_notified(self, event_id, *, now=None):
+        await self.database.transaction(
+            lambda connection: self.repository.chase.mark_notified(
+                connection, event_id, now or utc_now()
+            ),
+            immediate=True,
+        )

@@ -84,7 +84,12 @@ class RecruitmentRepository(RepositoryComponent):
         reward = self.reward_resolver.resolve(event["event_type"], reputation)
         if self.economy.item_is_equipped(connection, user_id, "wiretap"):
             roll = self.rng.randint(1, 100)
-            if roll <= self.settings.wiretap_bonus_chance_percent:
+            if (
+                roll <= self.settings.wiretap_bonus_chance_percent
+                and self.economy.equipment.consume(
+                    connection, user_id, "wiretap", f"recruitment:{event_id}", now_value
+                )
+            ):
                 reward = Reward(reward.agent_type, reward.amount + 1)
         connection.execute(
             """

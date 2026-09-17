@@ -13,6 +13,7 @@ from .menu_views import (
     build_agents_blocks,
     build_contact_blocks,
     build_inventory_blocks,
+    build_inventory_text,
     build_leaderboard_blocks,
     build_profile_blocks,
     build_status_blocks,
@@ -78,10 +79,7 @@ async def handle_menu(
         inventory = await service.get_inventory(user.id)
         blocks = build_inventory_blocks(inventory)
         reply_markup = _inventory_keyboard(inventory)
-        fallback = "Инвентарь: " + (
-            ", ".join(f"{item.item_type} ×{item.amount}" for item in inventory.items)
-            or "пока пуст"
-        )
+        fallback = build_inventory_text(inventory)
     elif value == "contacts":
         recipes = service.settings.permanent_contact_recipes
         blocks = build_contact_blocks(recipes)

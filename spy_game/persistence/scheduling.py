@@ -5,7 +5,14 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from ..models import AdminResult, DirectorState, ExpiredEvent, PreparedTick, SpawnEvent
+from ..models import (
+    AdminResult,
+    DirectorState,
+    ExpiredEvent,
+    PreparedTick,
+    SpawnEvent,
+    MoleCaseTemplate,
+)
 from ..director import DirectorDecision
 from .lifecycle import LifecycleRepository
 from .base import RepositoryComponent, RepositoryContext, _iso, _datetime
@@ -113,8 +120,8 @@ class SchedulingRepository(RepositoryComponent):
                 recent = connection.execute(
                     """
                     SELECT event_type FROM game_events
-                    WHERE chat_id = ?
-                    ORDER BY created_at DESC LIMIT 5
+                    WHERE chat_id = ? AND message_id IS NOT NULL
+                    ORDER BY created_at DESC, rowid DESC LIMIT 5
                     """,
                     (row["chat_id"],),
                 ).fetchall()
@@ -154,6 +161,7 @@ class SchedulingRepository(RepositoryComponent):
         state: DirectorState,
         now: datetime,
         decision: DirectorDecision,
+        mole_case: MoleCaseTemplate | None = None,
     ) -> SpawnEvent | None:
         if decision.event_type not in state.allowed_events:
             raise ValueError("director selected a disallowed event")
@@ -181,6 +189,7 @@ class SchedulingRepository(RepositoryComponent):
             manual=False,
             decision=decision,
             trigger_reason=state.trigger_reason,
+            mole_case=mole_case,
         )
 
     def _apply_activity(
@@ -290,6 +299,7 @@ class SchedulingRepository(RepositoryComponent):
         chat_id: int,
         now: datetime,
         event_type: str,
+        mole_case: MoleCaseTemplate | None = None,
     ) -> AdminResult:
         event = self._insert_event(
             connection,
@@ -297,6 +307,7 @@ class SchedulingRepository(RepositoryComponent):
             now,
             event_type=event_type,
             manual=True,
+            mole_case=mole_case,
         )
         if event is None:
             return AdminResult(
@@ -315,6 +326,7 @@ class SchedulingRepository(RepositoryComponent):
         manual: bool,
         decision: DirectorDecision | None = None,
         trigger_reason: str = "manual",
+        mole_case: MoleCaseTemplate | None = None,
     ) -> SpawnEvent | None:
         chat = connection.execute(
             "SELECT enabled FROM chat_state WHERE chat_id = ?",
@@ -330,7 +342,6 @@ class SchedulingRepository(RepositoryComponent):
             return None
         event_id = self.event_id_factory()
         expires_at = now + timedelta(seconds=self.settings.event_lifetime_seconds)
-        mole_case = None
         if event_type == "recruitment":
             payload_data = {
                 "action": "claim",
@@ -369,9 +380,12 @@ class SchedulingRepository(RepositoryComponent):
                 "manual": manual,
             }
         elif event_type == "find_mole":
-            mole_case = self.settings.mole_cases[
-                self.rng.randint(0, len(self.settings.mole_cases) - 1)
-            ]
+            mole_case = (
+                mole_case
+                or self.settings.mole_cases[
+                    self.rng.randint(0, len(self.settings.mole_cases) - 1)
+                ]
+            )
             expires_at = now + timedelta(seconds=self.settings.mole_game_run_seconds)
             payload_data = {
                 "action": "accuse",
@@ -390,7 +404,7 @@ class SchedulingRepository(RepositoryComponent):
         elif event_type == "chase":
             payload_data = {
                 "action": "chase",
-                "config_id": "two_stage_v1",
+                "config_id": "chase_v2",
                 "manual": manual,
             }
         elif event_type == "npc":
@@ -495,6 +509,7 @@ class SchedulingRepository(RepositoryComponent):
             event_type=event_type,
             expires_at=expires_at,
             config_id=payload_data.get("config_id"),
+            mole_case=mole_case,
             tone=payload_data["tone"],
             story_hook=payload_data["story_hook"],
             lore_context=lore_context,

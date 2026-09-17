@@ -17,12 +17,18 @@ from ..models import (
     Profile,
     Reward,
 )
+from ..equipment import EQUIPMENT_EFFECTS
+from .equipment import EquipmentRepository
 from ..settings import AGENT_TYPES, ITEM_TYPES
 
 from .base import RepositoryComponent, _iso
 
 
 class EconomyRepository(RepositoryComponent):
+    def __init__(self, context):
+        super().__init__(context)
+        self.equipment = EquipmentRepository(context)
+
     def ensure_user_and_profile(
         self,
         connection: sqlite3.Connection,
@@ -74,27 +80,42 @@ class EconomyRepository(RepositoryComponent):
     ) -> Inventory:
         item_rows = connection.execute(
             """
-            SELECT item_type, amount FROM user_items
-            WHERE user_id = ? AND amount > 0
-            ORDER BY item_type
+            SELECT i.item_type, i.amount, d.remaining, d.maximum FROM user_items i
+            LEFT JOIN item_durability d ON d.user_id=i.user_id AND d.item_type=i.item_type
+            WHERE i.user_id = ? AND i.amount > 0
+            ORDER BY i.item_type
             """,
             (user_id,),
         ).fetchall()
         equipped_rows = connection.execute(
             """
-            SELECT slot, item_type FROM equipped_items
-            WHERE user_id = ?
-            ORDER BY slot
+            SELECT e.slot, e.item_type, d.remaining, d.maximum FROM equipped_items e
+            JOIN item_durability d ON d.user_id=e.user_id AND d.item_type=e.item_type
+            WHERE e.user_id = ?
+            ORDER BY e.slot
             """,
             (user_id,),
         ).fetchall()
         items = tuple(
-            ItemHolding(row["item_type"], row["amount"])
+            ItemHolding(
+                row["item_type"],
+                row["amount"],
+                self.equipment.available(connection, user_id, row["item_type"]),
+                row["remaining"],
+                row["maximum"] or EQUIPMENT_EFFECTS[row["item_type"]].charges,
+                EQUIPMENT_EFFECTS[row["item_type"]].description.replace(
+                    "20%", f"{self.settings.wiretap_bonus_chance_percent}%"
+                )
+                if row["item_type"] == "wiretap"
+                else EQUIPMENT_EFFECTS[row["item_type"]].description,
+            )
             for row in item_rows
             if row["item_type"] in ITEM_TYPES
         )
         equipped = tuple(
-            EquippedItem(row["slot"], row["item_type"])
+            EquippedItem(
+                row["slot"], row["item_type"], row["remaining"], row["maximum"]
+            )
             for row in equipped_rows
             if row["item_type"] in ITEM_TYPES
         )
@@ -198,6 +219,7 @@ class EconomyRepository(RepositoryComponent):
         )
         if slot is None:
             return EquipmentResult(EquipmentStatus.NO_FREE_SLOT, item_type)
+        self.equipment.reserve(connection, user_id, item_type)
         connection.execute(
             """
             INSERT INTO equipped_items(user_id, slot, item_type)
@@ -321,14 +343,11 @@ class EconomyRepository(RepositoryComponent):
         user_id: int,
         costs: tuple[ItemCost, ...],
     ) -> bool:
-        holdings = {
-            row["item_type"]: row["amount"]
-            for row in connection.execute(
-                "SELECT item_type, amount FROM user_items WHERE user_id = ?",
-                (user_id,),
-            ).fetchall()
-        }
-        return all(holdings.get(cost.item_type, 0) >= cost.amount for cost in costs)
+        return all(
+            EquipmentRepository.available(connection, user_id, cost.item_type)
+            >= cost.amount
+            for cost in costs
+        )
 
     @staticmethod
     def spend_item_costs(
@@ -337,6 +356,11 @@ class EconomyRepository(RepositoryComponent):
         costs: tuple[ItemCost, ...],
     ) -> None:
         for cost in costs:
+            if (
+                EquipmentRepository.available(connection, user_id, cost.item_type)
+                < cost.amount
+            ):
+                raise RuntimeError("equipped or used items cannot be exchanged")
             cursor = connection.execute(
                 """
                 UPDATE user_items SET amount = amount - ?
