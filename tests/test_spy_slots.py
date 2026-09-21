@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
 from fractions import Fraction
@@ -10,7 +11,14 @@ import pytest_asyncio
 from aiohttp import web
 
 from spy_game.service import SpyGameService
-from spy_game.slots import SYMBOLS, multiplier, rules_payload
+from spy_game.slots import (
+    REEL,
+    RULES_VERSION,
+    SYMBOLS,
+    multiplier,
+    return_to_player,
+    rules_payload,
+)
 from spy_game.webapp import SpyWebAppServer
 from test_spy_game import (
     CHAT_ID,
@@ -52,27 +60,50 @@ async def balance(service, user_id=1):
 
 
 def test_exact_payout_distribution_and_return():
-    outcomes = [
-        multiplier(tuple(SYMBOLS[i][0] for i in indices))
-        for indices in product(range(6), repeat=3)
+    assert len(REEL) == 24
+    assert REEL[:6] == tuple(symbol[0] for symbol in SYMBOLS)
+    assert Counter(REEL) == {key: weight for key, _, _, _, weight in SYMBOLS}
+    outcomes = [multiplier(stops) for stops in product(REEL, repeat=3)]
+    total = len(outcomes)
+    assert total == 24**3
+    wins = Counter(value for value in outcomes if value > 1)
+    assert wins == {2: 12**3, 6: 5**3, 15: 3**3, 50: 2**3, 100: 1, 150: 1}
+    # Hit frequency above one in eight; fewer than a third of spins lose the stake.
+    assert Fraction(sum(wins.values()), total) == Fraction(1890, 13824)
+    assert Fraction(outcomes.count(0), total) == Fraction(4356, 13824)
+    assert Fraction(sum(outcomes), total) == return_to_player() == Fraction(12839, 13824)
+    payload = rules_payload()
+    assert payload["version"] == RULES_VERSION == "v2"
+    assert payload["rtp_percent"] == 92.87
+    assert payload["reel_stops"] == 24
+    assert [s["chance_percent"] for s in payload["symbols"]] == [
+        50.0, 20.83, 12.5, 8.33, 4.17, 4.17,
     ]
-    assert len(outcomes) == 216
-    assert outcomes.count(0) == 120
-    assert outcomes.count(1) == 90
-    assert sorted(value for value in outcomes if value > 1) == [5, 8, 12, 16, 24, 40]
-    assert Fraction(sum(outcomes), len(outcomes)) == Fraction(65, 72)
-    assert rules_payload()["rtp_percent"] == 90.28
+    assert sum(s["weight"] for s in payload["symbols"]) == 24
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "reels,factor", [((0, 1, 2), 0), ((0, 0, 2), 1), ((0, 0, 0), 5), ((5, 5, 5), 40)]
+    "reels,symbols,factor",
+    [
+        ((0, 1, 2), ["file", "key", "radio"], 0),
+        ((0, 0, 2), ["file", "file", "radio"], 1),
+        ((0, 0, 0), ["file", "file", "file"], 2),
+        # Stops 6–16 are the extra copies of the common symbol on the strip.
+        ((6, 16, 0), ["file", "file", "file"], 2),
+        ((23, 3, 23), ["case", "case", "case"], 50),
+        ((5, 5, 5), ["spy", "spy", "spy"], 150),
+    ],
 )
 @pytest.mark.parametrize("stake", [1, 3, 5])
-async def test_atomic_stake_payout_history_without_event(service, reels, factor, stake):
+async def test_atomic_stake_payout_history_without_event(
+    service, reels, symbols, factor, stake
+):
     service.repository.context.rng = SequenceRandom(*reels)
     result = await spin(service, stake=stake)
     assert result["ok"]
+    assert result["spin"]["symbols"] == symbols
+    assert result["spin"]["rules_version"] == "v2"
     assert result["spin"]["payout"] == stake * factor
     assert result["spin"]["net"] == stake * (factor - 1)
     assert (

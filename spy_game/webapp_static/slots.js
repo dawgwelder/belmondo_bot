@@ -83,7 +83,9 @@
       payouts.replaceChildren();
       slots.symbols.forEach((symbol) => {
         const row = document.createElement("li");
-        row.textContent = `${symbol.emoji.repeat(3)} · ${symbol.name} · ×${symbol.multiplier}`;
+        const chance = typeof symbol.chance_percent === "number"
+          ? ` · шанс на барабане ${symbol.chance_percent.toLocaleString("ru-RU")}%` : "";
+        row.textContent = `${symbol.emoji.repeat(3)} · ${symbol.name} · ×${symbol.multiplier}${chance}`;
         payouts.append(row);
       });
       const history = this.$("slot-history");

@@ -2,7 +2,7 @@
 import json
 import math
 
-from ..slots import COOLDOWN_SECONDS, RULES_VERSION, SYMBOLS, multiplier
+from ..slots import COOLDOWN_SECONDS, REEL, RULES_VERSION, multiplier
 from .base import RepositoryComponent, _datetime, _iso
 
 
@@ -82,9 +82,7 @@ class SlotsRepository(RepositoryComponent):
         )
         if spent.rowcount != 1:
             return {"ok": False, "status": "insufficient_agents"}
-        symbols = tuple(
-            SYMBOLS[self.rng.randint(0, len(SYMBOLS) - 1)][0] for _ in range(3)
-        )
+        symbols = tuple(REEL[self.rng.randint(0, len(REEL) - 1)] for _ in range(3))
         factor = multiplier(symbols)
         payout = stake * factor
         connection.execute(

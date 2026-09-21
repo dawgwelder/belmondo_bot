@@ -21,8 +21,8 @@ function setup({storage = new Map(), ledger = new Map(), failResponse = false, c
   let controller;
   const state = {
     context: {can_mutate: canMutate, active_event: false}, agents: [{id: "informant", amount: 10}],
-    slots: {storage_key: "spy-slots:1:-100", stakes: [1,3,5], cooldown_seconds: 2, rtp_percent: 90.28,
-      symbols: ["file", "key", "radio", "case", "diamond", "spy"].map((id, i) => ({id,emoji:String(i),name:id,multiplier:5})),
+    slots: {storage_key: "spy-slots:1:-100", stakes: [1,3,5], cooldown_seconds: 2, rtp_percent: 92.87, reel_stops: 24,
+      symbols: ["file", "key", "radio", "case", "diamond", "spy"].map((id, i) => ({id,emoji:String(i),name:id,multiplier:5,weight:1,chance_percent:i === 0 ? 50 : 4.17})),
       history: []},
   };
   const document = {
@@ -116,6 +116,15 @@ test("storage failure stops the request before any debit", async () => {
   await s.controller.spin();
   assert.equal(s.calls.length, 0);
   assert.match(s.nodes.get("slot-result").textContent, /хранилищу/);
+});
+
+test("payout table shows per-symbol reel odds and the declared return", () => {
+  const s = setup();
+  const rows = s.nodes.get("slot-payouts").children.map((row) => row.textContent);
+  assert.equal(rows.length, 6);
+  assert.match(rows[0], /×5 · шанс на барабане 50%/);
+  assert.match(rows[5], /шанс на барабане 4,17%/);
+  assert.match(s.nodes.get("slot-rtp").textContent, /92,87%/);
 });
 
 test("stake selection and visible gross/net payout agree", async () => {
