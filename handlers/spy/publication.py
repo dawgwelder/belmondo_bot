@@ -171,8 +171,9 @@ async def publish_spy_event(
                 "СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ\n\n"
                 f"🎲 All-in: мгновенный исход, шанс {death_success_percent}%, "
                 f"сеть ×{death_reward_multiplier} и Tier 3 ×1.\n\n"
-                f"🕵️ Личная миссия: сеть ×{death_reward_multiplier} и Tier 3 ×2 "
-                "или Tier 4 ×1 за полное прохождение. Есть аварийная эвакуация.\n\n"
+                f"🕵️ Личная миссия: сеть ×{death_reward_multiplier} за полное прохождение. "
+                "Доступность и размер бонуса Tier 3 / Tier 4 показаны перед подтверждением. "
+                "Есть аварийная эвакуация.\n\n"
                 "В обоих режимах на кону вся доступная сеть. Списание — после подтверждения."
             ),
             reply_markup=InlineKeyboardMarkup(

@@ -49,9 +49,7 @@ def is_navigation(code):
 
 
 def bundle_text(bundle):
-    return (
-        ", ".join(f"{a['emoji']} {a['name']} ×{a['amount']}" for a in bundle) or "нет"
-    )
+    return ", ".join(f"{a['emoji']} {a['name']} ×{a['amount']}" for a in bundle) or "нет"
 
 
 def resources(view):
@@ -89,9 +87,7 @@ def action_text(action):
         if action[key]:
             details.append(f"{glyph} {signed(action[key])}")
     if action["risk"]:
-        details.append(
-            f"⚠️ осложнение {action['risk']}%: {HP} −{action['damage']}, {ALARM} +1"
-        )
+        details.append(f"⚠️ осложнение {action['risk']}%: {HP} −{action['damage']}, {ALARM} +1")
     line = " · ".join(details) or "без изменения ресурсов"
     preview = action.get("preview")
     if preview:
@@ -109,13 +105,10 @@ def option_lines(view):
             lines.append(f"▫️ {action['label']} — " + " / ".join(action["options"]))
         elif view["phase"] == "module":
             lines.append(
-                f"▫️ {action['label']} — {action['description']}"
-                f" · финал {view['odds']}% → {action['odds']}%"
+                f"▫️ {action['label']} — {action['description']}" f" · финал {view['odds']}% → {action['odds']}%"
             )
         elif not action["enabled"]:
-            lines.append(
-                f"▪️ {action['label']} — недоступно: нужно {INTEL} {action['cost']}"
-            )
+            lines.append(f"▪️ {action['label']} — недоступно: нужно {INTEL} {action['cost']}")
         else:
             lines.append(f"▫️ {action['label']}{odds}\n   {action_text(action)}")
     return lines
@@ -142,6 +135,16 @@ def selected_tactic(payload, nav):
     return None
 
 
+def bonuses(payload):
+    return payload.get("bonuses") or [
+        dict(id=key, name=name, locked=False, description="") for key, name in BONUS_LABELS.items()
+    ]
+
+
+def bonus_name(payload):
+    return next((b["name"] for b in bonuses(payload) if b["id"] == payload["bonus"]), payload["bonus"])
+
+
 def text(payload, nav=None):
     status = payload["status"]
     if status in TERMINAL:
@@ -154,14 +157,9 @@ def text(payload, nav=None):
             ]
         mission = payload.get("mission") or {}
         if mission.get("log"):
-            lines += ["Последние решения:"] + [
-                "• " + line for line in mission["log"][-3:]
-            ]
+            lines += ["Последние решения:"] + ["• " + line for line in mission["log"][-3:]]
         if payload.get("progress"):
-            lines.append(
-                "Архив: контрольных точек — "
-                + str(payload["progress"].get("checkpoint", 0))
-            )
+            lines.append("Архив: контрольных точек — " + str(payload["progress"].get("checkpoint", 0)))
         return "\n".join(lines)
     if status not in {"preview", "armed", "in_run"}:
         return "Операция недоступна. Откройте её из сообщения бота."
@@ -176,24 +174,22 @@ def text(payload, nav=None):
                 f"🎲 All-in: мгновенный исход, успех {rules['all_in_percent']}%. "
                 f"При успехе сеть ×{rules['multiplier']} и Tier 3 ×1.\n"
                 f"🕵️ Личная миссия: 5 узлов и финальный объект. Победа: сеть "
-                f"×{rules['multiplier']} и выбранный бонус — Tier 3 ×2 или Tier 4 ×1.\n"
+                f"×{rules['multiplier']}. Доступные бонусы зависят от состава ставки и показаны перед стартом.\n"
                 "Эвакуация после узла 3 вернёт половину каждого типа (округление "
                 "вниз). При гибели ставка теряется. Закрытие окна не останавливает миссию."
             )
             tactic = selected_tactic(payload, nav)
             if tactic:
+                lines.append(f"Тактика: {tactic_line(tactic)}\nВыберите бонус за полное прохождение:")
                 lines.append(
-                    f"Тактика: {tactic_line(tactic)}\nВыберите бонус за полное прохождение:"
+                    "\n".join(f"{'🔒 ' if b['locked'] else ''}{b['name']}: {b['description']}" for b in bonuses(payload))
                 )
             elif nav == "ui_m":
                 lines.append(
-                    "Выберите стартовую тактику:\n"
-                    + "\n".join("• " + tactic_line(t) for t in payload["tactics"])
+                    "Выберите стартовую тактику:\n" + "\n".join("• " + tactic_line(t) for t in payload["tactics"])
                 )
         else:
-            mode = (
-                "Мгновенный all-in" if payload["mode"] == "all_in" else "Личная миссия"
-            )
+            mode = "Мгновенный all-in" if payload["mode"] == "all_in" else "Личная миссия"
             lines += [
                 mode,
                 "Подтверждение отправляет сеть на задание. Назад вернуть ставку нельзя.",
@@ -206,7 +202,7 @@ def text(payload, nav=None):
                 lines += [
                     ("Тактика: " + tactic_line(tactic) + "\n" if tactic else "")
                     + "Бонус финала: "
-                    + BONUS_LABELS.get(payload["bonus"], payload["bonus"]),
+                    + bonus_name(payload),
                     f"Срок: {rules['seconds'] // 60} мин. На таймауте — половина ставки, "
                     "если эвакуация открыта; иначе 0.",
                 ]
@@ -234,23 +230,40 @@ def mission_text(payload, nav=None):
     if nav == "askextract":
         lines.append(
             "Завершить миссию и вернуть указанный состав?\n"
-            "🪂 " + bundle_text(payload["extraction"])
+            "🪂 " + bundle_text(payload["extraction"]) + " (гарантированно).\n" + continuation_text(payload)
         )
         return "\n\n".join(lines)
     if nav == "askabandon":
         lines.append("Сдаться и потерять всю ставку?")
         return "\n\n".join(lines)
     lines.append("Варианты:\n" + "\n".join(option_lines(view)))
+    if view["phase"] == "module":
+        lines.append(
+            "Проценты оценивают только финал сейчас. Польза модуля на оставшихся узлах и ранняя эвакуация в них не учтены."
+        )
     if view["checkpoint"]:
         lines.append(
             "🪂 Эвакуация вернёт: "
             + bundle_text(payload["extraction"])
-            + f" (гарантированно). Продолжение: ~{view['odds']}% на ×"
-            f"{payload['rules']['multiplier']} и бонус."
+            + " (гарантированно).\n"
+            + continuation_text(payload)
         )
     else:
         lines.append(f"Эвакуация откроется после узла {view['checkpoint_node']}.")
     return "\n\n".join(lines)
+
+
+def continuation_text(payload):
+    view = payload["mission"]
+    reward = f"При победе: сеть ×{payload['rules']['multiplier']}"
+    reward += ". " if payload["bonus"] == "none" else " и выбранный бонус. "
+    if view["phase"] == "boss":
+        return reward + f"Шанс пройти оставшиеся фазы финала при лучших решениях: {view['odds']}%."
+    return reward + (
+        "Шанс всего оставшегося маршрута не рассчитан. "
+        f"Оценка {view['odds']}% относится только к финалу с текущими ресурсами; "
+        "комнаты впереди изменят их."
+    )
 
 
 def keyboard(payload, run_id, event_id=None, nav=None):
@@ -268,11 +281,11 @@ def keyboard(payload, run_id, event_id=None, nav=None):
         tactic = selected_tactic(payload, nav)
         if tactic:
             code = TACTIC_CODES[tactic["id"]]
-            rows += [
-                button(f"Бонус: {BONUS_LABELS['tier3']}", f"m3{code}"),
-                button(f"Бонус: {BONUS_LABELS['tier4']}", f"m4{code}"),
-                button("← К тактикам", "ui_m"),
-            ]
+            for bonus in bonuses(payload):
+                if not bonus["locked"]:
+                    bonus_code = {"tier3": "3", "tier4": "4", "none": "n"}[bonus["id"]]
+                    rows += [button(f"Бонус: {bonus['name']}", f"m{bonus_code}{code}")]
+            rows += [button("← К тактикам", "ui_m")]
         elif nav == "ui_m":
             for t in payload["tactics"]:
                 if not t.get("locked"):
@@ -318,24 +331,18 @@ def keyboard(payload, run_id, event_id=None, nav=None):
             else:
                 rows += [button("Сдаться", "askabandon")]
     if event_id and status in {"preview", "armed"}:
-        rows += [
-            [
-                InlineKeyboardButton(
-                    "Открыть выбор для себя", callback_data=f"spy:deathmenu:{event_id}"
-                )
-            ]
-        ]
+        rows += [[InlineKeyboardButton("Открыть выбор для себя", callback_data=f"spy:deathmenu:{event_id}")]]
     return InlineKeyboardMarkup(rows) if rows else None
 
 
 def decode(code):
     if code == "a":
         return "arm", dict(mode="all_in", tactic="balanced", bonus="tier3")
-    if len(code) == 3 and code[0] == "m" and code[1] in "34" and code[2] in "bsa":
+    if len(code) == 3 and code[0] == "m" and code[1] in "34n" and code[2] in "bsa":
         return "arm", dict(
             mode="mission",
             tactic={"b": "balanced", "s": "stealth", "a": "assault"}[code[2]],
-            bonus="tier" + code[1],
+            bonus="none" if code[1] == "n" else "tier" + code[1],
         )
     if code.startswith("do_"):
         return "action", dict(id=code[3:])
@@ -351,9 +358,7 @@ def delivery_lock(service):
 async def publish_pending(service, bot):
     # The latest view and Telegram edits are serialized with callback rendering.
     async with delivery_lock(service):
-        rows = await service.database.read(
-            service.repository.death_mission.pending_results
-        )
+        rows = await service.database.read(service.repository.death_mission.pending_results)
         for row in rows:
             if row["message_id"] is None:
                 continue
@@ -367,11 +372,7 @@ async def publish_pending(service, bot):
                 ),
                 immediate=True,
             )
-            label = (
-                "@" + row["username"].lstrip("@")
-                if row["username"]
-                else "Скрытый агент"
-            )
+            label = "@" + row["username"].lstrip("@") if row["username"] else "Скрытый агент"
             try:
                 # Idempotent edit survives a crash after Telegram accepted the request.
                 await bot.edit_message_text(

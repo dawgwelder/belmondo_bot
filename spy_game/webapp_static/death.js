@@ -29,6 +29,9 @@ window.startDeathMission = (initial, api) => {
     lost_race: ["◆", "Операцию занял другой агент", "Ваша сеть осталась дома."],
   };
   const BONUSES = [["tier3", "Два агента Tier 3", "Один случайный тип, ×2"], ["tier4", "Один агент Tier 4", "Самый редкий класс, ×1"]];
+  const bonusChoices = (state) => state.bonuses || BONUSES.map(([id, name, description]) => ({ id, name, description, locked: false }));
+  const bonusName = (state) => bonusChoices(state).find((b) => b.id === state.bonus)?.name || state.bonus;
+  const victoryCopy = (state) => `сеть ×${state.rules.multiplier}${state.bonus === "none" ? "" : " и выбранный бонус"}`;
   const GLYPH = { hp: "❤️", intel: "🧠", alarm: "🚨" };
   const NAMES = { hp: "Состояние", intel: "Разведданные", alarm: "Тревога" };
   const HOLD_MS = 3000;
@@ -266,6 +269,8 @@ window.startDeathMission = (initial, api) => {
   function updatePreview() {
     const state = model.state;
     const rules = state.rules || {};
+    const bonuses = bonusChoices(state);
+    if (!bonuses.some((b) => b.id === model.bonus && !b.locked)) model.bonus = bonuses.find((b) => !b.locked)?.id;
     const key = `${state.revision}:${model.tactic}:${model.bonus}`;
     if (panelKey === key) return;
     panelKey = key;
@@ -278,7 +283,7 @@ window.startDeathMission = (initial, api) => {
     const allIn = el("div", "mode-card");
     allIn.append(el("strong", null, "🎲 All-in"), el("span", null, `Мгновенный исход, успех ${rules.all_in_percent}%. Успех: сеть ×${rules.multiplier} и Tier 3 ×1.`));
     const mission = el("div", "mode-card");
-    mission.append(el("strong", null, "🕵️ Личная миссия"), el("span", null, `5 узлов и финальный объект. Победа: сеть ×${rules.multiplier} и выбранный бонус. Гибель — ставка потеряна.`));
+    mission.append(el("strong", null, "🕵️ Личная миссия"), el("span", null, `5 узлов и финальный объект. Победа: сеть ×${rules.multiplier}. Доступные бонусы указаны ниже. Гибель — ставка потеряна.`));
     ui.modeCopy.append(allIn, mission);
 
     ui.tacticRow.replaceChildren();
@@ -299,11 +304,12 @@ window.startDeathMission = (initial, api) => {
     ui.tacticHint.textContent = [notes.length ? `${selected.name}: ${notes.join(", ")}.` : "", ...lockedHints].filter(Boolean).join("\n");
 
     ui.bonusRow.replaceChildren();
-    BONUSES.forEach(([id, title, note]) => {
+    bonuses.forEach(({ id, name: title, description: note, locked: bonusLocked }) => {
       const node = button("", "choice-card", () => { model.bonus = id; render(); });
       node.append(el("strong", null, title), el("span", "muted small", note));
       if (id === model.bonus) node.classList.add("selected");
-      ui.bonusRow.append(track(node));
+      if (bonusLocked) node.classList.add("locked");
+      ui.bonusRow.append(track(node, bonusLocked));
     });
 
     ui.actions.replaceChildren(
@@ -323,9 +329,8 @@ window.startDeathMission = (initial, api) => {
     ui.summaryBody.append(el("h2", "room-title", mode));
     if (state.mode === "mission") {
       const tactic = (state.tactics || []).find((t) => t.id === state.tactic);
-      const bonus = BONUSES.find(([id]) => id === state.bonus);
       ui.summaryBody.append(el("p", null, `Тактика: ${tactic ? `${tactic.name} · ${GLYPH.hp}${tactic.hp} ${GLYPH.intel}${tactic.intel}` : state.tactic}`));
-      ui.summaryBody.append(el("p", null, `Бонус финала: ${bonus ? bonus[1] : state.bonus}`));
+      ui.summaryBody.append(el("p", null, `Бонус финала: ${bonusName(state)}`));
       ui.summaryBody.append(el("p", "muted small", `Срок: ${Math.round((state.rules.seconds || 900) / 60)} мин. На таймауте — половина ставки, если эвакуация открыта; иначе 0.`));
     } else {
       ui.summaryBody.append(el("p", null, `Успех ${state.rules.all_in_percent}%: сеть ×${state.rules.multiplier} и один Tier 3. Провал: ставка потеряна.`));
@@ -561,6 +566,7 @@ window.startDeathMission = (initial, api) => {
       ui.subtitle.textContent = nextSlot
         ? `Действует до конца забега. Следующий слот — перед узлом ${nextSlot + 1}.`
         : "Действует до конца забега. Это последний слот.";
+      ui.subtitle.textContent += " Проценты оценивают только финал с текущими ресурсами. Польза на оставшихся узлах и ранняя эвакуация в них не учтены.";
       mission.actions.forEach((module) => {
         const card = el("article", "action-card module-card");
         const head = el("div", "card-head");
@@ -607,7 +613,11 @@ window.startDeathMission = (initial, api) => {
       const now = el("div", "compare-col");
       now.append(el("p", "eyebrow", "ЭВАКУАЦИЯ СЕЙЧАС"), el("strong", null, "Гарантированно"), bundleList(state.extraction));
       const later = el("div", "compare-col");
-      later.append(el("p", "eyebrow", "ПРОДОЛЖИТЬ"), el("strong", null, `~${mission.odds}% на ×${state.rules.multiplier} и бонус`), el("p", "muted small", `Иначе ставка потеряна. Таймаут вернёт половину, пока эвакуация открыта.`));
+      later.append(el("p", "eyebrow", "ПРОДОЛЖИТЬ"), el("strong", null, `Победа: ${victoryCopy(state)}`));
+      later.append(el("p", "muted small", mission.phase === "boss"
+        ? `Шанс пройти оставшиеся фазы финала при лучших решениях: ${mission.odds}%.`
+        : `Шанс всего оставшегося маршрута не рассчитан. Оценка ${mission.odds}% относится только к финалу, если войти в него сейчас; комнаты впереди изменят ресурсы.`));
+      later.append(el("p", "muted small", "При гибели ставка потеряна. Таймаут вернёт половину, пока эвакуация открыта."));
       compare.append(now, later);
       box.append(compare);
       box.append(track(button("Подтвердить эвакуацию", "action-button", () => send("extract"))));
@@ -653,8 +663,13 @@ window.startDeathMission = (initial, api) => {
     document.getElementById("reward").textContent = "";
     const death = document.getElementById("death-mission");
     const resultScreen = document.getElementById("result");
+    if (model.holding) window.clearTimeout(model.holding);
+    model.holding = null;
+    model.confirmation = null;
+    death.replaceChildren();
     death.classList.add("hidden"); death.classList.remove("active");
     resultScreen.classList.remove("hidden"); resultScreen.classList.add("active");
+    if (screen !== "terminal") window.scrollTo?.({ top: 0 });
     screen = "terminal";
   }
 
@@ -673,9 +688,14 @@ window.startDeathMission = (initial, api) => {
       const latest = await api("state");
       // A slow poll must not overwrite a mutation that started meanwhile.
       if (locked() || model.holding) return;
-      if (latest.revision >= state.revision) {
-        const changed = latest.revision !== state.revision || latest.status !== state.status;
-        if (changed) { model.previous = model.state; model.state = latest; render(); }
+      if (latest.revision >= model.state.revision) {
+        const changed = latest.revision !== model.state.revision || latest.status !== model.state.status;
+        if (changed) {
+          model.previous = model.state;
+          model.state = latest;
+          model.confirmation = null;
+          render();
+        }
       }
     } catch (_) { /* Retry on the next tick; never settle in the browser. */ }
   }, 2000);

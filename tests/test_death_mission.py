@@ -26,9 +26,7 @@ CHAT = -100123
 
 
 async def grant(service, user=1, holdings=None):
-    await service.get_profile(
-        user_id=user, username=f"agent{user}", display_name="PRIVATE NAME", now=NOW
-    )
+    await service.get_profile(user_id=user, username=f"agent{user}", display_name="PRIVATE NAME", now=NOW)
 
     def operation(connection):
         for agent, amount in (holdings or {"informant": 5, "analyst": 1}).items():
@@ -74,22 +72,32 @@ async def begin(
     monkeypatch,
     *,
     mode="mission",
-    bonus="tier3",
+    bonus=None,
     seed="win",
     user=1,
     chat=CHAT,
     message=100,
+    version=None,
 ):
     preview = await launch(service, user=user, chat=chat, message=message)
     token = preview.launch_token
-    armed = await mutate(
-        service, token, preview, "arm", dict(mode=mode, tactic="balanced", bonus=bonus)
-    )
+    if version:
+
+        def pin_rules(connection):
+            rules = dict(preview.payload["rules"], version=version)
+            connection.execute("UPDATE death_mission_runs SET rules_json=?", (json.dumps(rules),))
+
+        await service.database.transaction(pin_rules, immediate=True)
+    if bonus is None:
+        bonus = (
+            "none"
+            if mode == "mission" and engine.rules(version or engine.DEFAULT_VERSION).bonus_min_agents
+            else "tier3"
+        )
+    armed = await mutate(service, token, preview, "arm", dict(mode=mode, tactic="balanced", bonus=bonus))
     assert armed.status == "armed", armed.payload
     with monkeypatch.context() as patch:
-        patch.setattr(
-            "spy_game.death_mission_repository.secrets.token_hex", lambda size: seed
-        )
+        patch.setattr("spy_game.death_mission_repository.secrets.token_hex", lambda size: seed)
         started = await mutate(service, token, armed, "commit")
     return token, started
 
@@ -105,11 +113,7 @@ async def play(service, token, state, *, stop_at_checkpoint=False):
 
 async def counts(service):
     return await service.database.read(
-        lambda c: dict(
-            c.execute(
-                "SELECT action,COUNT(*) FROM death_mission_ledger GROUP BY action"
-            ).fetchall()
-        )
+        lambda c: dict(c.execute("SELECT action,COUNT(*) FROM death_mission_ledger GROUP BY action").fetchall())
     )
 
 
@@ -140,19 +144,15 @@ async def test_entry_preview_and_arm_never_spend_and_mode_can_change(service):
     assert state.status == "preview"
     before = await service.get_agents(1)
     armed = await mutate(service, state.launch_token, state, "arm", {"mode": "all_in"})
-    changed = await mutate(
-        service, state.launch_token, armed, "arm", {"mode": "mission", "bonus": "tier4"}
-    )
+    changed = await mutate(service, state.launch_token, armed, "arm", {"mode": "mission", "bonus": "none"})
     assert changed.payload["mode"] == "mission"
-    assert changed.payload["bonus"] == "tier4"
+    assert changed.payload["bonus"] == "none"
     assert before == await service.get_agents(1)
     assert await counts(service) == {}
 
 
 @pytest.mark.asyncio
-async def test_all_in_settles_immediately_and_replay_cannot_double_reward(
-    service, monkeypatch
-):
+async def test_all_in_settles_immediately_and_replay_cannot_double_reward(service, monkeypatch):
     token, state = await begin(service, monkeypatch, mode="all_in")
     assert state.status == "won"
     assert state.payload["mission"] == {}
@@ -178,7 +178,7 @@ async def test_all_in_settles_immediately_and_replay_cannot_double_reward(
 async def test_full_mission_pays_selected_higher_bonus_and_keeps_later_income(
     service, monkeypatch, bonus, tier, amount
 ):
-    token, state = await begin(service, monkeypatch, bonus=bonus, seed="0")
+    token, state = await begin(service, monkeypatch, bonus=bonus, seed="0", version="roguelite_v2")
     assert state.status == "in_run"
     assert await service.get_agents(1) == ()
     assert sum(a["amount"] for a in await service.reserved_mission_agents(1)) == 6
@@ -198,6 +198,40 @@ async def test_full_mission_pays_selected_higher_bonus_and_keeps_later_income(
     assert medals["personal10"]["progress"] == 1
     assert await service.reserved_mission_agents(1) == []
     assert await counts(service) == {"reserve": 1, "settle": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bonus", ["none", "tier3", "tier4"])
+async def test_v3_pays_visible_eligible_bonus_once_from_the_reserved_stake(service, monkeypatch, bonus):
+    await grant(service, holdings={"resident": 5})
+    token, state = await begin(service, monkeypatch, bonus=bonus, seed="0")
+    assert state.payload["rules"]["version"] == "roguelite_v3"
+    assert not next(b for b in state.payload["bonuses"] if b["id"] == bonus)["locked"]
+    state = await play(service, token, state)
+    assert state.status == "won"
+    result = state.payload["result"]
+    assert {a["id"]: a["amount"] for a in result["returned"]} == {"informant": 10, "analyst": 2, "resident": 10}
+    assert sum(a["amount"] for a in result["bonus"]) == (0 if bonus == "none" else 1)
+    if bonus != "none":
+        assert all(service.settings.agent_tier(a["id"]) == int(bonus[-1]) for a in result["bonus"])
+    again = await mutate(service, token, state, "action", {"id": "plan"})
+    assert again.payload["result"] == result
+    assert await counts(service) == {"reserve": 1, "settle": 1}
+
+
+@pytest.mark.asyncio
+async def test_v3_rejects_locked_bonus_and_rechecks_after_stake_change(service):
+    state = await launch(service)
+    token = state.launch_token
+    rejected = await mutate(service, token, state, "arm", {"mode": "mission", "bonus": "tier4"}, key="locked-bonus")
+    assert rejected.payload["error"] == "INVALID_ACTION"
+    assert await counts(service) == {}
+    armed = await mutate(service, token, state, "arm", {"mode": "mission", "bonus": "none"})
+    await grant(service, holdings={"resident": 5})
+    stale = await mutate(service, token, armed, "commit")
+    assert stale.payload["error"] == "STALE_STAKE"
+    assert not next(b for b in stale.payload["bonuses"] if b["id"] == "tier4")["locked"]
+    assert await counts(service) == {}
 
 
 @pytest.mark.asyncio
@@ -228,9 +262,7 @@ async def test_two_modes_compete_for_one_event(service, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_global_run_blocks_new_all_in_in_other_chat_even_with_new_agents(
-    service, monkeypatch
-):
+async def test_global_run_blocks_new_all_in_in_other_chat_even_with_new_agents(service, monkeypatch):
     await begin(service, monkeypatch)
     await grant(service, holdings={"informant": 2})
     await event(service, chat=CHAT - 1, message=200)
@@ -256,9 +288,7 @@ async def test_two_tabs_one_revision_and_conflicting_key(service, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reopen_and_restart_preserve_run_and_revoke_old_token(
-    service, monkeypatch
-):
+async def test_reopen_and_restart_preserve_run_and_revoke_old_token(service, monkeypatch):
     token, state = await begin(service, monkeypatch)
     reopened = await launch(service, now=NOW + timedelta(seconds=2))
     assert reopened.payload == state.payload
@@ -266,9 +296,7 @@ async def test_reopen_and_restart_preserve_run_and_revoke_old_token(
     other = SpyGameService(service.settings)
     await other.initialize(now=NOW + timedelta(seconds=3))
     try:
-        assert (
-            await other.get_death_mission(reopened.launch_token, now=NOW)
-        ).payload == state.payload
+        assert (await other.get_death_mission(reopened.launch_token, now=NOW)).payload == state.payload
     finally:
         await other.close()
 
@@ -282,31 +310,23 @@ async def test_extraction_and_timeout_return_same_rounded_stake(service, monkeyp
     timeout = await service.get_death_mission(token, now=NOW + timedelta(minutes=16))
     assert timeout.status == "timed_out"
     assert timeout.payload["result"]["returned"] == state.payload["extraction"]
-    assert {a.agent_type: a.amount for a in await service.get_agents(1)} == {
-        "informant": 2
-    }
+    assert {a.agent_type: a.amount for a in await service.get_agents(1)} == {"informant": 2}
     assert await counts(service) == {"reserve": 1, "settle": 1}
 
 
 @pytest.mark.asyncio
-async def test_timeout_before_checkpoint_and_repeated_generic_expiry(
-    service, monkeypatch
-):
+async def test_timeout_before_checkpoint_and_repeated_generic_expiry(service, monkeypatch):
     token, _ = await begin(service, monkeypatch)
     await service.tick(now=NOW + timedelta(minutes=16))
     await service.tick(now=NOW + timedelta(minutes=17))
     assert (await service.get_death_mission(token, now=NOW)).status == "timed_out"
     assert await service.get_agents(1) == ()
-    history = await service.database.read(
-        lambda c: c.execute("SELECT COUNT(*) FROM event_history").fetchone()[0]
-    )
+    history = await service.database.read(lambda c: c.execute("SELECT COUNT(*) FROM event_history").fetchone()[0])
     assert history == 1
 
 
 @pytest.mark.asyncio
-async def test_disable_chat_refunds_stake_and_does_not_award_progress(
-    service, monkeypatch
-):
+async def test_disable_chat_refunds_stake_and_does_not_award_progress(service, monkeypatch):
     token, _ = await begin(service, monkeypatch)
     await service.disable_chat(CHAT, now=NOW)
     state = await service.get_death_mission(token, now=NOW)
@@ -334,9 +354,7 @@ async def test_sql_failure_rolls_back_whole_settlement(service, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_legacy_callback_cannot_resolve_choice_event(service):
-    event_id = await service.database.read(
-        lambda c: c.execute("SELECT id FROM game_events").fetchone()[0]
-    )
+    event_id = await service.database.read(lambda c: c.execute("SELECT id FROM game_events").fetchone()[0])
     result = await service.run_death_operation(
         event_id=event_id,
         action="death",
@@ -351,9 +369,7 @@ async def test_legacy_callback_cannot_resolve_choice_event(service):
 
 
 @pytest.mark.asyncio
-async def test_telegram_and_html5_share_revision_and_owner_authorization(
-    service, monkeypatch
-):
+async def test_telegram_and_html5_share_revision_and_owner_authorization(service, monkeypatch):
     token, state = await begin(service, monkeypatch)
     run_id = await service.death_mission_run_id(token)
     choice = {"id": state.payload["mission"]["actions"][0]["id"]}
@@ -372,28 +388,18 @@ async def test_telegram_and_html5_share_revision_and_owner_authorization(
     applied = await service.mission_callback(user_id=1, **arguments)
     assert applied.payload == (await service.get_death_mission(token, now=NOW)).payload
     markup = keyboard(applied.payload, run_id)
-    assert all(
-        len(button.callback_data.encode()) <= 64
-        for row in markup.inline_keyboard
-        for button in row
-    )
+    assert all(len(button.callback_data.encode()) <= 64 for row in markup.inline_keyboard for button in row)
 
 
 @pytest.mark.asyncio
-async def test_outbox_retries_failed_delivery_without_repeating_economy(
-    service, monkeypatch
-):
+async def test_outbox_retries_failed_delivery_without_repeating_economy(service, monkeypatch):
     await begin(service, monkeypatch, mode="all_in")
-    bot = SimpleNamespace(
-        edit_message_text=AsyncMock(side_effect=[RuntimeError("offline"), None])
-    )
+    bot = SimpleNamespace(edit_message_text=AsyncMock(side_effect=[RuntimeError("offline"), None]))
     await publish_pending(service, bot)
     await publish_pending(service, bot)
     assert bot.edit_message_text.await_count == 1
     await service.database.transaction(
-        lambda connection: connection.execute(
-            "UPDATE death_mission_outbox SET next_attempt_at=NULL"
-        ),
+        lambda connection: connection.execute("UPDATE death_mission_outbox SET next_attempt_at=NULL"),
         immediate=True,
     )
     await publish_pending(service, bot)
@@ -419,7 +425,7 @@ async def test_http_modes_validation_secret_filter_and_wrong_game(service):
             return_value={
                 "revision": 0,
                 "operation_id": "http1",
-                "choice": {"mode": "mission", "bonus": "tier4"},
+                "choice": {"mode": "mission", "bonus": "none"},
             }
         ),
     )
@@ -427,13 +433,11 @@ async def test_http_modes_validation_secret_filter_and_wrong_game(service):
     assert response.status == 200
     payload = json.loads(response.text)
     assert payload["status"] == "armed"
-    assert payload["bonus"] == "tier4"
+    assert payload["bonus"] == "none"
     assert "text" not in payload
     assert all(key not in payload for key in ("seed", "user_id", "token_hash", "route"))
     assert "PRIVATE NAME" not in response.text
-    request.json = AsyncMock(
-        return_value={"revision": True, "operation_id": "bad", "choice": {}}
-    )
+    request.json = AsyncMock(return_value={"revision": True, "operation_id": "bad", "choice": {}})
     with pytest.raises(web.HTTPBadRequest):
         await server.game_death_action(request)
     request.headers = {"X-Spy-Game-Token": "invalid"}
@@ -540,7 +544,7 @@ def test_events_record_deltas_and_legacy_string_log_still_renders():
 
 def test_v2_route_pressure_and_distinct_finale_phases():
     state = engine.initial("v2", "balanced", "roguelite_v2")
-    assert state["version"] == engine.DEFAULT_VERSION == "roguelite_v2"
+    assert state["version"] == "roguelite_v2"
     # Deeper nodes only offer rooms that cost something; shelter is fixed at node 2.
     assert state["route"][1][0] == "shelter"
     for layer in state["route"][3:]:
@@ -548,9 +552,7 @@ def test_v2_route_pressure_and_distinct_finale_phases():
     # Paying with intel is one point dearer at nodes 4-5 and rolls get riskier.
     early = dict(state, phase="action", room="patrol", node=2, intel=3)
     late = dict(state, phase="action", room="patrol", node=4, intel=3)
-    early_by, late_by = (
-        {a["id"]: a for a in engine.actions(s)} for s in (early, late)
-    )
+    early_by, late_by = ({a["id"]: a for a in engine.actions(s)} for s in (early, late))
     assert (early_by["bypass"]["cost"], late_by["bypass"]["cost"]) == (1, 2)
     assert late_by["rush"]["risk"] == early_by["rush"]["risk"] + 10
     assert late_by["rush"]["damage"] == 3
@@ -604,17 +606,16 @@ def test_v2_modules_and_tactics_have_measurable_value():
 
 
 @pytest.mark.asyncio
-async def test_open_v1_run_keeps_v1_rules_after_restart(service, monkeypatch):
-    token, started = await begin(service, monkeypatch, seed="legacy")
-    legacy = engine.initial("legacy", "balanced", "roguelite_v1")
+@pytest.mark.parametrize("version", ["roguelite_v1", "roguelite_v2"])
+async def test_open_legacy_run_keeps_rules_after_restart(service, monkeypatch, version):
+    token, started = await begin(service, monkeypatch, seed="legacy", version=version)
+    legacy = engine.initial("legacy", "balanced", version)
     legacy.update(phase="boss", node=5, checkpoint=True)
 
     def pin_v1(connection):
-        row = connection.execute(
-            "SELECT rules_json FROM death_mission_runs"
-        ).fetchone()
+        row = connection.execute("SELECT rules_json FROM death_mission_runs").fetchone()
         rules = json.loads(row[0])
-        rules["version"] = "roguelite_v1"
+        rules["version"] = version
         connection.execute(
             "UPDATE death_mission_runs SET state_json=?, rules_json=?",
             (json.dumps(legacy), json.dumps(rules)),
@@ -627,10 +628,12 @@ async def test_open_v1_run_keeps_v1_rules_after_restart(service, monkeypatch):
         state = await restarted.get_death_mission(token, now=NOW)
         assert state.status == "in_run"
         mission = state.payload["mission"]
-        assert mission["version"] == "roguelite_v1"
-        assert [a["id"] for a in mission["actions"]] == ["plan", "force"]
+        assert mission["version"] == version
+        assert [a["id"] for a in mission["actions"]] == (
+            ["plan", "force"] if version == "roguelite_v1" else ["plan", "force", "recon"]
+        )
         moved = await mutate(restarted, token, state, "action", {"id": "plan"})
-        assert moved.payload["mission"]["version"] == "roguelite_v1"
+        assert moved.payload["mission"]["version"] == version
     finally:
         await restarted.close()
 
@@ -665,9 +668,7 @@ async def test_confirmation_expires_and_locked_tactic_is_not_accepted(service):
     )
     assert invalid.payload["error"] == "INVALID_ACTION"
     armed = await mutate(service, token, preview, "arm", {"mode": "mission"})
-    expired = await mutate(
-        service, token, armed, "commit", now=NOW + timedelta(seconds=60)
-    )
+    expired = await mutate(service, token, armed, "commit", now=NOW + timedelta(seconds=60))
     assert expired.payload["error"] == "CONFIRMATION_EXPIRED"
     assert await counts(service) == {}
 
@@ -707,9 +708,7 @@ async def test_flag_off_preserves_existing_event_and_run_rules(service, monkeypa
         assert reopened.payload["rules"]["multiplier"] == 2
         abandoned = await mutate(disabled, reopened.launch_token, reopened, "abandon")
         assert abandoned.status == "lost"
-        created = await disabled.manual_spawn(
-            CHAT, event_type="death_operation", now=NOW
-        )
+        created = await disabled.manual_spawn(CHAT, event_type="death_operation", now=NOW)
         assert created.event.config_id == "all_in_v1"
     finally:
         await disabled.close()
@@ -726,16 +725,12 @@ async def test_three_completed_checkpoints_unlock_tactic_once(service, monkeypat
         assert result.status == "won"
         again = await service.get_death_mission(token, now=NOW)
         assert again.payload["progress"]["checkpoint"] == index + 1
-    assert "stealth" in [
-        t["id"] for t in result.payload["tactics"] if not t["locked"]
-    ]
+    assert "stealth" in [t["id"] for t in result.payload["tactics"] if not t["locked"]]
 
 
 @pytest.mark.asyncio
 async def test_all_in_failure_loses_only_stake(service, monkeypatch):
-    service.repository.settings = replace(
-        service.settings, death_operation_success_percent=0
-    )
+    service.repository.settings = replace(service.settings, death_operation_success_percent=0)
     _, result = await begin(service, monkeypatch, mode="all_in")
     assert result.status == "lost"
     assert result.payload["result"]["bonus"] == []
@@ -745,9 +740,7 @@ async def test_all_in_failure_loses_only_stake(service, monkeypatch):
 @pytest.mark.asyncio
 async def test_start_rollback_does_not_reserve_event_or_agents(service):
     preview = await launch(service)
-    armed = await mutate(
-        service, preview.launch_token, preview, "arm", {"mode": "mission"}
-    )
+    armed = await mutate(service, preview.launch_token, preview, "arm", {"mode": "mission"})
     await service.database.transaction(
         lambda c: c.execute(
             "CREATE TRIGGER reject_reserve BEFORE INSERT ON death_mission_ledger BEGIN SELECT RAISE(ABORT, 'no'); END;"
@@ -756,18 +749,14 @@ async def test_start_rollback_does_not_reserve_event_or_agents(service):
     )
     with pytest.raises(sqlite3.IntegrityError):
         await mutate(service, preview.launch_token, armed, "commit")
-    assert (
-        await service.get_death_mission(preview.launch_token, now=NOW)
-    ).status == "armed"
+    assert (await service.get_death_mission(preview.launch_token, now=NOW)).status == "armed"
     assert await counts(service) == {}
     assert sum(a.amount for a in await service.get_agents(1)) == 6
 
 
 @pytest.mark.asyncio
 async def test_send_game_failure_publishes_same_two_mode_fallback(service):
-    created = (
-        await service.manual_spawn(CHAT - 1, event_type="death_operation", now=NOW)
-    ).event
+    created = (await service.manual_spawn(CHAT - 1, event_type="death_operation", now=NOW)).event
     bot = SimpleNamespace(
         send_game=AsyncMock(side_effect=RuntimeError("offline")),
         send_message=AsyncMock(return_value=SimpleNamespace(message_id=200)),
@@ -776,26 +765,21 @@ async def test_send_game_failure_publishes_same_two_mode_fallback(service):
         bot=bot,
         bot_data={
             "spy_game": service,
-            "spy_webapp": SimpleNamespace(
-                game_enabled=True, settings=SimpleNamespace(game_short_name="spies")
-            ),
+            "spy_webapp": SimpleNamespace(game_enabled=True, settings=SimpleNamespace(game_short_name="spies")),
         },
     )
     assert await spy_handlers.publish_spy_event(context, created) == 200
     assert "All-in" in bot.send_message.call_args.kwargs["text"]
     assert "Tier 4" in bot.send_message.call_args.kwargs["text"]
+    assert "Tier 3 ×2" not in bot.send_message.call_args.kwargs["text"]
+    assert "показаны перед подтверждением" in bot.send_message.call_args.kwargs["text"]
     markup = bot.send_message.call_args.kwargs["reply_markup"]
-    assert (
-        markup.inline_keyboard[0][0].callback_data
-        == f"spy:deathmenu:{created.event_id}"
-    )
+    assert markup.inline_keyboard[0][0].callback_data == f"spy:deathmenu:{created.event_id}"
 
 
 @pytest.mark.asyncio
 async def test_telegram_entry_confirmation_and_all_in_result(service):
-    event_id = await service.database.read(
-        lambda c: c.execute("SELECT id FROM game_events").fetchone()[0]
-    )
+    event_id = await service.database.read(lambda c: c.execute("SELECT id FROM game_events").fetchone()[0])
     query = SimpleNamespace(
         data=f"spy:deathmenu:{event_id}",
         id="open",
@@ -805,9 +789,7 @@ async def test_telegram_entry_confirmation_and_all_in_result(service):
     )
     update = SimpleNamespace(
         callback_query=query,
-        effective_user=SimpleNamespace(
-            id=1, username="agent1", full_name="PRIVATE NAME"
-        ),
+        effective_user=SimpleNamespace(id=1, username="agent1", full_name="PRIVATE NAME"),
         effective_chat=SimpleNamespace(id=CHAT),
     )
     bot = SimpleNamespace(edit_message_text=AsyncMock())
@@ -825,9 +807,7 @@ async def test_telegram_entry_confirmation_and_all_in_result(service):
 
 @pytest.mark.asyncio
 async def test_telegram_two_step_mission_entry_and_decision_copy(service, monkeypatch):
-    event_id = await service.database.read(
-        lambda c: c.execute("SELECT id FROM game_events").fetchone()[0]
-    )
+    event_id = await service.database.read(lambda c: c.execute("SELECT id FROM game_events").fetchone()[0])
     query = SimpleNamespace(
         data=f"spy:deathmenu:{event_id}",
         id="open",
@@ -862,14 +842,12 @@ async def test_telegram_two_step_mission_entry_and_decision_copy(service, monkey
     assert not any(label.startswith("Тихий") for label in buttons())
     await press("Баланс · ❤️6 🧠2", "nav2")
     assert "Выберите бонус" in query.edit_message_text.call_args.kwargs["text"]
-    await press("Бонус: Один агент Tier 4", "arm")
+    await press("Бонус: Без дополнительного агента", "arm")
     text = query.edit_message_text.call_args.kwargs["text"]
-    assert "Бонус финала: Один агент Tier 4" in text and "Тактика: Баланс" in text
+    assert "Бонус финала: Без дополнительного агента" in text and "Тактика: Баланс" in text
     assert await counts(service) == {}
     with monkeypatch.context() as patch:
-        patch.setattr(
-            "spy_game.death_mission_repository.secrets.token_hex", lambda size: "beta"
-        )
+        patch.setattr("spy_game.death_mission_repository.secrets.token_hex", lambda size: "beta")
         await press("Подтвердить ставку и начать", "commit")
     text = query.edit_message_text.call_args.kwargs["text"]
     assert "Шанс пройти финал при текущих ресурсах" in text
@@ -913,14 +891,14 @@ async def test_html5_payload_is_structured_without_telegram_copy(service, monkey
     assert isinstance(mission["events"], list)
 
 
-def test_simulator_strong_policy_reports_nodes_finale_and_gate():
-    report = simulate(8, "unit-gate", "roguelite_v2", gate=1.15)
-    strong = [row for row in report["results"] if row["policy"] == "strong"]
-    assert {row["tactic"] for row in strong} == set(engine.rules("roguelite_v2").tactics)
-    sample = strong[0]
+def test_small_simulator_sample_reports_nodes_but_cannot_pass_gate():
+    report = simulate(8, "unit-gate", engine.DEFAULT_VERSION, gate=1.15, policies=("random",), include_economy=False)
+    assert {row["tactic"] for row in report["results"]} == set(engine.rules(engine.DEFAULT_VERSION).tactics)
+    sample = report["results"][0]
     assert isinstance(sample["deaths_by_node"], dict)
     assert "reached_percent" in sample["finale_entry"]
     assert report["economic_gate"]["policy"] == "strong"
     assert report["economic_gate"]["limit"] == 1.15
-    assert "stake_return_ratio" in report["economic_gate"]
-
+    assert report["economic_gate"]["passed"] is False
+    assert report["economic_gate"]["complete"] is False
+    assert report["economic_gate"]["sufficient_samples"] is False

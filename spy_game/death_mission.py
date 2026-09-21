@@ -43,9 +43,7 @@ __all__ = [
 
 VERSION = "roguelite_v1"
 TACTIC_NAMES = {
-    tactic_id: tactic.name
-    for ruleset in RULESETS.values()
-    for tactic_id, tactic in ruleset.tactics.items()
+    tactic_id: tactic.name for ruleset in RULESETS.values() for tactic_id, tactic in ruleset.tactics.items()
 }
 TACTICS = TACTIC_NAMES  # id -> name; the set of start tactics across versions
 
@@ -69,10 +67,7 @@ def _rules(state: dict) -> Ruleset:
 def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION) -> dict:
     ruleset = rules(version)
     start = ruleset.tactics[tactic]
-    route = [
-        ranked(seed, f"room:{i}", ruleset.node_rooms[i] or ruleset.rooms, version)[:2]
-        for i in range(5)
-    ]
+    route = [ranked(seed, f"room:{i}", ruleset.node_rooms[i] or ruleset.rooms, version)[:2] for i in range(5)]
     for index in ruleset.shelter_nodes:
         route[index] = [
             "shelter",
@@ -103,20 +98,20 @@ def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION) -> dict:
 
 
 def _risk(state: dict, template: Action) -> int:
-    if template.risk_kind == "none":
-        return 0
-    if template.risk_kind == "fixed":
-        return template.risk
     ruleset = _rules(state)
-    base = (
-        ruleset.base_risk
-        + ruleset.risk_per_alarm * state["alarm"]
-        + ruleset.tactics[state["tactic"]].risk_modifier
-    )
+    modifier = ruleset.tactics[state["tactic"]].risk_modifier
+    floor = 0
+    if state["phase"] != "boss" and ruleset.node_risk_floor[state["node"]]:
+        floor = max(0, ruleset.node_risk_floor[state["node"]] + modifier)
+    if template.risk_kind == "none":
+        return floor
+    if template.risk_kind == "fixed":
+        return max(floor, template.risk)
+    base = ruleset.base_risk + ruleset.risk_per_alarm * state["alarm"] + modifier
     if state["phase"] != "boss":
         base += ruleset.node_risk[state["node"]]
     base = max(0, min(ruleset.risk_cap, base))
-    return max(0, min(template.risk_cap, base + template.risk))
+    return max(floor, min(template.risk_cap, base + template.risk))
 
 
 def _templates(state: dict) -> tuple[Action, ...]:
@@ -128,11 +123,7 @@ def _templates(state: dict) -> tuple[Action, ...]:
 
 def _checkpoint(state: dict) -> bool:
     ruleset = _rules(state)
-    node = (
-        ruleset.escape_checkpoint_node
-        if "escape" in state["modules"]
-        else ruleset.checkpoint_node
-    )
+    node = ruleset.escape_checkpoint_node if "escape" in state["modules"] else ruleset.checkpoint_node
     return state["node"] >= node
 
 
@@ -337,9 +328,7 @@ def advance(current: dict, action_id: str, seed: str) -> tuple[dict, list[dict]]
     if state["phase"] == "module" and not state["offers"]:
         ruleset = _rules(state)
         pool = [m for m in ruleset.modules if m not in state["modules"]]
-        state["offers"] = ranked(
-            seed, f"modules:{state['node']}", pool, state["version"]
-        )[: ruleset.module_offers]
+        state["offers"] = ranked(seed, f"modules:{state['node']}", pool, state["version"])[: ruleset.module_offers]
     return state, ([] if event is None else [event])
 
 
@@ -507,7 +496,7 @@ def describe_event(event) -> str:
     return f"{event['label']} — {status}: {detail}"
 
 
-def public_state(state: dict) -> dict:
+def public_state(state: dict, *, forecasts: bool = True) -> dict:
     if not state:
         return {}
     ruleset = _rules(state)
@@ -525,27 +514,38 @@ def public_state(state: dict) -> dict:
             "modules",
             "checkpoint",
             "outcome",
+            "armor_used",
+            "assault_shield",
+            "passport_used",
         )
     }
+    if not forecasts:
+        # Public observation for offline policies; omit presentation work and
+        # forecasts, but expose no extra hidden information.
+        result.update(
+            max_hp=ruleset.max_hp,
+            max_intel=ruleset.max_intel,
+            raid_alarm=ruleset.raid_alarm,
+            boss_id=state["boss"],
+            room_id=state["room"],
+            actions=actions(state) if not state["outcome"] else [],
+            odds=None,
+        )
+        return result
     result.update(
         max_hp=ruleset.max_hp,
         max_intel=ruleset.max_intel,
         raid_alarm=ruleset.raid_alarm,
-        checkpoint_node=(
-            ruleset.escape_checkpoint_node
-            if "escape" in state["modules"]
-            else ruleset.checkpoint_node
-        ),
+        checkpoint_node=(ruleset.escape_checkpoint_node if "escape" in state["modules"] else ruleset.checkpoint_node),
         module_nodes=list(ruleset.module_nodes),
         rules_summary=list(ruleset.summary),
         module_names=[ruleset.modules[m].name for m in state["modules"]],
         boss=ruleset.bosses[state["boss"]],
+        boss_id=state["boss"],
+        room_id=state["room"],
         phase_names=list(ruleset.phases),
         title=_title(state),
-        events=[
-            e if isinstance(e, dict) else dict(kind="text", label=e)
-            for e in state["log"]
-        ],
+        events=[e if isinstance(e, dict) else dict(kind="text", label=e) for e in state["log"]],
         log=[describe_event(e) for e in state["log"]],
     )
     if state["outcome"]:
@@ -558,11 +558,7 @@ def public_state(state: dict) -> dict:
         if "cost" in action:
             branches = preview(state, action["id"]) if action["enabled"] else None
             entry["preview"] = branches
-            deaths = [
-                b["dead"]
-                for b in (branches or {}).values()
-                if b is not None
-            ]
+            deaths = [b["dead"] for b in (branches or {}).values() if b is not None]
             entry["certain_death"] = bool(deaths) and all(deaths)
             entry["may_die"] = any(deaths)
             entry["lethal"] = entry["certain_death"]
@@ -590,16 +586,11 @@ def validate(state: dict) -> None:
     if state.get("boss") not in ruleset.bosses or state.get("tactic") not in ruleset.tactics:
         raise ValueError("unknown mission content")
     if len(state["route"]) != 5 or any(
-        len(layer) != 2 or any(room not in ruleset.rooms for room in layer)
-        for layer in state["route"]
+        len(layer) != 2 or any(room not in ruleset.rooms for room in layer) for layer in state["route"]
     ):
         raise ValueError("invalid mission route")
-    if len(state["modules"]) > 2 or any(
-        module not in ruleset.modules for module in state["modules"]
-    ):
+    if len(state["modules"]) > 2 or any(module not in ruleset.modules for module in state["modules"]):
         raise ValueError("invalid mission modules")
-    if not isinstance(state.get("log"), list) or any(
-        not isinstance(e, (str, dict)) for e in state["log"]
-    ):
+    if not isinstance(state.get("log"), list) or any(not isinstance(e, (str, dict)) for e in state["log"]):
         raise ValueError("invalid mission log")
     public_state(state)

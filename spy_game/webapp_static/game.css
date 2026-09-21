@@ -296,7 +296,7 @@ input[type="range"] { width: 100%; accent-color: #55e8ac; }
 
 /* ---- Death Mission ---------------------------------------------------- */
 
-#death-mission { display: grid; gap: 14px; }
+#death-mission:not(.hidden) { display: grid; gap: 14px; }
 #death-mission .death-copy { white-space: pre-wrap; line-height: 1.6; }
 #death-mission p { margin: 0; }
 #death-mission .small { font-size: 13px; line-height: 1.45; white-space: pre-line; }
@@ -346,7 +346,8 @@ input[type="range"] { width: 100%; accent-color: #55e8ac; }
 #death-mission .segment { text-align: center; }
 #death-mission .segment.selected,
 #death-mission .choice-card.selected { border-color: #55e8ac; background: rgba(85, 232, 172, 0.12); box-shadow: 0 0 18px rgba(85, 232, 172, 0.08); }
-#death-mission .segment.locked { opacity: 0.45; }
+#death-mission .segment.locked,
+#death-mission .choice-card.locked { opacity: 0.45; }
 #death-mission .choice-card strong { font-size: 15px; }
 
 /* HUD */
@@ -418,7 +419,11 @@ input[type="range"] { width: 100%; accent-color: #55e8ac; }
 
 /* Confirmation and comparison */
 .confirm-box { display: grid; gap: 12px; padding: 16px; border: 1px solid rgba(233, 115, 101, 0.45); border-radius: 14px; background: rgba(233, 115, 101, 0.06); }
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.compare-col { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 420px) {
+  .compare { grid-template-columns: 1fr; }
+}
 .compare-col { display: grid; gap: 6px; padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); font-size: 13px; }
 .compare-col .eyebrow { margin: 0; }
 .rules-summary summary { cursor: pointer; }

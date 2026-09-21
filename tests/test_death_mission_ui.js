@@ -232,10 +232,75 @@ test("extraction compares the guaranteed return with continuing", async () => {
   await exit.fire("click");
   const compare = find(ui.root(), (n) => has(n, "compare"));
   assert.match(text(compare), /ЭВАКУАЦИЯ СЕЙЧАС.*Гарантированно.*Осведомитель ×2/);
-  assert.match(text(compare), /ПРОДОЛЖИТЬ.*~31% на ×2 и бонус/);
+  assert.match(text(compare), /ПРОДОЛЖИТЬ.*Победа: сеть ×2/);
+  assert.match(text(compare), /Шанс всего оставшегося маршрута не рассчитан/);
+  assert.match(text(compare), /31% относится только к финалу/);
   await ui.button("Подтвердить эвакуацию").fire("click");
   await flush();
   assert.deepEqual(sent, ["death/extract"]);
+});
+
+test("a delayed poll cannot replace newer mutations or revive a terminal run", async () => {
+  let finishPoll;
+  let revision = 3;
+  let firstPoll = true;
+  const ui = setup(async (_path, options) => {
+    if (options) {
+      revision += 1;
+      return revision === 5
+        ? run({ revision, status: "won", result: { returned: [], bonus: [] } })
+        : run({ revision }, { hp: revision });
+    }
+    if (firstPoll) { firstPoll = false; return new Promise((resolve) => { finishPoll = resolve; }); }
+    return revision === 5
+      ? run({ revision, status: "won", result: { returned: [], bonus: [] } })
+      : run({ revision }, { hp: revision });
+  }, run());
+  const poll = ui.runPoll();
+  await ui.button("Выполнить").fire("click");
+  await flush();
+  await ui.button("Выполнить").fire("click");
+  await flush();
+  finishPoll(run({ revision: 4 }, { hp: 4 }));
+  await poll;
+  assert.ok(has(ui.root(), "hidden"));
+  assert.equal(ui.root().children.length, 0, "terminal screen leaves no stale action controls");
+  assert.equal(ui.nodes.get("result-title").textContent, "Операция выполнена");
+});
+
+test("polling a new revision clears confirmation for the previous action", async () => {
+  const ui = setup(async () => run({ revision: 4 }), run());
+  await all(ui.root(), n => n.tag === "button" && n.dataset.action === "rush")[0].fire("click");
+  assert.ok(ui.button("Всё равно выполнить"));
+  await ui.runPoll();
+  assert.equal(ui.button("Всё равно выполнить"), undefined);
+});
+
+test("finale extraction describes remaining phases rather than an unplayed route", async () => {
+  const initial = run({}, { phase: "boss", node: 5, checkpoint: true });
+  const ui = setup(async () => initial, initial);
+  await ui.button("Эвакуироваться").fire("click");
+  const compare = text(find(ui.root(), n => has(n, "compare")));
+  assert.match(compare, /оставшиеся фазы финала.*31%/);
+  assert.doesNotMatch(compare, /маршрута не рассчитан/);
+});
+
+test("new reward terms disable unavailable bonuses and arm the visible no-bonus option", async () => {
+  const initial = { ...preview, bonuses: [
+    { id: "none", name: "Без дополнительного агента", description: "Победа удваивает ставку.", locked: false },
+    { id: "tier3", name: "Агент Tier 3 ×1", description: "Нужно 5 агентов Tier 3 или выше; сейчас 1.", locked: true },
+  ] };
+  let request;
+  const ui = setup(async (_path, options) => {
+    if (options) request = JSON.parse(options.body);
+    return { ...initial, status: "armed", revision: 1, mode: "mission", bonus: "none" };
+  }, initial);
+  assert.ok(ui.button("Агент Tier 3 ×1").disabled);
+  assert.ok(has(ui.button("Без дополнительного агента"), "selected"));
+  await ui.button("Пойти на миссию лично").fire("click");
+  await flush();
+  assert.equal(request.choice.bonus, "none");
+  assert.match(text(ui.root()), /Бонус финала: Без дополнительного агента/);
 });
 
 test("module offers show odds deltas and rooms list their options", () => {

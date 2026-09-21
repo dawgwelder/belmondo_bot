@@ -63,6 +63,7 @@ class Ruleset:
     risk_per_alarm: int = 5
     risk_cap: int = 75
     node_risk: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
+    node_risk_floor: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
     node_damage: tuple[int, int, int, int, int] = (2, 2, 2, 2, 2)
     node_cost: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
     # Room pool per node; an empty tuple means every room may appear.
@@ -75,6 +76,9 @@ class Ruleset:
     module_nodes: tuple[int, ...] = (1, 3)
     module_offers: int = 3
     shelter_nodes: tuple[int, ...] = (1, 3)
+    bonus_min_agents: int = 0
+    tier3_bonus: int = 2
+    tier4_bonus: int = 1
     summary: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -93,9 +97,7 @@ MODULES_V1 = {
     "armor": Module("Бронепластины", "Первый урон в комнате уменьшается на 1."),
     "medic": Module("Полевой медик", "После обычной комнаты при состоянии 1–2: +1."),
     "scanner": Module("Перехватчик", "Архив даёт ещё 1 разведданное."),
-    "passport": Module(
-        "Поддельный пропуск", "Один раз отменяет облаву; тревога становится 3."
-    ),
+    "passport": Module("Поддельный пропуск", "Один раз отменяет облаву; тревога становится 3."),
     "escape": Module("Аварийный канал", "Эвакуация открывается после второго узла."),
 }
 ROOM_ACTIONS_V1 = {
@@ -169,9 +171,7 @@ ROGUELITE_V1 = Ruleset(
     version="roguelite_v1",
     tactics={
         "balanced": Tactic("Баланс", 6, 2),
-        "stealth": Tactic(
-            "Тихий вход", 5, 3, unlock="Пройти узел 3 в трёх забегах"
-        ),
+        "stealth": Tactic("Тихий вход", 5, 3, unlock="Пройти узел 3 в трёх забегах"),
         "assault": Tactic(
             "Штурм",
             6,
@@ -194,10 +194,8 @@ ROGUELITE_V1 = Ruleset(
 
 
 # --- roguelite_v2 -----------------------------------------------------------
-# Rebalanced from the simulator's strong policy (see docs/ideas/...-v2.json):
-# part of the danger moves from the finale to nodes 3-5, the three finale
-# phases get distinct options, and the weak content (medic, passport, stealth,
-# force) becomes a real choice instead of a penalty.
+# Shipped in 152ee01. Preserve these numbers for open runs. The initial
+# finale-greedy simulator did not establish a bound on whole-route returns.
 
 DANGER_ROOMS = ("patrol", "archive", "contact", "ambush")
 # Under surveillance nothing is free: walking away is noticed.
@@ -216,9 +214,7 @@ ROOM_ACTIONS_V2 = {
 MODULES_V2 = {
     **MODULES_V1,
     "silencer": Module("Глушитель", "Осложнение не поднимает тревогу."),
-    "medic": Module(
-        "Полевой медик", "После комнаты или фазы финала при состоянии 1–2: +1."
-    ),
+    "medic": Module("Полевой медик", "После комнаты или фазы финала при состоянии 1–2: +1."),
     "passport": Module(
         "Поддельный пропуск",
         "Один раз отменяет облаву (тревога станет 3); следующие облавы бьют на 1 слабее.",
@@ -303,7 +299,6 @@ ROGUELITE_V2 = Ruleset(
             "Тихий вход",
             5,
             2,
-            # −3 already makes this the best informed start (~1.12 return).
             risk_modifier=-3,
             unlock="Пройти узел 3 в трёх забегах",
         ),
@@ -337,11 +332,41 @@ ROGUELITE_V2 = Ruleset(
     ),
 )
 
+# New rules only apply to newly opened runs; v1/v2 remain replay-compatible.
+ROGUELITE_V3 = replace(
+    ROGUELITE_V2,
+    version="roguelite_v3",
+    bonus_min_agents=5,
+    tier3_bonus=1,
+    node_risk_floor=(0, 0, 10, 30, 40),
+    node_damage=(2, 2, 3, 4, 5),
+    boss_actions={
+        boss: tuple(
+            tuple(
+                replace(action, risk=20, damage=(3, 3, 4)[index])
+                if action.id == "force"
+                else replace(action, damage=(3, 3, 4)[index])
+                for action in phase
+            )
+            for index, phase in enumerate(_boss_v2(boss))
+        )
+        for boss in BOSSES
+    },
+    summary=(
+        "Узлы 3–5: минимальный риск каждого действия 10/30/40%; урон осложнения 3/4/5.",
+        "Разведданные снижают риск, но на позднем маршруте безопасных проходов нет.",
+        "Тревога добавляет 5 п.п. к обычному риску; «Тихий вход» снижает риск на 3 п.п.",
+        "На узлах 4–5 плата разведданными дороже на 1. Урон осложнения по фазам финала: 3/3/4.",
+        "Тревога 6: облава, урон 2 и тревога 4.",
+    ),
+)
+
 RULESETS: dict[str, Ruleset] = {
     ROGUELITE_V1.version: ROGUELITE_V1,
     ROGUELITE_V2.version: ROGUELITE_V2,
+    ROGUELITE_V3.version: ROGUELITE_V3,
 }
-DEFAULT_VERSION = ROGUELITE_V2.version
+DEFAULT_VERSION = ROGUELITE_V3.version
 
 
 def rules(version: str) -> Ruleset:
