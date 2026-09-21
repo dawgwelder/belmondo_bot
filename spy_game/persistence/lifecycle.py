@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from ..models import AdminResult, ChatStatus, ExpiredEvent
+from ..activity import MemberTouch
+from ..models import AdminResult, ChatMembership, ChatStatus, ExpiredEvent
 import logging
 from ..death_mission_repository import DeathMissionRepository
 from .chase import ChaseRepository
@@ -423,6 +424,57 @@ class LifecycleRepository(RepositoryComponent):
                 and isinstance(payload.get("manual"), bool)
             )
         return False
+
+    @staticmethod
+    def upsert_members(
+        connection: sqlite3.Connection,
+        touches: dict[tuple[int, int], MemberTouch],
+    ) -> None:
+        """Persist buffered membership touches; newer timestamps win."""
+
+        for (chat_id, user_id), touch in touches.items():
+            seen = _iso(touch.last_seen_at)
+            connection.execute(
+                """
+                INSERT INTO chat_members(chat_id, user_id, last_seen_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                    last_seen_at = MAX(last_seen_at, excluded.last_seen_at)
+                """,
+                (chat_id, user_id, seen),
+            )
+            if touch.title:
+                connection.execute(
+                    "UPDATE chat_state SET title = ? WHERE chat_id = ?",
+                    (touch.title[:128], chat_id),
+                )
+
+    def list_member_chats(
+        self,
+        connection: sqlite3.Connection,
+        user_id: int,
+    ) -> tuple[ChatMembership, ...]:
+        """Enabled allowlisted chats for the user, most recently seen first."""
+
+        rows = connection.execute(
+            """
+            SELECT m.chat_id, m.last_seen_at, s.title
+            FROM chat_members m
+            JOIN chat_state s ON s.chat_id = m.chat_id
+            WHERE m.user_id = ? AND s.enabled = 1
+            ORDER BY m.last_seen_at DESC, m.chat_id
+            """,
+            (user_id,),
+        ).fetchall()
+        return tuple(
+            ChatMembership(
+                chat_id=row["chat_id"],
+                title=row["title"],
+                last_seen_at=_datetime(row["last_seen_at"]),
+            )
+            for row in rows
+            if self.settings.chat_is_allowed(row["chat_id"])
+        )
 
     def get_chat_status(
         self,

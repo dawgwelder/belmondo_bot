@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -16,6 +17,7 @@ from spy_game.webapp import SpyWebAppServer, SpyWebAppSettings, _RateLimiter
 from spy_game.webapp_auth import (
     LaunchContextSigner,
     WebAppAuthError,
+    chat_handle,
     validate_init_data,
 )
 
@@ -97,6 +99,12 @@ def request(headers=None, payload=None):
     return SimpleNamespace(headers=headers or {}, json=json_body)
 
 
+async def join(service, user_id=USER_ID, chat_id=CHAT_ID, title=None, now=None):
+    """Record chat membership the way a group message or /spy would."""
+
+    await service.touch_member_now(chat_id, user_id, title=title, now=now)
+
+
 def test_telegram_init_data_validation_trusts_only_signed_fields():
     init_data = make_init_data(signature="telegram-ed25519-signature")
     identity = validate_init_data(
@@ -127,21 +135,30 @@ def test_telegram_init_data_rejects_expired_and_duplicate_fields():
         validate_init_data(duplicated, BOT_TOKEN, max_age_seconds=300)
 
 
-def test_launch_context_is_short_lived_and_bound_to_user_and_chat():
+def test_launch_context_is_a_short_lived_chat_hint():
     signer = LaunchContextSigner(BOT_TOKEN, ttl_seconds=600)
-    token = signer.issue(CHAT_ID, USER_ID, now=1000)
+    token = signer.issue(CHAT_ID, now=1000)
 
     assert len(token) <= 512
     assert set(token) <= set(
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     )
-    assert signer.verify(token, USER_ID, now=1200) == CHAT_ID
-    with pytest.raises(WebAppAuthError, match="mismatched"):
-        signer.verify(token, USER_ID + 1, now=1200)
+    # Any member of the chat may use the hint; it is not bound to the issuer.
+    assert signer.verify(token, now=1200) == CHAT_ID
     with pytest.raises(WebAppAuthError, match="expired"):
-        signer.verify(token, USER_ID, now=1601)
+        signer.verify(token, now=1601)
     with pytest.raises(WebAppAuthError):
-        signer.verify(token[:-1] + ("A" if token[-1] != "A" else "B"), USER_ID)
+        signer.verify(token[:-1] + ("A" if token[-1] != "A" else "B"))
+
+
+def test_chat_handle_is_opaque_and_per_user():
+    handle = chat_handle(BOT_TOKEN, USER_ID, CHAT_ID)
+    assert len(handle) == 16 and set(handle) <= set("0123456789abcdef")
+    assert str(CHAT_ID).lstrip("-") not in handle
+    assert handle == chat_handle(BOT_TOKEN, USER_ID, CHAT_ID)
+    assert handle != chat_handle(BOT_TOKEN, USER_ID + 1, CHAT_ID)
+    assert handle != chat_handle(BOT_TOKEN, USER_ID, CHAT_ID - 1)
+    assert handle != chat_handle("other:token", USER_ID, CHAT_ID)
 
 
 def test_launch_url_keeps_only_an_opaque_signed_context(tmp_path, monkeypatch):
@@ -151,15 +168,11 @@ def test_launch_url_keeps_only_an_opaque_signed_context(tmp_path, monkeypatch):
     )
     service = SimpleNamespace(settings=game_settings(tmp_path))
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
-    url = server.launch_url(CHAT_ID, USER_ID)
+    url = server.launch_url(CHAT_ID)
 
     assert url.startswith("https://t.me/belmondo_test_bot/spy_center?startapp=")
     assert str(CHAT_ID) not in url
-    assert str(USER_ID) not in url
-    assert (
-        server.launch_url(USER_ID, USER_ID)
-        == "https://t.me/belmondo_test_bot/spy_center"
-    )
+    assert server.launch_url(USER_ID) == "https://t.me/belmondo_test_bot/spy_center"
 
 
 def test_webapp_settings_require_https_launch_url():
@@ -206,11 +219,10 @@ async def test_webapp_state_and_equipment_use_same_service_and_database(tmp_path
         ),
         immediate=True,
     )
+    await join(service)
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
-    launch_token = server.signer.issue(CHAT_ID, USER_ID)
-    headers = {
-        "X-Telegram-Init-Data": make_init_data(start_param=launch_token),
-    }
+    # No /spy link at all: membership alone resolves the group context.
+    headers = {"X-Telegram-Init-Data": make_init_data()}
 
     try:
         response = await server.state(request(headers))
@@ -251,35 +263,138 @@ async def test_webapp_state_and_equipment_use_same_service_and_database(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webapp_profile_launch_is_read_only_and_group_token_is_user_bound(
-    tmp_path,
-):
+async def test_webapp_context_comes_from_membership_not_from_the_link(tmp_path):
     service = SpyGameService(game_settings(tmp_path))
     await service.initialize()
     await service.enable_chat(CHAT_ID)
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
-    read_only_headers = {"X-Telegram-Init-Data": make_init_data()}
-    stolen_token = server.signer.issue(CHAT_ID, USER_ID)
-    stolen_headers = {
+    stranger_headers = {"X-Telegram-Init-Data": make_init_data()}
+    token = server.signer.issue(CHAT_ID)
+    forwarded_headers = {
+        "X-Telegram-Init-Data": make_init_data(start_param=token),
+    }
+    other_headers = {
         "X-Telegram-Init-Data": make_init_data(
             user_id=USER_ID + 1,
             username="other",
-            start_param=stolen_token,
+            start_param=token,
         )
     }
 
     try:
-        response = await server.state(request(read_only_headers))
-        assert response.status == 200
-        assert json.loads(response.text)["context"]["can_mutate"] is False
-
+        # A user never seen in any enabled chat stays read-only, link or not.
+        payload = json.loads((await server.state(request(stranger_headers))).text)
+        assert payload["context"] == {
+            "chat_bound": False,
+            "chats": [],
+            "can_mutate": False,
+            "network_enabled": False,
+            "activity_score": None,
+            "activity_profile": None,
+            "active_event": False,
+        }
+        payload = json.loads((await server.state(request(forwarded_headers))).text)
+        assert payload["context"]["can_mutate"] is False
         with pytest.raises(web.HTTPForbidden):
             await server.prestige(
-                request(read_only_headers, {"expected_reputation": 0})
+                request(forwarded_headers, {"expected_reputation": 0})
             )
 
-        with pytest.raises(web.HTTPUnauthorized):
-            await server.state(request(stolen_headers))
+        # Another member pressing the first user's /spy button is fine.
+        await join(service, user_id=USER_ID + 1)
+        payload = json.loads((await server.state(request(other_headers))).text)
+        assert payload["context"]["can_mutate"] is True
+
+        # Expired or garbage hints are ignored rather than rejected.
+        await join(service)
+        for hint in ("not-a-token", server.signer.issue(CHAT_ID, now=0)):
+            headers = {"X-Telegram-Init-Data": make_init_data(start_param=hint)}
+            payload = json.loads((await server.state(request(headers))).text)
+            assert payload["context"]["chat_bound"] is True
+            assert payload["context"]["can_mutate"] is True
+
+        # Disabling the chat removes it from the resolved memberships.
+        await service.disable_chat(CHAT_ID)
+        payload = json.loads((await server.state(request(forwarded_headers))).text)
+        assert payload["context"]["chat_bound"] is False
+        with pytest.raises(web.HTTPForbidden):
+            await server.prestige(
+                request(forwarded_headers, {"expected_reputation": 0})
+            )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_webapp_lists_member_chats_and_honours_selection(tmp_path):
+    other_chat = CHAT_ID - 1
+    service = SpyGameService(
+        game_settings(tmp_path, allowed_chat_ids=frozenset({CHAT_ID, other_chat}))
+    )
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    await service.enable_chat(other_chat)
+    base = datetime(2026, 9, 21, 12, tzinfo=timezone.utc)
+    await join(service, chat_id=other_chat, title="Old Network", now=base)
+    await join(
+        service,
+        chat_id=CHAT_ID,
+        title="Fresh Network",
+        now=base + timedelta(minutes=5),
+    )
+    server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
+    plain = {"X-Telegram-Init-Data": make_init_data()}
+    old_handle = chat_handle(BOT_TOKEN, USER_ID, other_chat)
+    fresh_handle = chat_handle(BOT_TOKEN, USER_ID, CHAT_ID)
+
+    try:
+        # Most recently seen chat is selected by default; IDs never leak.
+        payload = json.loads((await server.state(request(plain))).text)
+        assert payload["context"]["chats"] == [
+            {"handle": fresh_handle, "title": "Fresh Network", "selected": True},
+            {"handle": old_handle, "title": "Old Network", "selected": False},
+        ]
+        assert str(CHAT_ID) not in json.dumps(payload["context"])
+
+        # An explicit selection wins over recency and over the /spy hint.
+        hint = server.signer.issue(CHAT_ID)
+        selected = {
+            "X-Telegram-Init-Data": make_init_data(start_param=hint),
+            "X-Spy-Chat": old_handle,
+        }
+        payload = json.loads((await server.state(request(selected))).text)
+        assert [chat["selected"] for chat in payload["context"]["chats"]] == [
+            False,
+            True,
+        ]
+
+        # A hint without a stored selection wins over recency.
+        hinted = {"X-Telegram-Init-Data": make_init_data(start_param=server.signer.issue(other_chat))}
+        payload = json.loads((await server.state(request(hinted))).text)
+        assert payload["context"]["chats"][1]["selected"] is True
+
+        # Foreign or malformed handles fall back to the default.
+        for bogus in ("0123456789abcdef", "<script>", chat_handle(BOT_TOKEN, 7, other_chat)):
+            headers = {"X-Telegram-Init-Data": make_init_data(), "X-Spy-Chat": bogus}
+            payload = json.loads((await server.state(request(headers))).text)
+            assert payload["context"]["chats"][0]["selected"] is True
+
+        # Mutations run in the selected chat.
+        await service.get_profile(user_id=USER_ID, username="bond", display_name="J")
+        await service.database.transaction(
+            lambda connection: connection.execute(
+                "INSERT INTO user_items(user_id, item_type, amount) VALUES (?, ?, ?)",
+                (USER_ID, "radio", 1),
+            ),
+            immediate=True,
+        )
+        response = await server.equip(
+            request(
+                {"X-Telegram-Init-Data": make_init_data(), "X-Spy-Chat": old_handle},
+                {"item_type": "radio"},
+            )
+        )
+        assert json.loads(response.text)["ok"] is True
     finally:
         await service.close()
 
@@ -305,8 +420,9 @@ async def test_webapp_prestige_and_agency_keep_stale_checks_server_side(tmp_path
         ),
         immediate=True,
     )
+    await join(service)
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
-    launch_token = server.signer.issue(CHAT_ID, USER_ID)
+    launch_token = server.signer.issue(CHAT_ID)
     headers = {
         "X-Telegram-Init-Data": make_init_data(start_param=launch_token),
     }
@@ -389,8 +505,9 @@ async def test_webapp_exposes_all_npc_exchanges_as_permanent_contacts(
         ),
         immediate=True,
     )
+    await join(service)
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
-    launch_token = server.signer.issue(CHAT_ID, USER_ID)
+    launch_token = server.signer.issue(CHAT_ID)
     headers = {
         "X-Telegram-Init-Data": make_init_data(start_param=launch_token),
     }

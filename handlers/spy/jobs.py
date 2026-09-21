@@ -27,7 +27,7 @@ async def track_spy_activity(
         or context.bot_data.get("paused", False)
     ):
         return
-    await _service(context).record_activity(chat.id, user.id)
+    await _service(context).record_activity(chat.id, user.id, title=chat.title)
 
 
 async def spy_game_tick(context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -264,10 +264,11 @@ async def test_history_is_bounded_but_old_spin_remains_replayable(service):
 
 @pytest.mark.asyncio
 async def test_api_auth_validation_ownership_and_permanent_state(service):
+    await service.touch_member_now(CHAT_ID, 1, now=NOW)
     server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
     headers = {
         "X-Telegram-Init-Data": make_init_data(
-            user_id=1, start_param=server.signer.issue(CHAT_ID, 1)
+            user_id=1, start_param=server.signer.issue(CHAT_ID)
         )
     }
     body = {
@@ -291,9 +292,10 @@ async def test_api_auth_validation_ownership_and_permanent_state(service):
         await server.slot_spin(request(headers, {"operation_id": "bad", "stake": True}))
     with pytest.raises(web.HTTPUnauthorized):
         await server.slot_spin(request({}, body))
+    # A user without membership in any enabled chat has no group context.
     with pytest.raises(web.HTTPForbidden):
         await server.slot_spin(
-            request({"X-Telegram-Init-Data": make_init_data(user_id=1)}, body)
+            request({"X-Telegram-Init-Data": make_init_data(user_id=2)}, body)
         )
     await service.disable_chat(CHAT_ID, now=NOW)
     with pytest.raises(web.HTTPForbidden):

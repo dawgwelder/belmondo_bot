@@ -24,14 +24,17 @@ async def _profile_for_update(update: Update, service: SpyGameService) -> Profil
 
 async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     service = _service(context)
+    chat = update.effective_chat
     profile = await _profile_for_update(update, service)
-    status = await service.get_chat_status(update.effective_chat.id)
+    if getattr(chat, "type", None) in {"group", "supergroup"}:
+        # Persist membership right away so the Mini App opened from the bot
+        # menu gets the full cabinet without waiting for the next tick.
+        await service.touch_member_now(
+            chat.id, update.effective_user.id, title=getattr(chat, "title", None)
+        )
+    status = await service.get_chat_status(chat.id)
     webapp = context.bot_data.get("spy_webapp")
-    launch_url = (
-        webapp.launch_url(update.effective_chat.id, update.effective_user.id)
-        if webapp is not None
-        else None
-    )
+    launch_url = webapp.launch_url(chat.id) if webapp is not None else None
     now = datetime.now(timezone.utc)
     achievements = await service.get_achievements(update.effective_user.id)
     blocks = build_menu_blocks(profile, status, now)

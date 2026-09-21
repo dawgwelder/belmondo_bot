@@ -2070,7 +2070,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 18
+        assert migration_count == 19
     finally:
         await second.close()
 
@@ -2170,6 +2170,10 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
                     "AND name = 'find_mole_game_runs'"
                 ).fetchone()[0],
                 connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'chat_members'"
+                ).fetchone()[0],
+                connection.execute(
                     "SELECT next_event_at FROM chat_state WHERE chat_id = ?",
                     (CHAT_ID,),
                 ).fetchone()[0],
@@ -2180,7 +2184,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
             "economy_history",
             "user_items",
             "equipped_items",
@@ -2195,9 +2199,188 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             "spy_duel_history",
             "find_mole_cases",
             "find_mole_game_runs",
+            "chat_members",
             None,
             "balanced",
         )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_group_activity_persists_chat_membership_on_tick(tmp_path):
+    service = await initialized_service(tmp_path, debounce=600)
+    other_chat = CHAT_ID - 1
+    try:
+        # Two quick messages: the second is debounced for activity scoring
+        # but still refreshes membership with the newer timestamp and title.
+        assert await service.record_activity(
+            CHAT_ID, 1, now=NOW, title="Beta Network"
+        )
+        assert not await service.record_activity(
+            CHAT_ID, 1, now=NOW + timedelta(seconds=5), title="Beta Network v2"
+        )
+        # Button presses only touch membership; they never count as activity.
+        await service.touch_member(CHAT_ID, 2, now=NOW + timedelta(seconds=1))
+        # Chats outside the allowlist are ignored entirely.
+        await service.touch_member(other_chat, 1, now=NOW)
+        assert await service.member_chats(1) == ()
+
+        await service.tick(now=NOW + timedelta(seconds=30))
+
+        rows = await service.database.read(
+            lambda connection: connection.execute(
+                "SELECT chat_id, user_id, last_seen_at FROM chat_members "
+                "ORDER BY user_id"
+            ).fetchall()
+        )
+        assert [(row[0], row[1]) for row in rows] == [(CHAT_ID, 1), (CHAT_ID, 2)]
+        assert rows[0][2] == (NOW + timedelta(seconds=5)).isoformat(
+            timespec="microseconds"
+        )
+        chats = await service.member_chats(1)
+        assert [(chat.chat_id, chat.title) for chat in chats] == [
+            (CHAT_ID, "Beta Network v2")
+        ]
+        status = await service.get_chat_status(CHAT_ID)
+        assert status.activity_score > 0
+
+        # Older touches never move last_seen_at backwards.
+        await service.touch_member_now(CHAT_ID, 1, now=NOW - timedelta(days=1))
+        chats = await service.member_chats(1)
+        assert chats[0].last_seen_at == NOW + timedelta(seconds=5)
+
+        # A disabled chat disappears from the resolvable list but keeps rows.
+        await service.disable_chat(CHAT_ID, now=NOW)
+        assert await service.member_chats(1) == ()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_membership_touches_are_restored_when_tick_fails(tmp_path):
+    service = await initialized_service(tmp_path)
+    try:
+        await service.touch_member(CHAT_ID, 1, now=NOW, title="Beta")
+        original = service.repository.scheduling.prepare_tick
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        service.repository.scheduling.prepare_tick = explode
+        with pytest.raises(RuntimeError):
+            await service.tick(now=NOW + timedelta(seconds=30))
+        service.repository.scheduling.prepare_tick = original
+        assert await service.member_chats(1) == ()
+
+        await service.tick(now=NOW + timedelta(seconds=60))
+        chats = await service.member_chats(1)
+        assert [(chat.chat_id, chat.title) for chat in chats] == [(CHAT_ID, "Beta")]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_handlers_touch_membership(tmp_path):
+    service = await initialized_service(tmp_path)
+    context = SimpleNamespace(bot_data={"spy_game": service, "paused": False})
+    chat = SimpleNamespace(id=CHAT_ID, type="supergroup", title="Beta Network")
+    try:
+        await spy_handlers.track_spy_activity(
+            SimpleNamespace(
+                effective_user=SimpleNamespace(id=1, is_bot=False),
+                effective_chat=chat,
+            ),
+            context,
+        )
+        query = SimpleNamespace(data="spy:menu:nope", answer=AsyncMock())
+        await spy_handlers.spy_callback(
+            SimpleNamespace(
+                callback_query=query,
+                effective_user=SimpleNamespace(id=2, is_bot=False),
+                effective_chat=chat,
+            ),
+            context,
+        )
+        # Private chats never become a group context.
+        await spy_handlers.track_spy_activity(
+            SimpleNamespace(
+                effective_user=SimpleNamespace(id=3, is_bot=False),
+                effective_chat=SimpleNamespace(id=3, type="private", title=None),
+            ),
+            context,
+        )
+        await service.tick(now=NOW + timedelta(seconds=30))
+        for user_id in (1, 2):
+            chats = await service.member_chats(user_id)
+            assert [(chat.chat_id, chat.title) for chat in chats] == [
+                (CHAT_ID, "Beta Network")
+            ]
+        assert await service.member_chats(3) == ()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_chat_members_migration_backfills_from_history(tmp_path):
+    config = settings(tmp_path)
+    migrations_dir = Path(__file__).parents[1] / "spy_game" / "migrations"
+    with sqlite3.connect(config.database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, "
+            "applied_at TEXT NOT NULL)"
+        )
+        for path in sorted(migrations_dir.glob("[0-9][0-9][0-9]_*.sql")):
+            version = int(path.name[:3])
+            if version >= 19:
+                break
+            connection.executescript(path.read_text(encoding="utf-8"))
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, NOW.isoformat()),
+            )
+        stamp = NOW.isoformat(timespec="microseconds")
+        later = (NOW + timedelta(hours=1)).isoformat(timespec="microseconds")
+        connection.execute(
+            "INSERT INTO chat_state(chat_id, enabled, activity_score, "
+            "activity_updated_at, updated_at) VALUES (?, 1, 0, ?, ?)",
+            (CHAT_ID, stamp, stamp),
+        )
+        connection.executemany(
+            "INSERT INTO users(user_id, username, display_name, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?)",
+            [(1, "a", "A", stamp, stamp), (2, "b", "B", stamp, stamp)],
+        )
+        connection.execute(
+            "INSERT INTO game_events(id, chat_id, event_type, status, "
+            "payload_json, created_at, expires_at) VALUES "
+            "('ev1', ?, 'recruitment', 'resolved', '{}', ?, ?)",
+            (CHAT_ID, stamp, later),
+        )
+        connection.executemany(
+            "INSERT INTO event_history(idempotency_key, event_id, chat_id, "
+            "user_id, event_type, outcome, created_at) "
+            "VALUES (?, 'ev1', ?, ?, 'recruitment', 'won', ?)",
+            [("k1", CHAT_ID, 1, stamp), ("k2", CHAT_ID, 1, later)],
+        )
+        connection.execute(
+            "INSERT INTO event_participants(event_id, user_id, status, "
+            "created_at, updated_at) VALUES ('ev1', 2, 'resolved', ?, ?)",
+            (stamp, stamp),
+        )
+
+    service = SpyGameService(config, rng=FixedRandom())
+    await service.initialize(now=NOW)
+    try:
+        first = await service.member_chats(1)
+        second = await service.member_chats(2)
+        assert [(chat.chat_id, chat.last_seen_at) for chat in first] == [
+            (CHAT_ID, NOW + timedelta(hours=1))
+        ]
+        assert [(chat.chat_id, chat.last_seen_at) for chat in second] == [
+            (CHAT_ID, NOW)
+        ]
+        assert await service.member_chats(3) == ()
     finally:
         await service.close()
 
@@ -2366,12 +2549,12 @@ async def test_spy_menu_adds_webapp_launch_and_keeps_telegram_fallback(
     user = SimpleNamespace(id=1, username="bond", full_name="James", is_bot=False)
     update = SimpleNamespace(
         effective_user=user,
-        effective_chat=SimpleNamespace(id=CHAT_ID, type="supergroup"),
+        effective_chat=SimpleNamespace(
+            id=CHAT_ID, type="supergroup", title="Beta Network"
+        ),
     )
     webapp = SimpleNamespace(
-        launch_url=lambda chat_id, user_id: (
-            f"https://t.me/bot/app?startapp={chat_id}_{user_id}"
-        )
+        launch_url=lambda chat_id: f"https://t.me/bot/app?startapp=hint-{chat_id}"
     )
     context = SimpleNamespace(
         bot_data={"spy_game": service, "spy_webapp": webapp, "paused": False},
@@ -2382,9 +2565,15 @@ async def test_spy_menu_adds_webapp_launch_and_keeps_telegram_fallback(
         buttons = send_rich.await_args.kwargs["reply_markup"]["inline_keyboard"]
         assert buttons[0][0] == {
             "text": "🗄 Открыть оперативный центр",
-            "url": f"https://t.me/bot/app?startapp={CHAT_ID}_1",
+            "url": f"https://t.me/bot/app?startapp=hint-{CHAT_ID}",
         }
         assert buttons[1][0]["callback_data"] == "spy:menu:profile"
+        # /spy persists membership immediately so the bot-menu launch of the
+        # Mini App gets the full cabinet without waiting for the next tick.
+        chats = await service.member_chats(1)
+        assert [(chat.chat_id, chat.title) for chat in chats] == [
+            (CHAT_ID, "Beta Network")
+        ]
     finally:
         await service.close()
 

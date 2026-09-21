@@ -3,8 +3,27 @@
 
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || "";
+  const CHAT_STORAGE_KEY = "spy-app:chat";
   let state = null;
   let mutationInFlight = false;
+
+  // Opaque per-user chat handle issued by the backend; never a numeric ID.
+  function storedChat() {
+    try {
+      return window.localStorage.getItem(CHAT_STORAGE_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function rememberChat(handle) {
+    try {
+      if (handle) window.localStorage.setItem(CHAT_STORAGE_KEY, handle);
+      else window.localStorage.removeItem(CHAT_STORAGE_KEY);
+    } catch (error) {
+      /* storage may be unavailable inside some Telegram clients */
+    }
+  }
 
   const $ = (id) => document.getElementById(id);
   const notice = $("notice");
@@ -49,6 +68,7 @@
       headers: {
         "Content-Type": "application/json",
         "X-Telegram-Init-Data": initData,
+        ...(storedChat() ? { "X-Spy-Chat": storedChat() } : {}),
         ...(options.headers || {})
       }
     });
@@ -106,6 +126,37 @@
     return button;
   }
 
+  function renderChatSwitcher(chats) {
+    const label = $("chat-switcher-label");
+    const select = $("chat-switcher");
+    const selected = chats.find((chat) => chat.selected);
+    // Keep the stored choice aligned with what the server actually resolved.
+    rememberChat(selected ? selected.handle : "");
+    if (chats.length < 2) {
+      label.classList.add("hidden");
+      return;
+    }
+    clear(select);
+    chats.forEach((chat) => {
+      const option = element("option", null, chat.title);
+      option.value = chat.handle;
+      option.selected = Boolean(chat.selected);
+      select.append(option);
+    });
+    label.classList.remove("hidden");
+  }
+
+  $("chat-switcher").addEventListener("change", async (event) => {
+    if (mutationInFlight) return;
+    rememberChat(event.target.value);
+    hideNotice();
+    try {
+      await reload();
+    } catch (error) {
+      showNotice(error.message, true);
+    }
+  });
+
   function renderOverview() {
     const profile = state.profile;
     $("identity").textContent = [profile.username || "Скрытый агент", state.achievements.title].filter(Boolean).join(" · ");
@@ -120,7 +171,7 @@
     $("network-light").classList.toggle("live", context.network_enabled);
     if (!context.chat_bound) {
       $("network-title").textContent = "Личное досье";
-      $("network-copy").textContent = "Для операций с ресурсами откройте приложение кнопкой из группового /spy.";
+      $("network-copy").textContent = "Напишите в игровом чате или вызовите /spy — после этого кабинет откроется с полным доступом.";
     } else if (!context.network_enabled) {
       $("network-title").textContent = "Сеть не активирована";
       $("network-copy").textContent = "Попросите master включить Spy Clicker в этом чате.";
@@ -128,6 +179,7 @@
       $("network-title").textContent = context.active_event ? "В чате идёт операция" : "Сеть активна";
       $("network-copy").textContent = `Активность ${context.activity_score.toFixed(1)} · профиль ${context.activity_profile}. События остаются в Telegram-чате.`;
     }
+    renderChatSwitcher(context.chats || []);
 
     renderCosts($("prestige-costs"), state.prestige.costs);
     $("prestige-button").disabled = !context.can_mutate;
@@ -350,6 +402,8 @@
   async function boot() {
     tg?.ready();
     tg?.expand();
+    // A /spy link carries a chat hint; let it win over a remembered choice.
+    if (tg?.initDataUnsafe?.start_param) rememberChat("");
     try {
       await reload();
       $("loading").classList.add("hidden");

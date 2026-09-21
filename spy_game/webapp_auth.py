@@ -96,7 +96,12 @@ def validate_init_data(
 
 
 class LaunchContextSigner:
-    """Issue user-bound, short-lived group contexts for ``startapp``."""
+    """Issue opaque, short-lived chat hints for ``startapp``.
+
+    The hint only tells the Mini App which group chat the link came from; it
+    is not bound to a user and is never required. The backend still checks
+    that the opener is a member of that chat before using it.
+    """
 
     _NONCE_SIZE = 24
     _SIGNATURE_SIZE = hashlib.sha256().digest_size
@@ -108,28 +113,27 @@ class LaunchContextSigner:
             hashlib.sha256,
         ).digest()
         self.ttl_seconds = ttl_seconds
-        self._contexts: dict[str, tuple[int, int, int]] = {}
+        self._contexts: dict[str, tuple[int, int]] = {}
 
     def _drop_expired(self, current: int) -> None:
         self._contexts = {
             token: context
             for token, context in self._contexts.items()
-            if context[2] >= current
+            if context[1] >= current
         }
 
-    def issue(self, chat_id: int, user_id: int, *, now: int | None = None) -> str:
+    def issue(self, chat_id: int, *, now: int | None = None) -> str:
         current = int(time.time()) if now is None else now
         self._drop_expired(current)
         nonce = secrets.token_bytes(self._NONCE_SIZE)
         signature = hmac.new(self._key, nonce, hashlib.sha256).digest()
         token = base64.urlsafe_b64encode(nonce + signature).rstrip(b"=").decode()
-        self._contexts[token] = (chat_id, user_id, current + self.ttl_seconds)
+        self._contexts[token] = (chat_id, current + self.ttl_seconds)
         return token
 
     def verify(
         self,
         token: str,
-        user_id: int,
         *,
         now: int | None = None,
     ) -> int:
@@ -159,7 +163,24 @@ class LaunchContextSigner:
         context = self._contexts.get(token)
         if context is None:
             raise WebAppAuthError("expired or unknown launch context")
-        chat_id, expected_user_id, expires_at = context
-        if chat_id == 0 or expected_user_id != user_id or expires_at < current:
-            raise WebAppAuthError("expired or mismatched launch context")
+        chat_id, expires_at = context
+        if chat_id == 0 or expires_at < current:
+            raise WebAppAuthError("expired launch context")
         return chat_id
+
+
+def chat_handle(bot_token: str, user_id: int, chat_id: int) -> str:
+    """Opaque per-user chat identifier for the client.
+
+    Deterministic so the frontend can remember a selection, but useless to
+    anyone without the bot token: the backend only ever matches a handle
+    against the requesting user's own memberships.
+    """
+
+    key = hmac.new(
+        bot_token.encode("utf-8"),
+        b"spy-game-webapp-chat-handle-v1",
+        hashlib.sha256,
+    ).digest()
+    digest = hmac.new(key, f"{user_id}:{chat_id}".encode("utf-8"), hashlib.sha256)
+    return digest.hexdigest()[:16]

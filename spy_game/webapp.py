@@ -23,7 +23,12 @@ from .service import SpyGameService
 from .settings import ITEM_TYPES
 from .death_mission_repository import DeathMissionRun
 from .death_mission_ui import publish_pending
-from .webapp_auth import LaunchContextSigner, WebAppAuthError, validate_init_data
+from .webapp_auth import (
+    LaunchContextSigner,
+    WebAppAuthError,
+    chat_handle,
+    validate_init_data,
+)
 from . import webapp_presenters as presenters
 from . import webapp_notifications as notifications
 from .webapp_settings import SpyWebAppSettings
@@ -127,7 +132,7 @@ class SpyWebAppServer:
         runner, self._runner = self._runner, None
         await runner.cleanup()
 
-    def launch_url(self, chat_id: int, user_id: int) -> str | None:
+    def launch_url(self, chat_id: int) -> str | None:
         if (
             not self.settings.enabled
             or not self.service.settings.enabled
@@ -136,7 +141,7 @@ class SpyWebAppServer:
             return None
         if not self.service.settings.chat_is_allowed(chat_id):
             return self.settings.launch_url
-        token = self.signer.issue(chat_id, user_id)
+        token = self.signer.issue(chat_id)
         parsed = urlsplit(self.settings.launch_url)
         query = dict(parse_qsl(parsed.query, keep_blank_values=True))
         query["startapp"] = token
@@ -264,31 +269,56 @@ class SpyWebAppServer:
                 self.bot_token,
                 max_age_seconds=self.settings.init_data_max_age_seconds,
             )
-            if not self.rate_limiter.allow(user.user_id):
-                raise web.HTTPTooManyRequests(
-                    text="Слишком много запросов. Повторите через минуту."
-                )
-            chat_id = (
-                self.signer.verify(user.start_param, user.user_id)
-                if user.start_param
-                else None
-            )
         except WebAppAuthError as error:
             logger.warning("spy_webapp_auth_failed reason=%s", error)
             raise web.HTTPUnauthorized(text="Откройте приложение заново из Telegram")
+        if not self.rate_limiter.allow(user.user_id):
+            raise web.HTTPTooManyRequests(
+                text="Слишком много запросов. Повторите через минуту."
+            )
         if not self.service.settings.enabled:
             raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
-        if chat_id is not None and not self.service.settings.chat_is_allowed(chat_id):
-            raise web.HTTPForbidden(text="Этот чат недоступен")
-        if require_chat:
-            if chat_id is None:
-                raise web.HTTPForbidden(
-                    text="Откройте приложение кнопкой из группового /spy"
+        chats = await self.service.member_chats(user.user_id)
+        chat_id = self._select_chat(request, user, chats)
+        if require_chat and chat_id is None:
+            raise web.HTTPForbidden(
+                text=(
+                    "Напишите в игровом чате или вызовите /spy — после этого "
+                    "операции станут доступны."
                 )
-            status = await self.service.get_chat_status(chat_id)
-            if not status.enabled:
-                raise web.HTTPForbidden(text="Сеть в этом чате не активирована")
-        return RequestIdentity(user, chat_id)
+            )
+        return RequestIdentity(user, chat_id, chats)
+
+    def _select_chat(
+        self,
+        request: web.Request,
+        user,
+        chats: tuple,
+    ) -> int | None:
+        """Pick the group context: explicit selection, then /spy hint, then recency.
+
+        Membership already guarantees the chat is enabled and allowlisted, so
+        a hint or selection that is not in ``chats`` is simply ignored. The
+        frontend drops its stored selection when a launch carries a hint, so
+        the hint wins on the first load and the user's switch wins afterwards.
+        """
+
+        if not chats:
+            return None
+        selected = request.headers.get("X-Spy-Chat", "")
+        if selected and re.fullmatch(r"[0-9a-f]{16}", selected):
+            for chat in chats:
+                if chat_handle(self.bot_token, user.user_id, chat.chat_id) == selected:
+                    return chat.chat_id
+        if user.start_param:
+            try:
+                hinted = self.signer.verify(user.start_param)
+            except WebAppAuthError as error:
+                logger.info("spy_webapp_launch_hint_ignored reason=%s", error)
+            else:
+                if any(chat.chat_id == hinted for chat in chats):
+                    return hinted
+        return chats[0].chat_id
 
     @staticmethod
     async def _json_object(request: web.Request) -> dict:
@@ -303,7 +333,13 @@ class SpyWebAppServer:
     async def state(self, request: web.Request) -> web.Response:
         identity = await self._authenticate(request, require_chat=False)
         return self._json_response(
-            await presenters.state_payload(self.service, identity)
+            await presenters.state_payload(
+                self.service,
+                identity,
+                lambda chat_id: chat_handle(
+                    self.bot_token, identity.user.user_id, chat_id
+                ),
+            )
         )
 
     async def achievement_title(self, request: web.Request) -> web.Response:

@@ -621,6 +621,15 @@ class ChatStatus:
 
 
 @dataclass(frozen=True)
+class ChatMembership:
+    """An enabled allowlisted chat the user has been seen in."""
+
+    chat_id: int
+    title: str | None
+    last_seen_at: datetime
+
+
+@dataclass(frozen=True)
 class AdminResult:
     ok: bool
     message: str

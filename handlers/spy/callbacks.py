@@ -22,6 +22,10 @@ from .missions import _death_mission_callback
 from .achievements import handle_archive
 
 
+def _is_group(chat) -> bool:
+    return getattr(chat, "type", None) in {"group", "supergroup"}
+
+
 async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
@@ -32,7 +36,11 @@ async def spy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if len(parts) != 3 or parts[0] != "spy":
         await query.answer("Некорректный сигнал.", show_alert=True)
         return
-    _service(context)
+    service = _service(context)
+    if _is_group(chat) and not getattr(user, "is_bot", False):
+        await service.touch_member(
+            chat.id, user.id, title=getattr(chat, "title", None)
+        )
     category, value = parts[1], parts[2]
     handler = EXACT_ACTIONS.get(category)
     if handler is None:

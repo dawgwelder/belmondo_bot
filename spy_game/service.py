@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import random
 from datetime import datetime
-from .activity import ActivityTracker
+from .activity import ActivityTracker, MemberTouch
 from .database import SQLiteDatabase
 from .director import GameDirector, build_director
 from .duels import SpyDuelRepository
 from .mole_generator import MoleCaseGenerator
-from .models import AdminResult, ChatStatus, TickResult
+from .models import AdminResult, ChatMembership, ChatStatus, TickResult
 from .repositories import SpyRepository
 from .rewards import RewardResolver
 from .scheduler import ActivityPolicy, ActivityTriggerSettings, RandomSource
@@ -151,10 +151,56 @@ class SpyGameService(UseCases):
         user_id: int,
         *,
         now: datetime | None = None,
+        title: str | None = None,
     ) -> bool:
         if not self.chat_is_available(chat_id):
             return False
-        return await self.activity.record(chat_id, user_id, now or utc_now())
+        return await self.activity.record(
+            chat_id, user_id, now or utc_now(), title
+        )
+
+    async def touch_member(
+        self,
+        chat_id: int,
+        user_id: int,
+        *,
+        title: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Buffer chat membership; the next tick persists it."""
+
+        if not self.settings.chat_is_allowed(chat_id):
+            return
+        await self.activity.touch(chat_id, user_id, now or utc_now(), title)
+
+    async def touch_member_now(
+        self,
+        chat_id: int,
+        user_id: int,
+        *,
+        title: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Persist chat membership immediately (used by /spy)."""
+
+        if not self.settings.chat_is_allowed(chat_id):
+            return
+        touch = MemberTouch(now or utc_now(), title)
+        await self.database.transaction(
+            lambda connection: self.repository.lifecycle.upsert_members(
+                connection, {(chat_id, user_id): touch}
+            ),
+            immediate=True,
+        )
+
+    async def member_chats(self, user_id: int) -> tuple[ChatMembership, ...]:
+        if not self.settings.enabled:
+            return ()
+        return await self.database.read(
+            lambda connection: self.repository.lifecycle.list_member_chats(
+                connection, user_id
+            )
+        )
 
     async def tick(self, *, now: datetime | None = None) -> TickResult:
         current = now or utc_now()
@@ -171,16 +217,19 @@ class SpyGameService(UseCases):
         if not self.settings.enabled:
             return TickResult()
         counts = await self.activity.drain()
+        touches = await self.activity.drain_touches()
         try:
-            prepared = await self.database.transaction(
-                lambda connection: self.repository.scheduling.prepare_tick(
+
+            def prepare(connection):
+                self.repository.lifecycle.upsert_members(connection, touches)
+                return self.repository.scheduling.prepare_tick(
                     connection,
                     counts,
                     self.settings.allowed_chat_ids,
                     current,
-                ),
-                immediate=True,
-            )
+                )
+
+            prepared = await self.database.transaction(prepare, immediate=True)
             spawned = []
             for state in prepared.due:
                 decision = await self.director.choose_event(state)
@@ -213,7 +262,7 @@ class SpyGameService(UseCases):
                 self._startup_expired = ()
             return result
         except Exception:
-            await self.activity.restore(counts)
+            await self.activity.restore(counts, touches)
             raise
 
     async def enable_chat(

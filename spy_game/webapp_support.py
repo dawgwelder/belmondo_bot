@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from .models import ChatMembership
 from .webapp_auth import WebAppIdentity
 
 
@@ -11,6 +12,7 @@ from .webapp_auth import WebAppIdentity
 class RequestIdentity:
     user: WebAppIdentity
     chat_id: int | None
+    chats: tuple[ChatMembership, ...] = ()
 
 
 class _RateLimiter:

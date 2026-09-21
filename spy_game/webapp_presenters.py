@@ -1,6 +1,8 @@
 """JSON presentation for Mini App state and HTML5 game results."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .equipment import EQUIPMENT_EXCHANGE_RULE
 from .models import DeadDropGameRun, FindMoleGameRun, InterceptGameRun
 from .service import SpyGameService
@@ -9,7 +11,29 @@ from .death_mission_ui import text as mission_text
 from .webapp_support import RequestIdentity
 
 
-async def state_payload(service: SpyGameService, identity: RequestIdentity) -> dict:
+def chat_options(
+    identity: RequestIdentity,
+    handle: Callable[[int], str],
+) -> list[dict]:
+    """Chats the user may operate from; numeric IDs never leave the server."""
+
+    options = []
+    for index, chat in enumerate(identity.chats, start=1):
+        options.append(
+            {
+                "handle": handle(chat.chat_id),
+                "title": chat.title or f"Чат {index}",
+                "selected": chat.chat_id == identity.chat_id,
+            }
+        )
+    return options
+
+
+async def state_payload(
+    service: SpyGameService,
+    identity: RequestIdentity,
+    chat_handle: Callable[[int], str] | None = None,
+) -> dict:
     user = identity.user
     profile = await service.get_profile(
         user_id=user.user_id,
@@ -139,6 +163,7 @@ async def state_payload(service: SpyGameService, identity: RequestIdentity) -> d
         ],
         "context": {
             "chat_bound": identity.chat_id is not None,
+            "chats": chat_options(identity, chat_handle) if chat_handle else [],
             "can_mutate": bool(chat_status and chat_status.enabled),
             "network_enabled": bool(chat_status and chat_status.enabled),
             "activity_score": chat_status.activity_score if chat_status else None,
