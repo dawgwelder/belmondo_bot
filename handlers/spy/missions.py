@@ -55,7 +55,7 @@ async def _death_mission_callback_locked(update, context, category, value):
             run_id = await service.death_mission_run_id(result.launch_token)
         else:
             run_id, revision, code = value.split(".")
-            if code not in {"askextract", "askabandon"}:
+            if not death_mission_ui.is_navigation(code):
                 action, choice = death_mission_ui.decode(code)
                 result = await service.mission_callback(
                     run_id=run_id,
@@ -102,38 +102,15 @@ async def _death_mission_callback_locked(update, context, category, value):
             await query.answer("Это операция другого агента.", show_alert=True)
             return
         payload, event_id = latest
-        if category == "deathmenu" or code in {"askextract", "askabandon"}:
+        if category == "deathmenu" or (code and death_mission_ui.is_navigation(code)):
             await query.answer()
         if payload["status"] in death_mission_ui.TERMINAL:
             return
-        markup = death_mission_ui.keyboard(payload, run_id, event_id)
-        copy = death_mission_ui.text(payload)
-        if code in {"askextract", "askabandon"} and payload["status"] == "in_run":
-            extract = code == "askextract"
-            if extract and not payload["mission"]["checkpoint"]:
-                return
-            action = "extract" if extract else "abandon"
-            copy += "\n\n" + (
-                "Завершить миссию и вернуть указанный состав?"
-                if extract
-                else "Сдаться и потерять всю ставку?"
-            )
-            markup = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "Подтвердить",
-                            callback_data=f"spy:mission:{run_id}.{payload['revision']}.{action}",
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "Продолжить миссию",
-                            callback_data=f"spy:deathmenu:{event_id}",
-                        )
-                    ],
-                ]
-            )
+        nav = code if code and death_mission_ui.is_navigation(code) else None
+        if nav == "askextract" and not payload["mission"]["checkpoint"]:
+            return
+        markup = death_mission_ui.keyboard(payload, run_id, event_id, nav)
+        copy = death_mission_ui.text(payload, nav)
         if getattr(query.message, "game", None) is not None:
             markup = InlineKeyboardMarkup(
                 [

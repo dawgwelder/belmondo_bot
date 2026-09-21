@@ -88,6 +88,8 @@ class DeathMissionRepository:
         unlocked, progress = self.tactics(connection, row["user_id"])
         state = json.loads(row["state_json"])
         stake = json.loads(row["stake_json"])
+        rules = json.loads(row["rules_json"])
+        ruleset = engine.rules(rules.get("version", engine.VERSION))
         payload = {
             "game_type": "death_operation",
             "status": row["status"],
@@ -98,10 +100,22 @@ class DeathMissionRepository:
             "expires_at": row["expires_at"],
             "stake": self.bundle(stake),
             "extraction": self.bundle({k: v // 2 for k, v in stake.items() if v // 2}),
-            "rules": json.loads(row["rules_json"]),
+            "rules": rules,
             "mission": engine.public_state(state),
             "result": json.loads(row["result_json"]),
-            "tactics": [{"id": k, "name": engine.TACTICS[k][0]} for k in unlocked],
+            "tactics": [
+                dict(
+                    id=k,
+                    name=t.name,
+                    hp=t.hp,
+                    intel=t.intel,
+                    risk_modifier=t.risk_modifier,
+                    shield=t.shield,
+                    locked=k not in unlocked,
+                    unlock=t.unlock,
+                )
+                for k, t in ruleset.tactics.items()
+            ],
             "progress": progress,
         }
         if error:
@@ -171,7 +185,7 @@ class DeathMissionRepository:
         self.economy.ensure_user(connection, user_id, username, display_name, iso(now))
         settings = self.economy.settings
         rules = dict(
-            version=engine.VERSION,
+            version=engine.DEFAULT_VERSION,
             all_in_percent=settings.death_operation_success_percent,
             multiplier=settings.death_operation_reward_multiplier,
             seconds=settings.death_mission_seconds,
@@ -304,7 +318,7 @@ class DeathMissionRepository:
         if action != "action" or not isinstance(choice.get("id"), str):
             return "INVALID_ACTION"
         try:
-            state = engine.advance(state, choice["id"], row["seed"])
+            state, _events = engine.advance(state, choice["id"], row["seed"])
         except ValueError:
             return "INVALID_ACTION"
         connection.execute(
@@ -351,7 +365,12 @@ class DeathMissionRepository:
             )
             return "STALE_STAKE"
         seed = secrets.token_hex(32)
-        state = engine.initial(seed, row["tactic"]) if row["mode"] == "mission" else {}
+        version = rules.get("version", engine.VERSION)
+        state = (
+            engine.initial(seed, row["tactic"], version)
+            if row["mode"] == "mission"
+            else {}
+        )
         expires = iso(now + timedelta(seconds=rules["seconds"]))
         connection.execute(
             "UPDATE death_mission_runs SET status='in_run', seed=?, state_json=?, committed_at=?, "
@@ -388,7 +407,8 @@ class DeathMissionRepository:
         if row["mode"] == "all_in":
             outcome = (
                 "won"
-                if engine.roll(seed, "all_in") < rules["all_in_percent"]
+                if engine.roll(seed, "all_in", version=version)
+                < rules["all_in_percent"]
                 else "lost"
             )
             self.settle(
@@ -421,7 +441,14 @@ class DeathMissionRepository:
         if outcome == "won":
             tier = row["bonus"] if row["mode"] == "mission" else "tier3"
             pool = rules[tier]
-            agent = pool[engine.roll(row["seed"], "bonus", len(pool))]
+            agent = pool[
+                engine.roll(
+                    row["seed"],
+                    "bonus",
+                    len(pool),
+                    version=rules.get("version", engine.VERSION),
+                )
+            ]
             bonus[agent] = 2 if row["mode"] == "mission" and tier == "tier3" else 1
         for bundle in (returned, bonus):
             for agent, amount in bundle.items():
@@ -505,14 +532,15 @@ class DeathMissionRepository:
         for row in rows:
             self.refresh(connection, self.row(connection, run_id=row["id"]), now)
 
-    def pending_results(self, connection):
+    def pending_results(self, connection, now=None):
+        now = now or datetime.now(timezone.utc)
         rows = connection.execute(
             "SELECT r.id, r.user_id, e.chat_id, e.message_id, u.username "
             "FROM death_mission_outbox o JOIN death_mission_runs r ON r.id=o.run_id "
             "JOIN game_events e ON e.id=r.event_id JOIN users u ON u.user_id=r.user_id "
             "WHERE o.delivered_at IS NULL AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?) "
             "ORDER BY o.attempts, o.run_id LIMIT 20",
-            (iso(datetime.now(timezone.utc)),),
+            (iso(now),),
         ).fetchall()
         return [
             dict(

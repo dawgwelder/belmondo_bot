@@ -13,7 +13,7 @@ from aiohttp import web
 import handlers.spy_game as spy_handlers
 
 from spy_game import death_mission as engine
-from spy_game.death_mission_simulation import choose
+from spy_game.death_mission_simulation import choose, simulate
 from spy_game.death_mission_ui import keyboard, publish_pending
 from spy_game.models import DeathOperationStatus
 from spy_game.service import SpyGameService
@@ -428,6 +428,7 @@ async def test_http_modes_validation_secret_filter_and_wrong_game(service):
     payload = json.loads(response.text)
     assert payload["status"] == "armed"
     assert payload["bonus"] == "tier4"
+    assert "text" not in payload
     assert all(key not in payload for key in ("seed", "user_id", "token_hash", "route"))
     assert "PRIVATE NAME" not in response.text
     request.json = AsyncMock(
@@ -449,8 +450,8 @@ def test_engine_replay_is_deterministic_and_every_route_terminates():
             if state["outcome"]:
                 break
             action = choose(engine.public_state(state), "careful")
-            first = engine.advance(state, action, seed)
-            assert first == engine.advance(state, action, seed)
+            first, events = engine.advance(state, action, seed)
+            assert (first, events) == engine.advance(state, action, seed)
             state = first
             assert 0 <= state["hp"] <= 6
             assert 0 <= state["intel"] <= 6
@@ -459,11 +460,179 @@ def test_engine_replay_is_deterministic_and_every_route_terminates():
 
 
 def test_death_in_last_phase_takes_priority_over_victory():
-    state = engine.initial("last", "balanced")
+    state = engine.initial("last", "balanced", "roguelite_v1")
     state.update(phase="boss", boss="train", boss_phase=2, hp=1, intel=6, node=5)
-    result = engine.advance(state, "plan", "last")
+    result, events = engine.advance(state, "plan", "last")
     assert result["outcome"] == "lost"
     assert result["hp"] == 0
+    assert events and events[0]["hp"] == -1
+
+
+def test_preview_matches_both_branches_and_flags_deaths():
+    state = engine.initial("preview", "balanced", "roguelite_v1")
+    state.update(phase="action", room="ambush", hp=2, intel=1, alarm=5)
+    view = engine.public_state(state)
+    by_id = {a["id"]: a for a in view["actions"]}
+    fight = by_id["fight"]
+    assert fight["preview"]["success"] == dict(
+        hp=0, intel=1, alarm=4, dead=True, raid=True, passport=False, absorbed=0, medic=0
+    )
+    assert fight["preview"]["failure"]["dead"]
+    assert fight["certain_death"] and fight["may_die"] and fight["lethal"]
+    assert fight["odds"] == 0
+    retreat = by_id["retreat"]
+    assert retreat["preview"]["failure"] is None
+    assert retreat["certain_death"] and retreat["odds"] == 0
+    assert by_id["divert"]["enabled"] is False and by_id["divert"]["odds"] is None
+    # Both public branches replay exactly what advance() would do.
+    for failed in (False, True):
+        after, event = engine.resolve(state, "fight", failed)
+        assert event["failed"] is failed and event["hp"] == after["hp"] - 2
+    assert view["odds"] == round(100 * engine.finale_odds(state))
+
+
+def test_finale_odds_are_exact_and_module_offers_carry_deltas():
+    state = engine.initial("odds", "balanced", "roguelite_v1")
+    state.update(phase="boss", node=5, boss="train", hp=6, intel=4, alarm=0)
+    assert round(100 * engine.finale_odds(state)) == 49
+    assert round(100 * engine.finale_odds(state, ["armor"])) == 78
+    state.update(hp=1, intel=0)
+    # Only three straight lucky "force" rolls survive: 0.40 * 0.35 * 0.30.
+    assert round(1000 * engine.finale_odds(state)) == 42
+    view = engine.public_state(state)
+    assert [a["odds"] for a in view["actions"] if a["enabled"]] == [4]
+    offer = engine.initial("odds", "balanced", "roguelite_v1")
+    offer.update(phase="module", node=1, intel=4, offers=["armor", "escape"])
+    view = engine.public_state(offer)
+    armor, escape = view["actions"]
+    assert armor["odds"] > escape["odds"] == view["odds"]
+
+
+def test_advance_returns_state_and_events():
+    state = engine.initial("events", "balanced", "roguelite_v1")
+    state.update(phase="action", room="contact", hp=3, intel=1)
+    after, events = engine.advance(state, "deal", "events")
+    assert after is not events
+    assert events == [after["log"][-1]]
+    assert events[0]["kind"] == "action" and events[0]["intel"] == 2
+    picked, events = engine.advance(
+        engine.initial("events", "balanced", "roguelite_v1"),
+        engine.initial("events", "balanced", "roguelite_v1")["route"][0][0],
+        "events",
+    )
+    assert picked["phase"] == "action" and events == []
+
+
+def test_events_record_deltas_and_legacy_string_log_still_renders():
+    state = engine.initial("events", "balanced", "roguelite_v1")
+    state["log"].append("Старое действие — выполнено")
+    state.update(phase="action", room="contact", hp=3, intel=1)
+    after, _events = engine.advance(state, "deal", "events")
+    event = after["log"][-1]
+    assert event["kind"] == "action" and (event["hp"], event["intel"]) == (-1, 2)
+    assert event["node"] == 0 and event["title"] == "Двойной агент"
+    view = engine.public_state(after)
+    assert view["log"][0] == "Старое действие — выполнено"
+    assert view["log"][1] == "Купить сведения ценой прикрытия — выполнено: ❤️ −1, 🧠 +2"
+    assert view["events"][0] == {"kind": "text", "label": "Старое действие — выполнено"}
+    engine.validate(after)
+
+
+def test_v2_route_pressure_and_distinct_finale_phases():
+    state = engine.initial("v2", "balanced", "roguelite_v2")
+    assert state["version"] == engine.DEFAULT_VERSION == "roguelite_v2"
+    # Deeper nodes only offer rooms that cost something; shelter is fixed at node 2.
+    assert state["route"][1][0] == "shelter"
+    for layer in state["route"][3:]:
+        assert set(layer) <= {"patrol", "archive", "contact", "ambush"}
+    # Paying with intel is one point dearer at nodes 4-5 and rolls get riskier.
+    early = dict(state, phase="action", room="patrol", node=2, intel=3)
+    late = dict(state, phase="action", room="patrol", node=4, intel=3)
+    early_by, late_by = (
+        {a["id"]: a for a in engine.actions(s)} for s in (early, late)
+    )
+    assert (early_by["bypass"]["cost"], late_by["bypass"]["cost"]) == (1, 2)
+    assert late_by["rush"]["risk"] == early_by["rush"]["risk"] + 10
+    assert late_by["rush"]["damage"] == 3
+    # Walking away from surveillance is noticed.
+    archive = dict(state, phase="action", room="archive")
+    assert {a["id"]: a["alarm"] for a in engine.actions(archive)}["leave"] == 1
+    # Three different finale phases, three options each, alarm raises every risk.
+    boss = dict(state, phase="boss", node=5, boss="hq", intel=6)
+    phases = []
+    for boss_phase in range(3):
+        actions = engine.actions(dict(boss, boss_phase=boss_phase))
+        phases.append(tuple(a["id"] for a in actions))
+        plan = actions[0]
+        louder = engine.actions(dict(boss, boss_phase=boss_phase, alarm=2))[0]
+        assert louder["risk"] == plan["risk"] + 10
+    assert phases == [
+        ("plan", "force", "recon"),
+        ("plan", "force", "bribe"),
+        ("plan", "force", "sewer"),
+    ]
+    assert [engine.actions(dict(boss, boss_phase=p))[0]["damage"] for p in range(3)] == [3, 4, 5]
+
+
+def test_v2_modules_and_tactics_have_measurable_value():
+    base = engine.initial("mods", "balanced", "roguelite_v2")
+    entry = dict(base, phase="boss", node=5, boss="train", hp=5, intel=3, alarm=0)
+    plain = engine.finale_odds(entry)
+    assert 0.35 < plain < 0.65
+    for module in ("armor", "silencer", "medic"):
+        assert engine.finale_odds(entry, [module]) > plain, module
+    # Passport now also softens raids that do land.
+    raid = dict(base, phase="action", room="patrol", alarm=5, hp=4, modules=["passport"], passport_used=True)
+    after, event = engine.resolve(raid, "rush", True)
+    assert event["raid"] and after["hp"] == 4 - 2 - 1  # complication 2, raid 2 - 1
+    # Silencer only mutes complications, not deliberate noise.
+    quiet = dict(base, phase="action", room="archive", modules=["silencer"])
+    assert engine.resolve(quiet, "leave", False)[0]["alarm"] == 1
+    assert engine.resolve(quiet, "hack", True)[0]["alarm"] == 0
+    assert engine.resolve(dict(quiet, modules=[]), "hack", True)[0]["alarm"] == 1
+    # Medic works between finale phases.
+    hurt = dict(base, phase="boss", node=5, boss="train", hp=2, intel=6, modules=["medic"])
+    healed, event = engine.resolve(hurt, "plan", False)
+    assert event["medic"] == 1 and healed["hp"] == 3
+    # Stealth is no longer a downgrade: it lowers every rolled risk.
+    stealth = engine.initial("mods", "stealth", "roguelite_v2")
+    balanced = engine.initial("mods", "balanced", "roguelite_v2")
+    for state in (stealth, balanced):
+        state.update(phase="action", room="patrol")
+    risk = {s["tactic"]: engine.actions(s)[1]["risk"] for s in (stealth, balanced)}
+    assert risk["stealth"] == risk["balanced"] - 3
+
+
+@pytest.mark.asyncio
+async def test_open_v1_run_keeps_v1_rules_after_restart(service, monkeypatch):
+    token, started = await begin(service, monkeypatch, seed="legacy")
+    legacy = engine.initial("legacy", "balanced", "roguelite_v1")
+    legacy.update(phase="boss", node=5, checkpoint=True)
+
+    def pin_v1(connection):
+        row = connection.execute(
+            "SELECT rules_json FROM death_mission_runs"
+        ).fetchone()
+        rules = json.loads(row[0])
+        rules["version"] = "roguelite_v1"
+        connection.execute(
+            "UPDATE death_mission_runs SET state_json=?, rules_json=?",
+            (json.dumps(legacy), json.dumps(rules)),
+        )
+
+    await service.database.transaction(pin_v1, immediate=True)
+    restarted = SpyGameService(service.settings)
+    await restarted.initialize(now=NOW)
+    try:
+        state = await restarted.get_death_mission(token, now=NOW)
+        assert state.status == "in_run"
+        mission = state.payload["mission"]
+        assert mission["version"] == "roguelite_v1"
+        assert [a["id"] for a in mission["actions"]] == ["plan", "force"]
+        moved = await mutate(restarted, token, state, "action", {"id": "plan"})
+        assert moved.payload["mission"]["version"] == "roguelite_v1"
+    finally:
+        await restarted.close()
 
 
 @pytest.mark.asyncio
@@ -557,7 +726,9 @@ async def test_three_completed_checkpoints_unlock_tactic_once(service, monkeypat
         assert result.status == "won"
         again = await service.get_death_mission(token, now=NOW)
         assert again.payload["progress"]["checkpoint"] == index + 1
-    assert "stealth" in [t["id"] for t in result.payload["tactics"]]
+    assert "stealth" in [
+        t["id"] for t in result.payload["tactics"] if not t["locked"]
+    ]
 
 
 @pytest.mark.asyncio
@@ -650,3 +821,106 @@ async def test_telegram_entry_confirmation_and_all_in_result(service):
     assert await counts(service) == {"reserve": 1, "settle": 1}
     assert "@agent1" in bot.edit_message_text.call_args.kwargs["text"]
     assert "PRIVATE NAME" not in bot.edit_message_text.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_two_step_mission_entry_and_decision_copy(service, monkeypatch):
+    event_id = await service.database.read(
+        lambda c: c.execute("SELECT id FROM game_events").fetchone()[0]
+    )
+    query = SimpleNamespace(
+        data=f"spy:deathmenu:{event_id}",
+        id="open",
+        message=SimpleNamespace(message_id=100),
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=1, username="agent1", full_name="PRIVATE"),
+        effective_chat=SimpleNamespace(id=CHAT),
+    )
+    context = SimpleNamespace(
+        bot=SimpleNamespace(edit_message_text=AsyncMock()),
+        bot_data={"spy_game": service},
+    )
+
+    def buttons():
+        markup = query.edit_message_text.call_args.kwargs["reply_markup"]
+        return {b.text: b.callback_data for row in markup.inline_keyboard for b in row}
+
+    async def press(label, key):
+        query.data = buttons()[label]
+        query.id = key
+        await spy_handlers.spy_callback(update, context)
+
+    await spy_handlers.spy_callback(update, context)
+    assert "🕵️ Личная миссия — выбрать тактику" in buttons()
+    await press("🕵️ Личная миссия — выбрать тактику", "nav1")
+    text = query.edit_message_text.call_args.kwargs["text"]
+    assert "Выберите стартовую тактику" in text and "🔒 Тихий вход" in text
+    assert not any(label.startswith("Тихий") for label in buttons())
+    await press("Баланс · ❤️6 🧠2", "nav2")
+    assert "Выберите бонус" in query.edit_message_text.call_args.kwargs["text"]
+    await press("Бонус: Один агент Tier 4", "arm")
+    text = query.edit_message_text.call_args.kwargs["text"]
+    assert "Бонус финала: Один агент Tier 4" in text and "Тактика: Баланс" in text
+    assert await counts(service) == {}
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "spy_game.death_mission_repository.secrets.token_hex", lambda size: "beta"
+        )
+        await press("Подтвердить ставку и начать", "commit")
+    text = query.edit_message_text.call_args.kwargs["text"]
+    assert "Шанс пройти финал при текущих ресурсах" in text
+    assert "Эвакуация откроется после узла 3" in text
+    # Play to the checkpoint through the same keyboard, then open the confirmation.
+    token = (await launch(service)).launch_token
+    state = await service.get_death_mission(token, now=NOW)
+    while not state.payload["mission"]["checkpoint"]:
+        action = choose(state.payload["mission"], "careful")
+        state = await mutate(service, token, state, "action", {"id": action})
+    query.data = f"spy:deathmenu:{event_id}"
+    query.id = "reopen"
+    await spy_handlers.spy_callback(update, context)
+    text = query.edit_message_text.call_args.kwargs["text"]
+    assert "Последний ход:" in text and "(гарантированно)" in text
+    # Node 3 offers modules with odds deltas; action phases show both branches.
+    assert "% →" in text or "→ ❤️" in text
+    await press("🪂 Эвакуироваться", "ask")
+    assert "Завершить миссию" in query.edit_message_text.call_args.kwargs["text"]
+    assert await counts(service) == {"reserve": 1}
+    await press("Продолжить миссию", "continue")
+    assert "Варианты:" in query.edit_message_text.call_args.kwargs["text"]
+    await press("🪂 Эвакуироваться", "ask2")
+    await press("Подтвердить эвакуацию", "extract")
+    assert await counts(service) == {"reserve": 1, "settle": 1}
+
+
+@pytest.mark.asyncio
+async def test_html5_payload_is_structured_without_telegram_copy(service, monkeypatch):
+    token, state = await begin(service, monkeypatch, seed="0")
+    assert "text" not in state.payload
+    room = state.payload["mission"]["actions"][0]["id"]
+    state = await mutate(service, token, state, "action", {"id": room})
+    mission = state.payload["mission"]
+    assert "text" not in state.payload
+    action = next(a for a in mission["actions"] if a.get("enabled"))
+    assert action["preview"] and "success" in action["preview"]
+    assert "may_die" in action and "certain_death" in action
+    assert action["odds"] is not None
+    assert mission["odds"] is not None
+    assert isinstance(mission["events"], list)
+
+
+def test_simulator_strong_policy_reports_nodes_finale_and_gate():
+    report = simulate(8, "unit-gate", "roguelite_v2", gate=1.15)
+    strong = [row for row in report["results"] if row["policy"] == "strong"]
+    assert {row["tactic"] for row in strong} == set(engine.rules("roguelite_v2").tactics)
+    sample = strong[0]
+    assert isinstance(sample["deaths_by_node"], dict)
+    assert "reached_percent" in sample["finale_entry"]
+    assert report["economic_gate"]["policy"] == "strong"
+    assert report["economic_gate"]["limit"] == 1.15
+    assert "stake_return_ratio" in report["economic_gate"]
+

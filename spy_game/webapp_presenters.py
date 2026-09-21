@@ -7,7 +7,6 @@ from .equipment import EQUIPMENT_EXCHANGE_RULE
 from .models import DeadDropGameRun, FindMoleGameRun, InterceptGameRun
 from .service import SpyGameService
 from .settings import AGENT_TYPES, ITEM_TYPES
-from .death_mission_ui import text as mission_text
 from .webapp_support import RequestIdentity
 
 
@@ -357,4 +356,7 @@ def find_mole_game_payload(result: FindMoleGameRun) -> dict:
 
 
 def death_payload(result):
-    return {**result.payload, "text": mission_text(result.payload)}
+    """The HTML5 client renders structured state; Telegram copy stays server-side."""
+    payload = dict(result.payload)
+    payload.pop("text", None)
+    return payload
