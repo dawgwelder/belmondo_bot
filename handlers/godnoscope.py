@@ -1,12 +1,16 @@
 """Handlers for the /horoscope, /horoscope_mail commands and the inline-keyboard callback."""
 
+import re
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import config, logger
-from godnoscop.godnoscop_tracker import GodnoscopTracker
+from godnoscop.godnoscop_tracker import GodnoscopTracker, horo_list
 from guards import pause
 from horoscope import generate_post
+
+GODNOSCOPE_CALLBACK_PATTERN = r"^(?:" + "|".join(map(re.escape, horo_list)) + r")\Z"
 
 tracker = GodnoscopTracker(config)
 
@@ -60,6 +64,12 @@ async def button_godnoscope(
 ) -> None:
     """Handle horoscope sign selection from the inline keyboard."""
     query = update.callback_query
+    if (
+        query is None
+        or not isinstance(query.data, str)
+        or query.data not in horo_list
+    ):
+        return
     await query.answer()
 
     try:

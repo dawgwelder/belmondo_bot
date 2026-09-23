@@ -36,7 +36,12 @@ from handlers.games import (
     game_callback,
     game_cancel,
 )
-from handlers.godnoscope import button_godnoscope, get_horoscope, godnoscope
+from handlers.godnoscope import (
+    GODNOSCOPE_CALLBACK_PATTERN,
+    button_godnoscope,
+    get_horoscope,
+    godnoscope,
+)
 from handlers.messages import delete_dice, parse_message, spam_gif_detector
 from handlers.roulette import ROULETTE_CALLBACK_PATTERN, roulette_callback
 from handlers.spy_game import (
@@ -80,6 +85,23 @@ def _build_handlers() -> list:
         CommandHandler("game_cancel", game_cancel),
         CommandHandler("spy", spy_menu),
         CommandHandler("spy_admin", spy_admin),
+    ]
+
+
+def _build_callback_handlers() -> list:
+    return [
+        CallbackQueryHandler(
+            spy_html5_game_launch,
+            game_pattern=SPY_HTML5_GAME_PATTERN,
+        ),
+        CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN),
+        CallbackQueryHandler(game_callback, pattern=GAME_CALLBACK_PATTERN),
+        CallbackQueryHandler(roulette_callback, pattern=ROULETTE_CALLBACK_PATTERN),
+        CallbackQueryHandler(spy_callback, pattern=SPY_CALLBACK_PATTERN),
+        CallbackQueryHandler(
+            magic_prediction_callback, pattern=f"^{MAGIC_PREDICTION_CALLBACK}$"
+        ),
+        CallbackQueryHandler(button_godnoscope, pattern=GODNOSCOPE_CALLBACK_PATTERN),
     ]
 
 
@@ -176,30 +198,8 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     )
     application.add_handler(MessageHandler(media_spam_filter, spam_gif_detector))
 
-    application.add_handler(
-        CallbackQueryHandler(
-            spy_html5_game_launch,
-            game_pattern=SPY_HTML5_GAME_PATTERN,
-        )
-    )
-    application.add_handler(
-        CallbackQueryHandler(duel_callback, pattern=DUEL_CALLBACK_PATTERN)
-    )
-    application.add_handler(
-        CallbackQueryHandler(game_callback, pattern=GAME_CALLBACK_PATTERN)
-    )
-    application.add_handler(
-        CallbackQueryHandler(roulette_callback, pattern=ROULETTE_CALLBACK_PATTERN)
-    )
-    application.add_handler(
-        CallbackQueryHandler(spy_callback, pattern=SPY_CALLBACK_PATTERN)
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            magic_prediction_callback, pattern=f"^{MAGIC_PREDICTION_CALLBACK}$"
-        )
-    )
-    application.add_handler(CallbackQueryHandler(button_godnoscope))
+    for handler in _build_callback_handlers():
+        application.add_handler(handler)
 
     if spy_settings.enabled:
         if application.job_queue is None:
