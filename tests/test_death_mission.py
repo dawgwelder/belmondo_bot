@@ -118,7 +118,9 @@ async def counts(service):
 
 
 @pytest_asyncio.fixture
-async def service(tmp_path):
+async def service(tmp_path, monkeypatch):
+    # This suite preserves the shipped v3 contract; v4 has a separate suite.
+    monkeypatch.setattr(engine, "DEFAULT_VERSION", "roguelite_v3")
     config = SpySettings(
         mode="dev",
         enabled=True,
@@ -450,7 +452,7 @@ def test_engine_replay_is_deterministic_and_every_route_terminates():
         seed = str(index)
         state = engine.initial(seed, "balanced")
         assert all(len(layer) == 2 for layer in state["route"])
-        for _ in range(25):
+        for _ in range(60):
             if state["outcome"]:
                 break
             action = choose(engine.public_state(state), "careful")

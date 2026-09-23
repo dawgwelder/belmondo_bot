@@ -1,6 +1,6 @@
 """Reproducible offline balance report, using the production engine and payouts.
 
-python -m spy_game.death_mission_simulation --runs 10000 --seed validation-v3
+python -m spy_game.death_mission_simulation --runs 10000 --seed validation-v4
 
 ``strong`` optimises expected payout over the entire route, including evacuation
 and unseen offers. ``informed`` is the former finale-greedy heuristic. No policy
@@ -18,6 +18,7 @@ from statistics import median
 
 from . import death_mission as engine
 from .death_mission_policy import RoutePolicy
+from .death_mission_challenges import next_step
 from .death_mission_rewards import bonus_options, bonus_spec, payout, returned_stake
 from .settings import AGENT_TYPES, SpySettings
 
@@ -37,6 +38,14 @@ STAKES = {
         "ghost_agent": 2,
         "intelligence_director": 1,
     },
+}
+V4_STAKES = {
+    "single": {"informant": 1},
+    "small_mixed": {"informant": 5, "operative": 3, "analyst": 1},
+    "rare": {"resident": 8},
+    "specialists": {"resident": 8, "saboteur": 1, "ghost_agent": 1},
+    "full_basic": {"informant": 10},
+    "large": STAKES["large"],
 }
 MIN_VALIDATION_RUNS = 10_000
 
@@ -70,6 +79,8 @@ class Objective:
     extraction: float = 0.5
     stake: dict | None = None
     bonus: str = "none"
+    specialists: tuple[str, ...] = ()
+    solve_challenges: bool = True
 
     @classmethod
     def actual(cls, name, stake, bonus, rules):
@@ -78,10 +89,15 @@ class Objective:
         value = weighted(stake)
         return cls(
             name,
-            rules["multiplier"] + bonus_value / value,
+            weighted(
+                returned_stake(stake, "won", rules["multiplier"], ratio=engine.rules(rules["version"]).mission_return)
+            )
+            / value
+            + bonus_value / value,
             weighted(returned_stake(stake, "extracted", rules["multiplier"])) / value,
             stake,
             bonus,
+            tuple(key for key in engine.SPECIALISTS if stake.get(key, 0) > 0),
         )
 
 
@@ -103,6 +119,8 @@ def choose(state, policy, random_index=0, *, planner=None):
         if planner is None:
             raise ValueError("strong policy requires a RoutePolicy")
         return planner.choose(state)
+    if state["phase"] == "challenge":
+        return next_step(state["challenge"])
     if policy not in POLICIES:
         raise ValueError(f"unknown policy {policy!r}")
     actions = [a for a in state["actions"] if a.get("enabled", True)]
@@ -187,17 +205,22 @@ def _sample(count, prefix, version, tactic, policy, objective):
         if policy == "strong":
             for boss in engine.rules(version).bosses:
                 planner = RoutePolicy(
-                    version, tactic, boss, win_value=objective.win, extraction_value=objective.extraction
+                    version,
+                    tactic,
+                    boss,
+                    win_value=objective.win,
+                    extraction_value=objective.extraction,
+                    solve_challenges=objective.solve_challenges,
                 )
                 planners[boss] = planner
-                start = engine.initial("distribution-only", tactic, version)
+                start = engine.initial("distribution-only", tactic, version, specialists=objective.specialists)
                 start["boss"] = boss
                 model_values[boss] = (
                     planner.value(planner.position(engine.public_state(start, forecasts=False))) * objective.win
                 )
         for index in range(count):
             seed = f"{prefix}:{index}"
-            state = engine.initial(seed, tactic, version)
+            state = engine.initial(seed, tactic, version, specialists=objective.specialists)
             step = 0
             entered = False
             while not state["outcome"]:
@@ -206,7 +229,9 @@ def _sample(count, prefix, version, tactic, policy, objective):
                     entered = True
                     entries.append((state["hp"], state["intel"], state["alarm"]))
                 action = (
-                    "extract"
+                    "skip_puzzle"
+                    if view["phase"] == "challenge" and not objective.solve_challenges
+                    else "extract"
                     if should_extract(view, policy)
                     else choose(
                         view,
@@ -224,7 +249,7 @@ def _sample(count, prefix, version, tactic, policy, objective):
                 picks[f"{location}.{context}.{action}"] += 1
                 state, events = engine.advance(state, action, seed)
                 step += 1
-                if events:
+                if events and events[-1].get("kind") == "action":
                     event = events[-1]
                     if event["risk"]:
                         risky += 1
@@ -234,7 +259,7 @@ def _sample(count, prefix, version, tactic, policy, objective):
                         causes["raid" if event["raid"] else "complication" if event["failed"] else "health_cost"] += 1
                 # Policies use no private history. Keep simulation transitions cheap.
                 state["log"] = []
-                if step > 40:
+                if step > 60:
                     raise RuntimeError("non-terminating route")
             outcome = state["outcome"]
             outcomes[outcome] += 1
@@ -264,7 +289,9 @@ def _sample(count, prefix, version, tactic, policy, objective):
         mean_actions=round(sum(lengths) / count, 2),
         median_actions=median(lengths),
         p95_actions=sorted(lengths)[math.ceil(count * 0.95) - 1],
-        stake_return_ratio=round((2 * outcomes["won"] + 0.5 * outcomes["extracted"]) / count, 6),
+        stake_return_ratio=round(
+            (objective.win * outcomes["won"] + objective.extraction * outcomes["extracted"]) / count, 6
+        ),
         total_return_ratio=round(total / count, 6),
         total_return_ci95=interval(total, squares, count),
         deaths_by_node=dict(sorted(deaths.items())),
@@ -275,6 +302,8 @@ def _sample(count, prefix, version, tactic, policy, objective):
         outcomes_by_boss=dict(sorted(bosses.items())),
         complication_percent=round(100 * failed / risky, 2) if risky else 0,
         finale_entry=dict(reached_percent=round(100 * len(entries) / count, 2)),
+        specialists=list(objective.specialists),
+        puzzle_skill="perfect" if objective.solve_challenges else "skip",
     )
     if entries:
         for index, resource in enumerate(("hp", "intel", "alarm")):
@@ -340,14 +369,32 @@ def simulate(
         raise ValueError("runs must be positive")
     ruleset = engine.rules(version)
     rules = reward_rules(version)
-    tasks = [(policy, Objective("stake_only")) for policy in policies]
+    win = ruleset.mission_return[0] / ruleset.mission_return[1] if ruleset.mission_return else rules["multiplier"]
+    tasks = [(policy, Objective("stake_only", win=win)) for policy in policies]
     if include_economy and "strong" in policies:
         if ruleset.bonus_min_agents:
-            # One bonus per >=5 agents of at least that tier is worth <=S/5
+            # One bonus per threshold agents of at least that tier is worth <=S/threshold
             # for ANY positive nondecreasing tier weights. Extraction <=S/2.
             max_bonus = max(ruleset.tier3_bonus, ruleset.tier4_bonus) / ruleset.bonus_min_agents
-            tasks.append(("strong", Objective("all_stakes_bound", win=rules["multiplier"] + max_bonus)))
-        for name, stake in STAKES.items():
+            supports = (
+                [()] if not ruleset.specialists else [(), ("saboteur",), ("ghost_agent",), ("saboteur", "ghost_agent")]
+            )
+            for support in supports:
+                name = "all_stakes_bound" + (":" + "+".join(support) if support else "")
+                tasks.append(("strong", Objective(name, win=win + max_bonus, specialists=support)))
+            if ruleset.archive_challenge:
+                tasks.append(
+                    (
+                        "strong",
+                        Objective(
+                            "all_stakes_bound:skip_puzzles",
+                            win=win + max_bonus,
+                            specialists=tuple(engine.SPECIALISTS),
+                            solve_challenges=False,
+                        ),
+                    )
+                )
+        for name, stake in (V4_STAKES if ruleset.specialists else STAKES).items():
             options = [b for b in bonus_options(version, stake) if not b["locked"]]
             # When a free bonus is available, choosing none is dominated.
             if any(b["amount"] for b in options):
@@ -376,7 +423,7 @@ def simulate(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=10000)
-    parser.add_argument("--seed", default="validation-v3")
+    parser.add_argument("--seed", default="validation-v4")
     parser.add_argument("--version", choices=sorted(engine.RULESETS), default=engine.DEFAULT_VERSION)
     parser.add_argument("--gate", type=float, default=1.15, help="maximum full-payout return ratio, including bonuses")
     parser.add_argument("--policies", nargs="+", choices=POLICIES, default=POLICIES)

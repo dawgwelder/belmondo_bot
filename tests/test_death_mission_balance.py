@@ -32,7 +32,10 @@ def test_legacy_trajectories_match_frozen_152ee01(version, digest):
                 action = options[engine.roll("policy", f"{seed}:{step}") % len(options)]["id"]
                 state, _ = engine.advance(state, action, seed)
                 step += 1
-                actual.update(json.dumps(state, sort_keys=True, ensure_ascii=False).encode())
+                # Ignore only the new display metadata; all original state and
+                # event fields must still match the independently frozen engine.
+                baseline = dict(state, log=[{k: v for k, v in entry.items() if k != "roll"} for entry in state["log"]])
+                actual.update(json.dumps(baseline, sort_keys=True, ensure_ascii=False).encode())
     assert actual.hexdigest() == digest
 
 

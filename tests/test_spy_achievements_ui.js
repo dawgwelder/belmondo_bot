@@ -22,6 +22,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 function setup(inventory, context, startParam) {
   const nodes = new Map();
   const calls = [];
+  const redirects = [];
   const storage = new Map();
   const localStorage = {
     getItem: (key) => storage.get(key) ?? null,
@@ -49,6 +50,7 @@ function setup(inventory, context, startParam) {
     calls.push({path,options});
     if (options.method === "POST") {
       const body = JSON.parse(options.body);
+      if (path.endsWith("death/practice")) return {ok:true,json:async()=>({url:"/spy-app/game/#run=PRACTICE"})};
       if (path.endsWith("title")) {
         state.achievements.title_id = body.achievement_id;
         state.achievements.title = body.achievement_id ? "Серый кардинал" : null;
@@ -67,10 +69,26 @@ function setup(inventory, context, startParam) {
   };
   const webApp = {initData:"SIGNED",initDataUnsafe:{start_param:startParam},ready(){},expand(){}};
   vm.runInNewContext(fs.readFileSync("spy_game/webapp_static/app.js","utf8"), {
-    document,fetch,window:{Telegram:{WebApp:webApp},scrollTo(){},localStorage},
+    document,fetch,window:{Telegram:{WebApp:webApp},scrollTo(){},localStorage,location:{assign:url=>redirects.push(url)}},
   });
-  return {nodes,calls,storage};
+  return {nodes,calls,storage,redirects};
 }
+
+test("permanent practice starts with signed identity, no event and one request", async () => {
+  const {nodes,calls,redirects} = setup(null, {chat_bound:true,network_enabled:false,can_mutate:true,active_event:false});
+  await flush();
+  nodes.get("death-practice").fire();
+  nodes.get("death-practice").fire();
+  await flush();
+  const posts = calls.filter(c=>c.options.method === "POST");
+  assert.equal(posts.length,1);
+  assert.match(posts[0].path,/death\/practice$/);
+  assert.equal(posts[0].options.headers["X-Telegram-Init-Data"],"SIGNED");
+  assert.deepEqual(redirects,["/spy-app/game/#run=PRACTICE"]);
+  const readonly = setup();
+  await flush();
+  assert.equal(readonly.nodes.get("death-practice").disabled,true);
+});
 
 test("archive hides secrets, selects owned title and serializes repeated clicks",async()=>{
   const {nodes,calls} = setup();

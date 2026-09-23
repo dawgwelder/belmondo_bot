@@ -79,6 +79,11 @@ class Ruleset:
     bonus_min_agents: int = 0
     tier3_bonus: int = 2
     tier4_bonus: int = 1
+    specialists: bool = False
+    archive_challenge: bool = False
+    preserve_unused_shield: bool = False
+    filter_spent_escape: bool = False
+    mission_return: tuple[int, int] | None = None
     summary: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -361,12 +366,37 @@ ROGUELITE_V3 = replace(
     ),
 )
 
+ROGUELITE_V4 = replace(
+    ROGUELITE_V3,
+    version="roguelite_v4",
+    node_damage=(2, 2, 2, 3, 3),
+    node_risk_floor=(0, 0, 5, 15, 20),
+    specialists=True,
+    archive_challenge=True,
+    preserve_unused_shield=True,
+    filter_spent_escape=True,
+    mission_return=(6, 5),
+    bonus_min_agents=8,
+    modules={
+        **MODULES_V2,
+        "armor": Module("Бронепластины", "Первый урон в каждой комнате и один раз за весь финал уменьшен на 1."),
+    },
+    summary=(
+        "Урон осложнения на узлах: 2/2/2/3/3; минимальный риск на узлах 3–5: 5/15/20%.",
+        "В Архиве можно решить схему и получить +1 разведданное. Пропуск без штрафа.",
+        "Саботажник снижает риск прорыва на 10 п.п.; Призрак — риск тихого отхода на 15 п.п. По одному заряду.",
+        "Разведданные на узлах 4–5 дороже на 1. Урон осложнения в финале: 3/3/4.",
+        "Тревога добавляет 5 п.п. к обычному риску. При тревоге 6 — облава.",
+    ),
+)
+
 RULESETS: dict[str, Ruleset] = {
     ROGUELITE_V1.version: ROGUELITE_V1,
     ROGUELITE_V2.version: ROGUELITE_V2,
     ROGUELITE_V3.version: ROGUELITE_V3,
+    ROGUELITE_V4.version: ROGUELITE_V4,
 }
-DEFAULT_VERSION = ROGUELITE_V3.version
+DEFAULT_VERSION = ROGUELITE_V4.version
 
 
 def rules(version: str) -> Ruleset:

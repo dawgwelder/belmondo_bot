@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from .death_mission_repository import DeathMissionRepository
+from .death_mission_practice import DeathMissionPractice
 from .rewards import RewardResolver
 from .scheduler import ActivityPolicy, RandomSource
 from .settings import SpySettings
@@ -45,6 +46,7 @@ class SpyRepository(RepositoryComponent):
         self.slots = SlotsRepository(self.context, economy=self.economy)
         self.chase = ChaseRepository(self.context, economy=self.economy)
         self.death_mission = DeathMissionRepository(self.economy)
+        self.death_practice = DeathMissionPractice(self.death_mission)
         self.lifecycle = LifecycleRepository(
             self.context, death_mission=self.death_mission, chase=self.chase
         )

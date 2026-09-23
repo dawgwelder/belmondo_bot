@@ -183,6 +183,7 @@
 
     renderCosts($("prestige-costs"), state.prestige.costs);
     $("prestige-button").disabled = !context.can_mutate;
+    if ($("death-practice")) $("death-practice").disabled = !context.can_mutate;
 
     const agency = state.agency;
     $("agency-title").textContent = agency.at_cap
@@ -383,6 +384,21 @@
     confirmAction("Списать указанных агентов и повысить репутацию?", () => {
       mutate("prestige", { expected_reputation: state.prestige.expected_reputation }, "Репутация повышена.");
     });
+  });
+
+  $("death-practice")?.addEventListener("click", async () => {
+    if (mutationInFlight) return;
+    mutationInFlight = true;
+    $("death-practice").disabled = true;
+    try {
+      const result = await api("death/practice", { method: "POST", body: "{}" });
+      window.location.assign(result.url);
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      mutationInFlight = false;
+      $("death-practice").disabled = !state?.context.can_mutate;
+    }
   });
 
   $("agency-button").addEventListener("click", () => {

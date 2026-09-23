@@ -14,7 +14,11 @@ def bonus_options(version, stake):
                 name="Без дополнительного агента",
                 amount=0,
                 locked=False,
-                description="Победа удваивает ставку.",
+                description=(
+                    "Победа возвращает отряд и по одному агенту за каждые пять одного типа."
+                    if ruleset.mission_return
+                    else "Победа удваивает ставку."
+                ),
             )
         )
     for tier, amount in ((3, ruleset.tier3_bonus), (4, ruleset.tier4_bonus)):
@@ -36,8 +40,11 @@ def bonus_options(version, stake):
     return options
 
 
-def returned_stake(stake, outcome, multiplier, *, checkpoint=False):
+def returned_stake(stake, outcome, multiplier, *, checkpoint=False, ratio=None):
     if outcome == "won":
+        if ratio:
+            numerator, denominator = ratio
+            return {agent: amount * numerator // denominator for agent, amount in stake.items()}
         return {agent: amount * multiplier for agent, amount in stake.items()}
     if outcome == "cancelled_refunded":
         return dict(stake)
@@ -57,7 +64,8 @@ def bonus_spec(rules, stake, mode, choice):
 
 
 def payout(stake, outcome, rules, mode, choice, seed, *, checkpoint=False):
-    returned = returned_stake(stake, outcome, rules["multiplier"], checkpoint=checkpoint)
+    ratio = engine.rules(rules.get("version", engine.VERSION)).mission_return if mode == "mission" else None
+    returned = returned_stake(stake, outcome, rules["multiplier"], checkpoint=checkpoint, ratio=ratio)
     bonus = {}
     if outcome == "won":
         pool, amount = bonus_spec(rules, stake, mode, choice)

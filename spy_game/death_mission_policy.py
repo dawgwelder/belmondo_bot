@@ -15,6 +15,7 @@ from math import comb
 from typing import NamedTuple
 
 from . import death_mission as engine
+from .death_mission_challenges import next_step
 
 
 class Position(NamedTuple):
@@ -29,6 +30,7 @@ class Position(NamedTuple):
     armor_used: bool
     assault_shield: bool
     passport_used: bool
+    support: tuple[str, ...] = ()
 
 
 def expected_best(values, offered):
@@ -41,13 +43,14 @@ def expected_best(values, offered):
 
 
 class RoutePolicy:
-    def __init__(self, version, tactic, boss, *, win_value=2.0, extraction_value=0.5):
+    def __init__(self, version, tactic, boss, *, win_value=2.0, extraction_value=0.5, solve_challenges=True):
         if win_value <= 0 or not 0 <= extraction_value <= win_value:
             raise ValueError("invalid payout objective")
         self.version, self.tactic, self.boss = version, tactic, boss
         self.rules = engine.rules(version)
         self.win_value = win_value
         self.extraction = extraction_value / win_value
+        self.solve_challenges = solve_challenges
         # Instance-local caches can be released between economic scenarios.
         self.value = lru_cache(maxsize=None)(self._value)
 
@@ -66,6 +69,7 @@ class RoutePolicy:
             view["armor_used"] if view["phase"] == "boss" else False,
             view["assault_shield"],
             view["passport_used"],
+            tuple(sorted(key for key, ready in view.get("support", {}).items() if ready)),
         )
 
     def state(self, position):
@@ -81,6 +85,7 @@ class RoutePolicy:
             checkpoint=self.can_extract(position),
             survived_raid=False,
             outcome=None,
+            support={key: True for key in position.support},
         )
         return state
 
@@ -102,11 +107,15 @@ class RoutePolicy:
             state["armor_used"] if state["phase"] == "boss" else False,
             state["assault_shield"],
             state["passport_used"],
+            tuple(sorted(key for key, ready in state.get("support", {}).items() if ready)),
         )
 
     def action_value(self, position, action):
         if position.phase == "room":
-            return self.value(position._replace(phase="action", room=action["id"], armor_used=False))
+            intel = position.intel
+            if self.rules.archive_challenge and action["id"] == "archive" and self.solve_challenges:
+                intel = min(self.rules.max_intel, intel + 1)
+            return self.value(position._replace(phase="action", room=action["id"], armor_used=False, intel=intel))
         if position.phase == "module":
             return self.value(position._replace(phase="room", modules=tuple(sorted((*position.modules, action["id"])))))
         state = self.state(position)
@@ -137,8 +146,7 @@ class RoutePolicy:
             best = expected_best(
                 [
                     self.action_value(position, {"id": module})
-                    for module in self.rules.modules
-                    if module not in position.modules
+                    for module in engine.module_pool(self.version, position.node, position.modules)
                 ],
                 self.rules.module_offers,
             )
@@ -163,6 +171,8 @@ class RoutePolicy:
         return result
 
     def choose(self, view):
+        if view["phase"] == "challenge":
+            return next_step(view["challenge"]) if self.solve_challenges else "skip_puzzle"
         choices = self.choices(view)
         # Prefer keeping a guaranteed payout over an exactly equal risky one.
         return max(choices, key=lambda action: (choices[action], action == "extract"))

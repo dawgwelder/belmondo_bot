@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from . import death_mission as engine
-from .death_mission_rewards import bonus_options, bonus_spec, payout
+from .death_mission_rewards import bonus_options, bonus_spec, payout, returned_stake
 from .models import Reward
 from .persistence.economy import EconomyRepository
 from .settings import AGENT_TYPES
@@ -62,6 +62,11 @@ class DeathMissionRepository:
     def stake(self, connection, user_id):
         return {a.agent_type: a.amount for a in self.economy.get_agents(connection, user_id)}
 
+    def available(self, connection, row):
+        settings = self.economy.settings
+        chat = connection.execute("SELECT enabled FROM chat_state WHERE chat_id=?", (row["chat_id"],)).fetchone()
+        return settings.enabled and settings.chat_is_allowed(row["chat_id"]) and bool(chat and chat["enabled"])
+
     @staticmethod
     def tactics(connection, user_id):
         counts = dict(
@@ -96,6 +101,19 @@ class DeathMissionRepository:
             "expires_at": row["expires_at"],
             "stake": self.bundle(stake),
             "extraction": self.bundle({k: v // 2 for k, v in stake.items() if v // 2}),
+            "victory": self.bundle(
+                returned_stake(
+                    stake,
+                    "won",
+                    rules["multiplier"],
+                    ratio=ruleset.mission_return if row["mode"] != "all_in" or row["status"] == "preview" else None,
+                )
+            ),
+            "specialists": [
+                dict(id=key, **info)
+                for key, info in engine.SPECIALISTS.items()
+                if ruleset.specialists and stake.get(key)
+            ],
             "rules": rules,
             "bonuses": bonus_options(ruleset.version, stake),
             "mission": engine.public_state(state),
@@ -150,6 +168,8 @@ class DeathMissionRepository:
         ).fetchone()
         if not event or event["event_type"] != "death_operation":
             return self.view(connection, None)
+        if not self.available(connection, event):
+            return DeathMissionRun({"game_type": "death_operation", "status": "disabled"})
         existing = connection.execute(
             "SELECT id FROM death_mission_runs WHERE event_id = ? AND user_id = ?",
             (event["id"], user_id),
@@ -183,6 +203,9 @@ class DeathMissionRepository:
             tier3=list(settings.death_operation_bonus_pool),
             tier4=list(settings.death_mission_tier4_pool),
             confirm_seconds=settings.death_operation_confirmation_seconds,
+            mission_return=list(
+                engine.rules(engine.DEFAULT_VERSION).mission_return or (settings.death_operation_reward_multiplier, 1)
+            ),
         )
         run_id = secrets.token_hex(12)
         connection.execute(
@@ -203,6 +226,14 @@ class DeathMissionRepository:
     def refresh(self, connection, row, now):
         if row is None or row["status"] in TERMINAL:
             return row
+        if not self.available(connection, row):
+            if row["status"] == "in_run":
+                self.settle(connection, row, "cancelled_refunded", now)
+            else:
+                connection.execute(
+                    "UPDATE death_mission_runs SET status='expired', revision=revision+1 WHERE id=?", (row["id"],)
+                )
+            return self.row(connection, run_id=row["id"])
         if row["status"] == "in_run":
             try:
                 if row["mode"] == "mission":
@@ -232,6 +263,8 @@ class DeathMissionRepository:
         row = self.row(connection, token_hash=token_hash)
         if row is None:
             return self.view(connection, None)
+        if not self.available(connection, row):
+            return self.view(connection, self.refresh(connection, row, now), "DISABLED")
         request_hash = hashlib.sha256(dump([action, revision, choice]).encode()).hexdigest()
         previous = connection.execute(
             "SELECT * FROM death_mission_actions WHERE run_id=? AND operation_id=?",
@@ -353,7 +386,7 @@ class DeathMissionRepository:
             return "STALE_STAKE"
         seed = secrets.token_hex(32)
         version = rules.get("version", engine.VERSION)
-        state = engine.initial(seed, row["tactic"], version) if row["mode"] == "mission" else {}
+        state = engine.initial(seed, row["tactic"], version, specialists=stake) if row["mode"] == "mission" else {}
         expires = iso(now + timedelta(seconds=rules["seconds"]))
         connection.execute(
             "UPDATE death_mission_runs SET status='in_run', seed=?, state_json=?, committed_at=?, "
@@ -429,6 +462,16 @@ class DeathMissionRepository:
                     (row["user_id"], row["id"], achievement),
                 )
         result = dict(outcome=outcome, returned=self.bundle(returned), bonus=self.bundle(bonus))
+        if row["mode"] == "all_in" and outcome in {"won", "lost"}:
+            # All-in originally wins on low values. Reflect the SAME saved
+            # draw so both modes present high values as success on a 1..100 scale.
+            result["check"] = dict(
+                kind="all_in",
+                label="All-in",
+                risk=100 - rules["all_in_percent"],
+                roll=100 - engine.roll(row["seed"], "all_in", version=rules.get("version", engine.VERSION)),
+                failed=outcome == "lost",
+            )
         if state:
             state.update(outcome=outcome, phase="done")
         connection.execute(

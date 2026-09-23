@@ -82,6 +82,7 @@ class SpyWebAppServer:
                 web.get(f"{self.BASE_PATH}/health", self.health),
                 web.get(f"{self.BASE_PATH}/api/state", self.state),
                 web.post(f"{self.BASE_PATH}/api/slots/spin", self.slot_spin),
+                web.post(f"{self.BASE_PATH}/api/death/practice", self.death_practice),
                 web.post(
                     f"{self.BASE_PATH}/api/achievements/title", self.achievement_title
                 ),
@@ -559,6 +560,18 @@ class SpyWebAppServer:
         if self.bot is not None:
             await publish_pending(self.service, self.bot)
         return self._json_response(presenters.death_payload(result))
+
+    async def death_practice(self, request: web.Request) -> web.Response:
+        identity = await self._authenticate(request, require_chat=True)
+        result = await self.service.missions.start_death_practice(
+            user_id=identity.user.user_id,
+            chat_id=identity.chat_id,
+            username=identity.user.username,
+            display_name=identity.user.display_name,
+        )
+        if not result.launch_token:
+            raise web.HTTPServiceUnavailable(text="Тренировка сейчас недоступна")
+        return self._json_response({"url": f"{self.BASE_PATH}/game/#run={result.launch_token}"})
 
     async def game_finish(self, request: web.Request) -> web.Response:
         self._limit_game_mutation(request)

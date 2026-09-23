@@ -328,6 +328,9 @@ class LifecycleRepository(RepositoryComponent):
                 UNION ALL
                 SELECT 'death_operation' AS game_type, token_hash
                 FROM death_mission_runs
+                UNION ALL
+                SELECT 'death_operation' AS game_type, token_hash
+                FROM death_mission_practice
             ) WHERE token_hash = ?
             LIMIT 1
             """,

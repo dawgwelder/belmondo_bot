@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 from copy import deepcopy
 from functools import lru_cache
+from . import death_mission_challenges as challenges
 
 from .death_mission_content import (
     DEFAULT_VERSION,
@@ -46,6 +47,10 @@ TACTIC_NAMES = {
     tactic_id: tactic.name for ruleset in RULESETS.values() for tactic_id, tactic in ruleset.tactics.items()
 }
 TACTICS = TACTIC_NAMES  # id -> name; the set of start tactics across versions
+SPECIALISTS = {
+    "saboteur": dict(name="Саботажник", emoji="💣", reduction=10, ability="Подорвать проход"),
+    "ghost_agent": dict(name="Агент-призрак", emoji="👻", reduction=15, ability="Стереть след"),
+}
 
 
 def roll(seed: str, key: str, size: int = 100, version: str = VERSION) -> int:
@@ -64,7 +69,7 @@ def _rules(state: dict) -> Ruleset:
     return rules(state["version"])
 
 
-def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION) -> dict:
+def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION, *, specialists=()) -> dict:
     ruleset = rules(version)
     start = ruleset.tactics[tactic]
     route = [ranked(seed, f"room:{i}", ruleset.node_rooms[i] or ruleset.rooms, version)[:2] for i in range(5)]
@@ -73,7 +78,7 @@ def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION) -> dict:
             "shelter",
             next(room for room in route[index] if room != "shelter"),
         ]
-    return {
+    state = {
         "version": version,
         "phase": "room",
         "node": 0,
@@ -95,6 +100,34 @@ def initial(seed: str, tactic: str, version: str = DEFAULT_VERSION) -> dict:
         "log": [],
         "outcome": None,
     }
+    if ruleset.specialists:
+        state["support"] = {key: True for key in SPECIALISTS if key in specialists}
+    if ruleset.archive_challenge:
+        state["challenges"] = [challenges.board(seed, i) for i in range(5)]
+        state["challenge"] = None
+    return state
+
+
+def module_pool(version, node, modules):
+    ruleset = rules(version)
+    return [
+        key
+        for key in ruleset.modules
+        if key not in modules
+        and not (ruleset.filter_spent_escape and key == "escape" and node >= ruleset.checkpoint_node)
+    ]
+
+
+def _specialist(state, action_id):
+    if not _rules(state).specialists:
+        return None
+    if (state["phase"] == "boss" and state["boss_phase"] < 2 and action_id == "force") or (
+        state["phase"] == "action" and state["room"] == "ambush" and action_id == "fight"
+    ):
+        return "saboteur"
+    if state["phase"] == "boss" and state["boss_phase"] == 2 and action_id in {"plan", "sewer"}:
+        return "ghost_agent"
+    return None
 
 
 def _risk(state: dict, template: Action) -> int:
@@ -131,6 +164,12 @@ def actions(state: dict) -> list[dict]:
     """Public buttons for the current phase, without previews or odds."""
     ruleset = _rules(state)
     phase = state["phase"]
+    if phase == "challenge":
+        challenge = state["challenge"]
+        return [
+            dict(id=f"cell_{cell}", label=f"Клетка {cell // 4 + 1}:{cell % 4 + 1}")
+            for cell in challenges.moves(challenge)
+        ] + [dict(id="skip_puzzle", label="Пропустить схему без штрафа")]
     if phase == "room":
         return [
             dict(
@@ -172,6 +211,21 @@ def actions(state: dict) -> list[dict]:
                 enabled=state["intel"] >= cost,
             )
         )
+    for action in list(result):
+        specialist = _specialist(state, action["id"])
+        if specialist and state.get("support", {}).get(specialist):
+            info = SPECIALISTS[specialist]
+            result.append(
+                dict(
+                    action,
+                    id=f"{action['id']}:{specialist}",
+                    base_id=action["id"],
+                    specialist=specialist,
+                    label=f"{info['emoji']} {info['ability']}: {action['label']}",
+                    base_risk=action["risk"],
+                    risk=max(0, action["risk"] - info["reduction"]),
+                )
+            )
     return result
 
 
@@ -181,7 +235,7 @@ def _damage(state: dict, amount: int, event: dict) -> None:
         amount -= absorbed
         event["absorbed"] += absorbed
         state["armor_used"] = True
-    if state["assault_shield"]:
+    if state["assault_shield"] and (amount > 0 or not _rules(state).preserve_unused_shield):
         absorbed = min(1, amount)
         amount -= absorbed
         event["absorbed"] += absorbed
@@ -191,6 +245,8 @@ def _damage(state: dict, amount: int, event: dict) -> None:
 
 def _title(state: dict) -> str:
     ruleset = _rules(state)
+    if state["phase"] == "challenge":
+        return "Архив: восстановите цепь"
     if state["phase"] == "boss":
         return f"{ruleset.bosses[state['boss']]}: {ruleset.phases[min(2, state['boss_phase'])]}"
     if state["room"]:
@@ -214,7 +270,33 @@ def resolve(current: dict, action_id: str, failed: bool) -> tuple[dict, dict | N
     phase = state["phase"]
     if phase == "room":
         state.update(room=action_id, phase="action", armor_used=False)
+        if ruleset.archive_challenge and action_id == "archive":
+            state.update(phase="challenge", challenge=deepcopy(state["challenges"][state["node"]]))
         return state, None
+    if phase == "challenge":
+        outcome = "skipped"
+        if action_id != "skip_puzzle":
+            state["challenge"], outcome = challenges.advance(state["challenge"], int(action_id[5:]))
+        if outcome is None:
+            return state, None
+        before = state["intel"]
+        if outcome == "solved":
+            state["intel"] = min(ruleset.max_intel, state["intel"] + 1)
+        state.update(phase="action", challenge=None)
+        event = dict(
+            kind="challenge",
+            node=state["node"],
+            title="Схема архива",
+            hp=0,
+            intel=state["intel"] - before,
+            alarm=0,
+            failed=False,
+            label={"solved": "Цепь восстановлена", "missed": "Ходы схемы закончились", "skipped": "Схема пропущена"}[
+                outcome
+            ],
+        )
+        state["log"].append(event)
+        return state, event
     if phase == "module":
         state["modules"].append(action_id)
         state["offers"] = []
@@ -223,6 +305,9 @@ def resolve(current: dict, action_id: str, failed: bool) -> tuple[dict, dict | N
         return state, None
 
     failed = bool(failed and action["risk"])
+    specialist = action.get("specialist")
+    if specialist:
+        state["support"][specialist] = False
     event = dict(
         kind="action",
         node=state["node"],
@@ -240,6 +325,8 @@ def resolve(current: dict, action_id: str, failed: bool) -> tuple[dict, dict | N
         absorbed=0,
         medic=0,
     )
+    if specialist:
+        event["specialist"] = specialist
     before = dict(hp=state["hp"], intel=state["intel"], alarm=state["alarm"])
     state["intel"] -= action["cost"]
     state["intel"] += action["intel"]
@@ -315,19 +402,24 @@ def advance(current: dict, action_id: str, seed: str) -> tuple[dict, list[dict]]
     if action is None or not action.get("enabled", True):
         raise ValueError("Действие недоступно")
     risk = action.get("risk", 0)
-    failed = bool(
-        risk
-        and roll(
+    rolled = (
+        roll(
             seed,
-            f"action:{current['node']}:{current['boss_phase']}:{action_id}",
+            f"action:{current['node']}:{current['boss_phase']}:{action.get('base_id', action_id)}",
             version=current["version"],
         )
-        < risk
+        if risk
+        else None
     )
+    failed = rolled is not None and rolled < risk
     state, event = resolve(current, action_id, failed)
+    if event is not None and rolled is not None:
+        # Presentation only: 1..risk is a complication, risk+1..100 succeeds.
+        # Keep the original draw/key and every gameplay branch unchanged.
+        event["roll"] = rolled + 1
     if state["phase"] == "module" and not state["offers"]:
         ruleset = _rules(state)
-        pool = [m for m in ruleset.modules if m not in state["modules"]]
+        pool = module_pool(state["version"], state["node"], state["modules"])
         state["offers"] = ranked(seed, f"modules:{state['node']}", pool, state["version"])[: ruleset.module_offers]
     return state, ([] if event is None else [event])
 
@@ -369,6 +461,7 @@ def _boss_odds(
     armor_used: bool,
     assault_shield: bool,
     passport_used: bool,
+    support: tuple[str, ...] = (),
 ) -> float:
     if boss_phase >= 3:
         return 1.0
@@ -393,6 +486,7 @@ def _boss_odds(
         assault_shield=assault_shield,
         log=[],
         outcome=None,
+        support={key: True for key in support},
     )
     best = 0.0
     for action in actions(state):
@@ -419,6 +513,7 @@ def _boss_odds(
                     after["armor_used"],
                     after["assault_shield"],
                     after["passport_used"],
+                    tuple(key for key, ready in after.get("support", {}).items() if ready),
                 )
             )
         best = max(best, total)
@@ -449,6 +544,7 @@ def finale_odds(state: dict, modules: list[str] | None = None) -> float:
         state["armor_used"] if in_boss else False,
         state["assault_shield"],
         state["passport_used"],
+        tuple(key for key, ready in state.get("support", {}).items() if ready),
     )
 
 
@@ -459,7 +555,7 @@ def _percent(value: float) -> int:
 def _action_odds(state: dict, action: dict) -> int:
     if state["phase"] == "module":
         return _percent(finale_odds(state, state["modules"] + [action["id"]]))
-    if state["phase"] == "room":
+    if state["phase"] in {"room", "challenge"}:
         return _percent(finale_odds(state))
     total = 0.0
     risk = action["risk"] / 100
@@ -493,6 +589,8 @@ def describe_event(event) -> str:
         parts.append("облава")
     status = "осложнение" if event.get("failed") else "выполнено"
     detail = ", ".join(parts) or "без изменений"
+    if event.get("roll") is not None:
+        detail = f"бросок {event['roll']}/100, риск {event['risk']}%; " + detail
     return f"{event['label']} — {status}: {detail}"
 
 
@@ -519,6 +617,9 @@ def public_state(state: dict, *, forecasts: bool = True) -> dict:
             "passport_used",
         )
     }
+    result["support"] = dict(state.get("support", {}))
+    if state["phase"] == "challenge":
+        result["challenge"] = deepcopy(state["challenge"])
     if not forecasts:
         # Public observation for offline policies; omit presentation work and
         # forecasts, but expose no extra hidden information.
@@ -547,6 +648,9 @@ def public_state(state: dict, *, forecasts: bool = True) -> dict:
         title=_title(state),
         events=[e if isinstance(e, dict) else dict(kind="text", label=e) for e in state["log"]],
         log=[describe_event(e) for e in state["log"]],
+        map=public_map(state),
+        specialists=[dict(id=key, ready=ready, **SPECIALISTS[key]) for key, ready in state.get("support", {}).items()],
+        raid_hint=raid_hint(state),
     )
     if state["outcome"]:
         result.update(actions=[], odds=None)
@@ -556,6 +660,14 @@ def public_state(state: dict, *, forecasts: bool = True) -> dict:
     for action in actions(state):
         entry = dict(action)
         if "cost" in action:
+            # Show incremental complication alarm after the silencer, not an
+            # unconditional +1 that contradicts the actual preview.
+            if "silencer" not in state["modules"]:
+                entry["complication_alarm"] = 1
+            elif ruleset.silencer_only_complications:
+                entry["complication_alarm"] = 0
+            else:
+                entry["complication_alarm"] = max(0, action["alarm"]) - max(0, action["alarm"] - 1)
             branches = preview(state, action["id"]) if action["enabled"] else None
             entry["preview"] = branches
             deaths = [b["dead"] for b in (branches or {}).values() if b is not None]
@@ -564,6 +676,36 @@ def public_state(state: dict, *, forecasts: bool = True) -> dict:
             entry["lethal"] = entry["certain_death"]
         entry["odds"] = _action_odds(state, action) if action.get("enabled", True) else None
         result["actions"].append(entry)
+    return result
+
+
+def raid_hint(state):
+    ruleset = _rules(state)
+    if "passport" in state["modules"] and not state["passport_used"]:
+        return f"При тревоге {ruleset.raid_alarm} пропуск отменит облаву; тревога станет {ruleset.passport_alarm}."
+    damage = ruleset.raid_damage - (ruleset.passport_raid_reduction if "passport" in state["modules"] else 0)
+    return f"При тревоге {ruleset.raid_alarm}: облава, базовый урон {max(0, damage)}, тревога {ruleset.raid_reset}. Доступная защита поглощает урон."
+
+
+def public_map(state):
+    """Only visited and current rooms; no future offers or private challenge boards."""
+    ruleset = _rules(state)
+    visited = {
+        e["node"]: e["title"]
+        for e in state["log"]
+        if isinstance(e, dict) and e.get("kind") == "action" and e.get("boss_phase") is None
+    }
+    result = []
+    for node in range(5):
+        if node < state["node"]:
+            result.append(dict(node=node, status="visited", rooms=[dict(label=visited.get(node, "Узел пройден"))]))
+        elif node == state["node"]:
+            offered = state["route"][node] if state["phase"] == "room" else ([state["room"]] if state["room"] else [])
+            result.append(
+                dict(node=node, status="current", rooms=[dict(id=key, label=ruleset.rooms[key]) for key in offered])
+            )
+        else:
+            result.append(dict(node=node, status="hidden", rooms=[]))
     return result
 
 
@@ -581,7 +723,8 @@ def validate(state: dict) -> None:
     ):
         if type(state.get(key)) is not int or not 0 <= state[key] <= maximum:
             raise ValueError("invalid mission resource")
-    if state.get("phase") not in {"room", "action", "module", "boss"}:
+    phases = {"room", "action", "module", "boss"} | ({"challenge"} if ruleset.archive_challenge else set())
+    if state.get("phase") not in phases:
         raise ValueError("invalid mission phase")
     if state.get("boss") not in ruleset.bosses or state.get("tactic") not in ruleset.tactics:
         raise ValueError("unknown mission content")
@@ -593,4 +736,32 @@ def validate(state: dict) -> None:
         raise ValueError("invalid mission modules")
     if not isinstance(state.get("log"), list) or any(not isinstance(e, (str, dict)) for e in state["log"]):
         raise ValueError("invalid mission log")
+    if ruleset.specialists:
+        support = state.get("support")
+        if not isinstance(support, dict) or any(
+            key not in SPECIALISTS or type(value) is not bool for key, value in support.items()
+        ):
+            raise ValueError("invalid mission specialists")
+    if ruleset.archive_challenge:
+        boards = state.get("challenges")
+        if not isinstance(boards, list) or len(boards) != 5:
+            raise ValueError("invalid archive challenges")
+        for challenge in [*boards, *([state.get("challenge")] if state["phase"] == "challenge" else [])]:
+            if (
+                not isinstance(challenge, dict)
+                or challenge.get("size") != 4
+                or challenge.get("goal") != 15
+                or challenge.get("start") != 0
+            ):
+                raise ValueError("invalid archive board")
+            if (
+                not isinstance(challenge.get("blocked"), list)
+                or not isinstance(challenge.get("path"), list)
+                or not challenge["path"]
+            ):
+                raise ValueError("invalid archive path")
+            if type(challenge.get("moves_left")) is not int or not 0 <= challenge["moves_left"] <= 8:
+                raise ValueError("invalid archive moves")
+            if any(type(cell) is not int or not 0 <= cell < 16 for cell in challenge["blocked"] + challenge["path"]):
+                raise ValueError("invalid archive cell")
     public_state(state)

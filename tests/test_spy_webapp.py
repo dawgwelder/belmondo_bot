@@ -105,6 +105,46 @@ async def join(service, user_id=USER_ID, chat_id=CHAT_ID, title=None, now=None):
     await service.touch_member_now(chat_id, user_id, title=title, now=now)
 
 
+@pytest.mark.asyncio
+async def test_permanent_death_practice_requires_membership_but_no_event_or_agents(tmp_path):
+    service = SpyGameService(game_settings(tmp_path))
+    await service.initialize()
+    await service.enable_chat(CHAT_ID)
+    server = SpyWebAppServer(service, BOT_TOKEN, web_settings())
+    headers = {"X-Telegram-Init-Data": make_init_data()}
+    try:
+        with pytest.raises(web.HTTPUnauthorized):
+            await server.death_practice(request())
+        with pytest.raises(web.HTTPForbidden):
+            await server.death_practice(request(headers))
+        await join(service)
+        response = await server.death_practice(request(headers))
+        url = json.loads(response.text)["url"]
+        assert url.startswith("/spy-app/game/#run=")
+        token = url.split("#run=")[1]
+        kind, state = await service.get_html5_game(token)
+        assert kind == "death_operation" and state.payload["practice"]
+        req = request(
+            {"X-Spy-Game-Token": token},
+            {
+                "revision": state.payload["revision"],
+                "operation_id": "practice-archive",
+                "choice": {"id": "archive"},
+            },
+        )
+        req.match_info = {"action": "action"}
+        changed = json.loads((await server.game_death_action(req)).text)
+        assert changed["mission"]["phase"] == "challenge"
+        assert not await service.get_agents(USER_ID)
+        assert await service.database.read(lambda c: c.execute("SELECT COUNT(*) FROM game_events").fetchone()[0]) == 0
+        await service.disable_chat(CHAT_ID)
+        with pytest.raises(web.HTTPForbidden):
+            await server.death_practice(request(headers))
+        assert (await service.get_death_mission(token)).status == "cancelled_refunded"
+    finally:
+        await service.close()
+
+
 def test_telegram_init_data_validation_trusts_only_signed_fields():
     init_data = make_init_data(signature="telegram-ed25519-signature")
     identity = validate_init_data(
@@ -615,7 +655,7 @@ async def test_webapp_static_files_and_health_do_not_require_telegram_auth(tmp_p
         }
         game_javascript = await server.game_javascript(request())
         assert game_javascript.headers["Cache-Control"] == "no-store"
-        assert "game.js?v=4" in (server.ASSETS / "game.html").read_text()
+        assert "game.js?v=5" in (server.ASSETS / "game.html").read_text()
     finally:
         await service.close()
 

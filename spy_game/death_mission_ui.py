@@ -19,6 +19,7 @@ from .death_mission_repository import TERMINAL, iso
 
 logger = logging.getLogger("Belmondo Logger")
 ERRORS = {
+    "DISABLED": "Игра отключена. Зарезервированный отряд возвращён.",
     "STALE_STAKE": "Состав изменился. Проверьте новую ставку и подтвердите заново.",
     "STALE_REVISION": "Состояние изменилось в другом окне. Экран обновлён.",
     "IDEMPOTENCY_CONFLICT": "Этот ключ уже использован для другого действия.",
@@ -87,7 +88,10 @@ def action_text(action):
         if action[key]:
             details.append(f"{glyph} {signed(action[key])}")
     if action["risk"]:
-        details.append(f"⚠️ осложнение {action['risk']}%: {HP} −{action['damage']}, {ALARM} +1")
+        alarm = "без тревоги" if action.get("complication_alarm") == 0 else f"{ALARM} +1"
+        details.append(f"⚠️ осложнение {action['risk']}%: базовый урон {action['damage']}, {alarm}")
+    if action.get("specialist"):
+        details.append(f"специалист: риск {action['base_risk']}% → {action['risk']}%, 1 заряд")
     line = " · ".join(details) or "без изменения ресурсов"
     preview = action.get("preview")
     if preview:
@@ -155,6 +159,8 @@ def text(payload, nav=None):
                 "Возвращено: " + bundle_text(result["returned"]),
                 "Бонус: " + bundle_text(result["bonus"]),
             ]
+            if check := result.get("check"):
+                lines.append(f"Бросок: {check['roll']}/100 · для успеха нужно больше {check['risk']}.")
         mission = payload.get("mission") or {}
         if mission.get("log"):
             lines += ["Последние решения:"] + ["• " + line for line in mission["log"][-3:]]
@@ -169,12 +175,23 @@ def text(payload, nav=None):
             "СМЕРТЕЛЬНАЯ ОПЕРАЦИЯ",
             "На кону вся доступная сеть:\n" + bundle_text(payload["stake"]),
         ]
+        if payload.get("victory") is not None and (status == "preview" or payload.get("mode") != "all_in"):
+            lines.append("✓ При победе вернётся: " + bundle_text(payload["victory"]))
+            lines.extend(
+                f"{agent['emoji']} {agent['name']}: {agent['ability']}, −{agent['reduction']} п.п., 1 заряд."
+                for agent in payload.get("specialists", [])
+            )
         if status == "preview":
             lines.append(
                 f"🎲 All-in: мгновенный исход, успех {rules['all_in_percent']}%. "
                 f"При успехе сеть ×{rules['multiplier']} и Tier 3 ×1.\n"
-                f"🕵️ Личная миссия: 5 узлов и финальный объект. Победа: сеть "
-                f"×{rules['multiplier']}. Доступные бонусы зависят от состава ставки и показаны перед стартом.\n"
+                + (
+                    "🕵️ Личная миссия: на кону вся доступная сеть. Победа возвращает её "
+                    "и по одному агенту за каждые пять одного типа.\n"
+                    if rules.get("version") == "roguelite_v4"
+                    else f"🕵️ Личная миссия: 5 узлов и финальный объект. Победа: сеть ×{rules['multiplier']}.\n"
+                )
+                + "Доступные бонусы зависят от состава ставки и показаны перед стартом.\n"
                 "Эвакуация после узла 3 вернёт половину каждого типа (округление "
                 "вниз). При гибели ставка теряется. Закрытие окна не останавливает миссию."
             )
@@ -219,6 +236,12 @@ def mission_text(payload, nav=None):
         resources(view),
         "Модули: " + (", ".join(view["module_names"]) or "нет"),
     ]
+    if view.get("raid_hint"):
+        header.append(view["raid_hint"])
+    for specialist in view.get("specialists", []):
+        header.append(
+            f"{specialist['emoji']} {specialist['name']}: " + ("1 заряд" if specialist["ready"] else "заряд потрачен")
+        )
     if view.get("odds") is not None:
         header.append(
             f"🎯 Шанс пройти финал при текущих ресурсах: {view['odds']}%"
@@ -236,7 +259,27 @@ def mission_text(payload, nav=None):
     if nav == "askabandon":
         lines.append("Сдаться и потерять всю ставку?")
         return "\n\n".join(lines)
-    lines.append("Варианты:\n" + "\n".join(option_lines(view)))
+    if view["phase"] == "challenge":
+        challenge = view["challenge"]
+        cells = [
+            "⚡"
+            if cell == challenge["path"][-1]
+            else "❌"
+            if cell in challenge["blocked"]
+            else "🏁"
+            if cell == challenge["goal"]
+            else "🟩"
+            if cell in challenge["path"]
+            else "⬜"
+            for cell in range(16)
+        ]
+        lines.append("\n".join(" ".join(cells[i : i + 4]) for i in range(0, 16, 4)))
+        lines.append(
+            f"Проведите сигнал ⚡ к 🏁 соседними клетками, обходя ❌. Ходов: {challenge['moves_left']}. "
+            "Успех: +1 разведданное. Пропуск без штрафа."
+        )
+    else:
+        lines.append("Варианты:\n" + "\n".join(option_lines(view)))
     if view["phase"] == "module":
         lines.append(
             "Проценты оценивают только финал сейчас. Польза модуля на оставшихся узлах и ранняя эвакуация в них не учтены."
@@ -255,7 +298,11 @@ def mission_text(payload, nav=None):
 
 def continuation_text(payload):
     view = payload["mission"]
-    reward = f"При победе: сеть ×{payload['rules']['multiplier']}"
+    reward = "При победе: " + (
+        bundle_text(payload["victory"])
+        if payload.get("victory") is not None
+        else f"сеть ×{payload['rules']['multiplier']}"
+    )
     reward += ". " if payload["bonus"] == "none" else " и выбранный бонус. "
     if view["phase"] == "boss":
         return reward + f"Шанс пройти оставшиеся фазы финала при лучших решениях: {view['odds']}%."

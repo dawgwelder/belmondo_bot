@@ -9,6 +9,27 @@ from .base import UseCases, utc_now
 
 
 class MissionsUseCases(UseCases):
+    async def start_death_practice(self, *, user_id, chat_id, username, display_name, now=None):
+        token = secrets.token_urlsafe(32)
+        result = await self.database.transaction(
+            lambda connection: self.repository.death_practice.start(
+                connection,
+                user_id=user_id,
+                chat_id=chat_id,
+                username=username,
+                display_name=display_name,
+                token_hash=self._game_token_hash(token),
+                now=now or utc_now(),
+            ),
+            immediate=True,
+        )
+        return replace(result, launch_token=token) if "revision" in result.payload else result
+
+    def _mission_repository(self, connection, token_hash):
+        if self.repository.death_practice.row(connection, token_hash) is not None:
+            return self.repository.death_practice
+        return self.repository.death_mission
+
     async def start_death_mission(
         self, *, chat_id, message_id, user_id, username, display_name, now=None
     ) -> DeathMissionRun:
@@ -40,7 +61,7 @@ class MissionsUseCases(UseCases):
                 {"game_type": "death_operation", "status": "not_found"}
             )
         return await self.database.transaction(
-            lambda connection: self.repository.death_mission.get(
+            lambda connection: self._mission_repository(connection, self._game_token_hash(token)).get(
                 connection,
                 self._game_token_hash(token),
                 now or utc_now(),
@@ -79,7 +100,7 @@ class MissionsUseCases(UseCases):
                 {"game_type": "death_operation", "status": "not_found"}
             )
         return await self.database.transaction(
-            lambda connection: self.repository.death_mission.mutate(
+            lambda connection: self._mission_repository(connection, self._game_token_hash(token)).mutate(
                 connection,
                 token_hash=self._game_token_hash(token),
                 action=action,
