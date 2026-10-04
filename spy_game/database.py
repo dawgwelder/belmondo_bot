@@ -7,6 +7,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from typing import TypeVar
 
@@ -28,7 +29,11 @@ def _iter_sql_statements(source: str):
 
 
 class SQLiteDatabase:
-    """Serialize short SQLite operations in one worker thread."""
+    """Serialize short SQLite operations in one worker thread.
+
+    Operations must materialize results before returning: their connection is
+    closed before the result leaves the worker.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -45,10 +50,14 @@ class SQLiteDatabase:
             timeout=5.0,
             isolation_level=None,
         )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA synchronous=NORMAL")
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA synchronous=NORMAL")
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     async def initialize(self) -> None:
@@ -57,7 +66,8 @@ class SQLiteDatabase:
 
     def _initialize_sync(self) -> None:
         migrations_dir = Path(__file__).with_name("migrations")
-        with self._connect() as connection:
+        # The connection context handles transactions; closing owns the resource.
+        with closing(self._connect()) as connection, connection:
             mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             if str(mode).lower() != "wal":
                 raise RuntimeError(f"SQLite WAL mode unavailable: {mode}")
@@ -111,7 +121,7 @@ class SQLiteDatabase:
         operation: Callable[[sqlite3.Connection], T],
         immediate: bool,
     ) -> T:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             if not immediate:
                 return operation(connection)
             connection.execute("BEGIN IMMEDIATE")
