@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -26,6 +26,8 @@ sys.modules.setdefault(
     "config",
     SimpleNamespace(client=Mock(), logger=Mock(), TELEGRAM_MAX_MESSAGE_LENGTH=4096),
 )
+
+from time_utils import MOSCOW
 
 import handlers.games as game_handlers
 from games import GamePhase
@@ -80,7 +82,7 @@ class FakeMessage:
         self.from_user = user
         self.text = text
         self.reply_to_message = reply_to_message
-        self.date = datetime.now(timezone.utc)
+        self.date = datetime.now(MOSCOW)
         self.replies = []
 
     async def reply_text(self, text, **kwargs):
@@ -255,7 +257,9 @@ async def test_command_creates_lobby_for_each_registered_game(monkeypatch):
         creator = user(1, "Анна")
         message = FakeMessage(10, creator, f"/{game_type}")
 
+        before = datetime.now(MOSCOW).timestamp()
         await command(message_update(creator, message), ctx)
+        after = datetime.now(MOSCOW).timestamp()
 
         game = ctx.chat_data["llm_games"][-100]
         assert game.game_type == game_type
@@ -263,6 +267,9 @@ async def test_command_creates_lobby_for_each_registered_game(monkeypatch):
         assert game.phase is GamePhase.LOBBY
         assert message.replies[0].reply_markup.inline_keyboard
         assert ctx.job_queue.jobs[0].name == game.timeout_job_name
+        assert game.timeout_deadline.tzinfo is MOSCOW
+        seconds = ctx.job_queue.jobs[0].when
+        assert before + seconds <= game.timeout_deadline.timestamp() <= after + seconds
 
 
 @pytest.mark.asyncio

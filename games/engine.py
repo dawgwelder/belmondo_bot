@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Hashable
+
+from time_utils import MOSCOW
 
 
 class GameError(Exception):
@@ -209,7 +211,7 @@ class GameState:
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise InvalidTimeout("timeout deadline must be timezone-aware")
         self._timeout_job_name = job_name
-        self._timeout_deadline = deadline.astimezone(timezone.utc)
+        self._timeout_deadline = deadline.astimezone(MOSCOW)
 
     def clear_timeout(self) -> None:
         self._timeout_job_name = None

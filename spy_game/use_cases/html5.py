@@ -14,7 +14,7 @@ from ..models import (
     InterceptGameRun,
     InterceptGameStatus,
 )
-from .base import UseCases, utc_now, UseCaseContext
+from .base import UseCases, moscow_now, UseCaseContext
 from .missions import MissionsUseCases
 
 
@@ -41,7 +41,7 @@ class Html5UseCases(UseCases):
         targets = tuple(
             self.rng.randint(15, 85) for _ in range(self.settings.intercept_game_rounds)
         )
-        current = now or utc_now()
+        current = now or moscow_now()
         result = await self.database.transaction(
             lambda connection: self.repository.intercept.start_intercept_game(
                 connection,
@@ -115,7 +115,7 @@ class Html5UseCases(UseCases):
             self.rng.randint(0, 9)
             for _ in range(self.settings.dead_drop_game_code_length)
         )
-        current = now or utc_now()
+        current = now or moscow_now()
         result = await self.database.transaction(
             lambda connection: self.repository.dead_drop.start_dead_drop_game(
                 connection,
@@ -145,7 +145,7 @@ class Html5UseCases(UseCases):
             return DeadDropGameRun(DeadDropGameStatus.DISABLED)
         if not launch_token or len(launch_token) > 256:
             return DeadDropGameRun(DeadDropGameStatus.NOT_FOUND)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.dead_drop.get_dead_drop_game(
                 connection,
@@ -170,7 +170,7 @@ class Html5UseCases(UseCases):
             type(value) is not int or not 0 <= value <= 9 for value in guess
         ):
             raise ValueError("invalid dead drop code")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.dead_drop.guess_dead_drop_game(
                 connection,
@@ -191,7 +191,7 @@ class Html5UseCases(UseCases):
             return InterceptGameRun(InterceptGameStatus.DISABLED)
         if not launch_token or len(launch_token) > 256:
             return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.intercept.get_intercept_game(
                 connection,
@@ -216,7 +216,7 @@ class Html5UseCases(UseCases):
         token = secrets.token_urlsafe(32)
         token_hash = self._game_token_hash(token)
         run_id = secrets.token_hex(12)
-        current = now or utc_now()
+        current = now or moscow_now()
         result = await self.database.transaction(
             lambda connection: self.repository.find_mole.start_find_mole_game(
                 connection,
@@ -245,7 +245,7 @@ class Html5UseCases(UseCases):
             return FindMoleGameRun(FindMoleGameStatus.DISABLED)
         if not launch_token or len(launch_token) > 256:
             return FindMoleGameRun(FindMoleGameStatus.NOT_FOUND)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.find_mole.get_find_mole_game(
                 connection,
@@ -303,7 +303,7 @@ class Html5UseCases(UseCases):
             raise ValueError("invalid mole revision")
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", idempotency_key):
             raise ValueError("invalid mole idempotency key")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.find_mole.accuse_find_mole_game(
                 connection,
@@ -335,7 +335,7 @@ class Html5UseCases(UseCases):
                 FindMoleGameStatus.INVALID_SUSPECT,
                 event_id=event_id,
             )
-        current = now or utc_now()
+        current = now or moscow_now()
         run_id = secrets.token_hex(12)
         token_hash = self._game_token_hash(f"telegram:{event_id}:{user_id}:{run_id}")
         return await self.database.transaction(
@@ -370,7 +370,7 @@ class Html5UseCases(UseCases):
             type(value) is not int or not 0 <= value <= 100 for value in locks
         ):
             raise ValueError("invalid intercept locks")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.intercept.finish_intercept_game(
                 connection,

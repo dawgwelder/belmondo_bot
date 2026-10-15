@@ -20,7 +20,7 @@ from ..models import (
     NpcStatus,
     RecruitmentProgress,
 )
-from .base import UseCases, utc_now
+from .base import UseCases, moscow_now
 
 
 class EventsUseCases(UseCases):
@@ -39,7 +39,7 @@ class EventsUseCases(UseCases):
             return ClaimResult(ClaimStatus.INVALID_ACTION, event_id)
         if not self.chat_is_available(chat_id):
             return ClaimResult(ClaimStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.recruitment.claim(
                 connection,
@@ -81,7 +81,7 @@ class EventsUseCases(UseCases):
                 event_id,
                 recipe_id,
             )
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.contacts.exchange_with_handler(
                 connection,
@@ -108,7 +108,7 @@ class EventsUseCases(UseCases):
     ) -> DeadDropResult:
         if not self.chat_is_available(chat_id):
             return DeadDropResult(ClaimStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.dead_drop.claim_dead_drop(
                 connection,
@@ -140,7 +140,7 @@ class EventsUseCases(UseCases):
             )
         if not self.chat_is_available(chat_id):
             return DeathOperationResult(DeathOperationStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.death_operation.run_death_operation(
                 connection,
@@ -167,7 +167,7 @@ class EventsUseCases(UseCases):
     ) -> InterceptResult:
         if not self.chat_is_available(chat_id):
             return InterceptResult(InterceptStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.intercept.answer_intercept(
                 connection,
@@ -194,7 +194,7 @@ class EventsUseCases(UseCases):
     ) -> CooperativeResult:
         if not self.chat_is_available(chat_id):
             return CooperativeResult(CooperativeStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.cooperative.contribute_cooperative(
                 connection,
@@ -220,7 +220,7 @@ class EventsUseCases(UseCases):
     ) -> ChaseResult:
         if not self.chat_is_available(chat_id):
             return ChaseResult(ChaseStatus.DISABLED, event_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.chase.advance_chase(
                 connection,
@@ -247,7 +247,7 @@ class EventsUseCases(UseCases):
     ) -> NpcResult:
         if not self.chat_is_available(chat_id):
             return NpcResult(NpcStatus.DISABLED, event_id, recipe_id)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.contacts.interact_with_npc(
                 connection,
@@ -270,7 +270,7 @@ class EventsUseCases(UseCases):
     async def settle_chases(self, *, now=None):
         return await self.database.transaction(
             lambda connection: self.repository.chase.settle_due(
-                connection, now or utc_now()
+                connection, now or moscow_now()
             ),
             immediate=True,
         )
@@ -278,7 +278,7 @@ class EventsUseCases(UseCases):
     async def mark_chase_notified(self, event_id, *, now=None):
         await self.database.transaction(
             lambda connection: self.repository.chase.mark_notified(
-                connection, event_id, now or utc_now()
+                connection, event_id, now or moscow_now()
             ),
             immediate=True,
         )

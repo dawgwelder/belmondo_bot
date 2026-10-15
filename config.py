@@ -2,10 +2,10 @@
 
 from configparser import ConfigParser
 
-import pytz
 from openai import AsyncOpenAI as OpenAI
 
 from logger import get_logger
+from time_utils import MOSCOW
 
 logger = get_logger("Belmondo Logger")
 
@@ -17,6 +17,6 @@ client = OpenAI(
     base_url="https://api.deepseek.com",
 )
 
-tz = pytz.timezone("Europe/Moscow")
+tz = MOSCOW
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096

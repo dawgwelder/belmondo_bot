@@ -18,7 +18,7 @@ from .repositories import SpyRepository
 from .rewards import RewardResolver
 from .scheduler import ActivityPolicy, ActivityTriggerSettings, RandomSource
 from .settings import ACTIVITY_PROFILES, SpySettings
-from .use_cases.base import UseCaseContext, UseCases, utc_now
+from .use_cases.base import UseCaseContext, UseCases, moscow_now
 from .use_cases.missions import MissionsUseCases
 from .use_cases.html5 import Html5UseCases
 from .use_cases.duels import DuelsUseCases
@@ -126,7 +126,7 @@ class SpyGameService(UseCases):
 
     async def initialize(self, *, now: datetime | None = None) -> None:
         await self.database.initialize()
-        current = now or utc_now()
+        current = now or moscow_now()
         await self.database.transaction(
             lambda connection: self.repository.death_mission.reconcile(
                 connection, current
@@ -156,7 +156,7 @@ class SpyGameService(UseCases):
         if not self.chat_is_available(chat_id):
             return False
         return await self.activity.record(
-            chat_id, user_id, now or utc_now(), title
+            chat_id, user_id, now or moscow_now(), title
         )
 
     async def touch_member(
@@ -171,7 +171,7 @@ class SpyGameService(UseCases):
 
         if not self.settings.chat_is_allowed(chat_id):
             return
-        await self.activity.touch(chat_id, user_id, now or utc_now(), title)
+        await self.activity.touch(chat_id, user_id, now or moscow_now(), title)
 
     async def touch_member_now(
         self,
@@ -185,7 +185,7 @@ class SpyGameService(UseCases):
 
         if not self.settings.chat_is_allowed(chat_id):
             return
-        touch = MemberTouch(now or utc_now(), title)
+        touch = MemberTouch(now or moscow_now(), title)
         await self.database.transaction(
             lambda connection: self.repository.lifecycle.upsert_members(
                 connection, {(chat_id, user_id): touch}
@@ -203,7 +203,7 @@ class SpyGameService(UseCases):
         )
 
     async def tick(self, *, now: datetime | None = None) -> TickResult:
-        current = now or utc_now()
+        current = now or moscow_now()
         await self.database.transaction(
             lambda connection: self.duel_repository.reconcile(connection, current),
             immediate=True,
@@ -238,7 +238,7 @@ class SpyGameService(UseCases):
                     if decision.event_type == "find_mole"
                     else None
                 )
-                spawn_time = current if now is not None else utc_now()
+                spawn_time = current if now is not None else moscow_now()
                 event = await self.database.transaction(
                     lambda connection, state=state, decision=decision: (
                         self.repository.scheduling.spawn_due(
@@ -275,7 +275,7 @@ class SpyGameService(UseCases):
             return AdminResult(False, "Глобальный SPY_GAME_ENABLED выключен.")
         if not self.settings.chat_is_allowed(chat_id):
             return AdminResult(False, "Этот чат отсутствует в beta allowlist.")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.lifecycle.enable_chat(
                 connection, chat_id, current
@@ -289,7 +289,7 @@ class SpyGameService(UseCases):
         *,
         now: datetime | None = None,
     ) -> AdminResult:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.lifecycle.disable_chat(
                 connection, chat_id, current
@@ -319,7 +319,7 @@ class SpyGameService(UseCases):
                 False,
                 "Неизвестный профиль. Доступны: calm, balanced, aggressive.",
             )
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.scheduling.set_activity_profile(
                 connection,
@@ -363,7 +363,7 @@ class SpyGameService(UseCases):
             mole_case = await self.mole_generator.generate()
         else:
             mole_case = None
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.scheduling.manual_spawn(
                 connection,
@@ -389,7 +389,7 @@ class SpyGameService(UseCases):
         *,
         now: datetime | None = None,
     ) -> bool:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.lifecycle.cancel_publication(
                 connection, event_id, current

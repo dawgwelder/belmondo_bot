@@ -1,0 +1,118 @@
+{
+  "rules": "roguelite_v1",
+  "seed_prefix": "validation-v1",
+  "runs_per_policy_tactic": 10000,
+  "results": [
+    {
+      "tactic": "balanced",
+      "policy": "random",
+      "counts": {
+        "lost": 7538,
+        "won": 2462
+      },
+      "win_percent": 24.62,
+      "extract_percent": 0.0,
+      "mean_actions": 14.41,
+      "stake_return_ratio": 0.4924
+    },
+    {
+      "tactic": "balanced",
+      "policy": "aggressive",
+      "counts": {
+        "lost": 7529,
+        "won": 2471
+      },
+      "win_percent": 24.71,
+      "extract_percent": 0.0,
+      "mean_actions": 14.52,
+      "stake_return_ratio": 0.4942
+    },
+    {
+      "tactic": "balanced",
+      "policy": "careful",
+      "counts": {
+        "won": 3887,
+        "extracted": 4664,
+        "lost": 1449
+      },
+      "win_percent": 38.87,
+      "extract_percent": 46.64,
+      "mean_actions": 14.36,
+      "stake_return_ratio": 1.0106
+    },
+    {
+      "tactic": "stealth",
+      "policy": "random",
+      "counts": {
+        "lost": 7723,
+        "won": 2277
+      },
+      "win_percent": 22.77,
+      "extract_percent": 0.0,
+      "mean_actions": 14.31,
+      "stake_return_ratio": 0.4554
+    },
+    {
+      "tactic": "stealth",
+      "policy": "aggressive",
+      "counts": {
+        "lost": 7523,
+        "won": 2477
+      },
+      "win_percent": 24.77,
+      "extract_percent": 0.0,
+      "mean_actions": 14.52,
+      "stake_return_ratio": 0.4954
+    },
+    {
+      "tactic": "stealth",
+      "policy": "careful",
+      "counts": {
+        "won": 3948,
+        "extracted": 4660,
+        "lost": 1392
+      },
+      "win_percent": 39.48,
+      "extract_percent": 46.6,
+      "mean_actions": 14.36,
+      "stake_return_ratio": 1.0226
+    },
+    {
+      "tactic": "assault",
+      "policy": "random",
+      "counts": {
+        "lost": 7345,
+        "won": 2655
+      },
+      "win_percent": 26.55,
+      "extract_percent": 0.0,
+      "mean_actions": 14.49,
+      "stake_return_ratio": 0.531
+    },
+    {
+      "tactic": "assault",
+      "policy": "aggressive",
+      "counts": {
+        "lost": 7502,
+        "won": 2498
+      },
+      "win_percent": 24.98,
+      "extract_percent": 0.0,
+      "mean_actions": 14.53,
+      "stake_return_ratio": 0.4996
+    },
+    {
+      "tactic": "assault",
+      "policy": "careful",
+      "counts": {
+        "won": 3987,
+        "extracted": 4522,
+        "lost": 1491
+      },
+      "win_percent": 39.87,
+      "extract_percent": 45.22,
+      "mean_actions": 14.38,
+      "stake_return_ratio": 1.0235
+    }
+  ]
+}

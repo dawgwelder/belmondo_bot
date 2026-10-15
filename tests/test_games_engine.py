@@ -1,10 +1,12 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from time_utils import MOSCOW
 
 from games import (
     DuplicateParticipant,
@@ -119,7 +121,7 @@ def test_completing_rounds_advances_to_judging_and_finish_clears_timeout():
         game.submit(user_id, f"round two by {user_id}")
     assert game.phase is GamePhase.JUDGING
 
-    game.set_timeout("job", datetime(2026, 7, 11, tzinfo=timezone.utc))
+    game.set_timeout("job", datetime(2026, 7, 11, tzinfo=MOSCOW))
     game.finish()
     assert game.phase is GamePhase.FINISHED
     assert game.timeout_job_name is None
@@ -162,11 +164,11 @@ def test_timeout_metadata_must_be_timezone_aware_and_is_normalized():
     with pytest.raises(InvalidTimeout):
         game.set_timeout("job", datetime(2026, 7, 11))
 
-    game.set_timeout(
-        "job",
-        datetime(2026, 7, 11, 15, tzinfo=timezone(timedelta(hours=3))),
-    )
-    assert game.timeout_deadline == datetime(2026, 7, 11, 12, tzinfo=timezone.utc)
+    deadline = datetime.fromisoformat("2026-07-11T12:00:00+00:00")
+    game.set_timeout("job", deadline)
+    assert game.timeout_deadline == datetime(2026, 7, 11, 15, tzinfo=MOSCOW)
+    assert game.timeout_deadline.tzinfo is MOSCOW
+    assert game.timeout_deadline.timestamp() == deadline.timestamp()
 
 
 def test_store_enforces_one_active_game_per_chat():

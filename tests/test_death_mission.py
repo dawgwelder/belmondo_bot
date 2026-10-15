@@ -1,7 +1,9 @@
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -21,7 +23,7 @@ from spy_game.settings import SpySettings
 from spy_game.webapp import SpyWebAppServer, SpyWebAppSettings
 
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(MOSCOW)
 CHAT = -100123
 
 

@@ -409,13 +409,13 @@ async def publish_pending(service, bot):
         for row in rows:
             if row["message_id"] is None:
                 continue
-            from .service import utc_now
+            from .service import moscow_now
 
             # Back off failed/deleted messages without starving newer results.
             await service.database.transaction(
                 lambda connection, run_id=row["run_id"]: connection.execute(
                     "UPDATE death_mission_outbox SET attempts=attempts+1, next_attempt_at=? WHERE run_id=?",
-                    (iso(utc_now() + timedelta(seconds=60)), run_id),
+                    (iso(moscow_now() + timedelta(seconds=60)), run_id),
                 ),
                 immediate=True,
             )
@@ -438,7 +438,7 @@ async def publish_pending(service, bot):
             await service.database.transaction(
                 lambda connection, run_id=row["run_id"]: connection.execute(
                     "UPDATE death_mission_outbox SET delivered_at=? WHERE run_id=?",
-                    (iso(utc_now()), run_id),
+                    (iso(moscow_now()), run_id),
                 ),
                 immediate=True,
             )

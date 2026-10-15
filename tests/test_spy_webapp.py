@@ -2,7 +2,9 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -374,7 +376,7 @@ async def test_webapp_lists_member_chats_and_honours_selection(tmp_path):
     await service.initialize()
     await service.enable_chat(CHAT_ID)
     await service.enable_chat(other_chat)
-    base = datetime(2026, 9, 21, 12, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 21, 12, tzinfo=MOSCOW)
     await join(service, chat_id=other_chat, title="Old Network", now=base)
     await join(
         service,

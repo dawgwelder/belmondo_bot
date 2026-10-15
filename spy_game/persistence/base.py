@@ -1,24 +1,22 @@
-"""Shared repository dependencies and UTC serialization."""
+"""Shared repository dependencies and Moscow serialization."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime
 import uuid
+
+from time_utils import MOSCOW, moscow_iso
 
 from ..rewards import RewardResolver
 from ..scheduler import ActivityPolicy, RandomSource
 from ..settings import SpySettings
 
-
-def _iso(value: datetime) -> str:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("datetime must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
+_iso = moscow_iso
 
 
 def _datetime(value: str | None) -> datetime | None:
-    return None if value is None else datetime.fromisoformat(value)
+    return None if value is None else datetime.fromisoformat(value).astimezone(MOSCOW)
 
 
 def _new_event_id() -> str:

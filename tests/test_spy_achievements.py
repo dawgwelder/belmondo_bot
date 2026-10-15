@@ -2,7 +2,9 @@
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,7 +20,7 @@ from spy_game.settings import AGENT_TYPES, SpySettings
 from spy_game.webapp import SpyWebAppServer
 from test_spy_webapp import BOT_TOKEN, make_init_data, request, web_settings
 
-NOW = datetime(2026, 9, 7, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 7, tzinfo=MOSCOW)
 CHAT = -1234
 
 

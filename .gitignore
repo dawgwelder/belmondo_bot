@@ -16,3 +16,13 @@ img/eva/3.webp
 img/eva/4.webp
 img/eva/5.webp
 img/eva/6.webp
+.DS_Store
+CODE_REVIEW.md
+DUEL_LEADERBOARD_PLAN.md
+FEATURE_IDEAS.md
+
+# superpowers folder
+docs/superpowers/*
+
+# persistent Spy Clicker runtime data
+var/spy-game*.sqlite3*

@@ -15,7 +15,7 @@
 
 ## 1. Что требуется поднять
 
-Отдельная инфраструктура для Spy Clicker не нужна:
+Для core-механики отдельная инфраструктура не нужна:
 
 - бот остаётся одним Python-процессом и получает Telegram updates через polling;
 - планировщик событий работает в `python-telegram-bot JobQueue` внутри процесса;
@@ -33,7 +33,10 @@
 - `api.deepseek.com`, только когда включён LLM Narrator;
 - уже используемым ботом внешним источникам.
 
-Входящий HTTP-порт открывать не нужно.
+Входящий HTTP-порт не нужен, пока `SPY_GAME_WEBAPP_ENABLED=false`. Для Mini App
+потребуются публичный HTTPS на порту 443 и nginx перед локальным HTTP listener;
+отдельный Python service при этом не создаётся. Пошаговое обновление описано в
+[`spy-game-webapp-rollout.md`](spy-game-webapp-rollout.md).
 
 ## 2. Безопасный порядок rollout
 
@@ -43,7 +46,7 @@
 2. Проверить старт процесса и автоматическую миграцию SQLite.
 3. Включить игру только для одной beta-группы, Narrator оставить выключенным.
 4. Провести ручной smoke test core-механики.
-5. Запретить ручное создание событий и проверить естественный таймер.
+5. Запретить ручное создание событий и проверить естественный peak-trigger.
 6. Отдельно включить LLM Narrator и проверить fallback.
 
 Глобальный flag и allowlist дополняют друг друга. Один только
@@ -152,6 +155,11 @@ SPY_GAME_EVENT_LIFETIME_SECONDS=180
 SPY_GAME_ALLOW_MANUAL_SPAWN=false
 SPY_GAME_LLM_NARRATOR_ENABLED=false
 SPY_GAME_LLM_NARRATOR_TIMEOUT_SECONDS=8
+SPY_GAME_LLM_DIRECTOR_ENABLED=false
+SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS=8
+SPY_GAME_WEBAPP_ENABLED=false
+SPY_GAME_WEBAPP_HOST=127.0.0.1
+SPY_GAME_WEBAPP_PORT=8080
 ```
 
 Для нескольких beta-чатов ID перечисляются через запятую без пробелов или с
@@ -248,7 +256,7 @@ sudo journalctl -u belmondo.service -n 100 --no-pager
 Ожидаемая строка в journal:
 
 ```text
-Spy game initialized: enabled=False narrator=False mode=prod ...
+Spy game initialized: enabled=False director=False narrator=False webapp=False mode=prod ...
 ```
 
 Даже с выключенным feature flag приложение создаёт БД и применяет миграции, но
@@ -261,7 +269,7 @@ sudo -u belmondo sqlite3 /var/lib/belmondo-bot/spy-game.sqlite3 "PRAGMA journal_
 sudo -u belmondo test -w /var/lib/belmondo-bot/spy-game.sqlite3
 ```
 
-Ожидается `wal`, затем `ok`, затем список применённых миграций. Ошибка миграции,
+Ожидается `wal`, затем `ok`, затем версии `1`–`8`. Ошибка миграции,
 отсутствие WAL или циклический restart — условие `NO-GO`: игру не включать.
 
 ## 10. Сделать консистентный backup SQLite
@@ -281,12 +289,13 @@ sudo -u belmondo sqlite3 "$backup_path" "PRAGMA integrity_check;"
 
 ## 11. Включить core-механику в одном beta-чате
 
-Измените только три флага в `/etc/belmondo-bot/belmondo.env`:
+Измените только четыре флага в `/etc/belmondo-bot/belmondo.env`:
 
 ```dotenv
 SPY_GAME_ENABLED=true
 SPY_GAME_ALLOW_MANUAL_SPAWN=true
 SPY_GAME_LLM_NARRATOR_ENABLED=false
+SPY_GAME_LLM_DIRECTOR_ENABLED=false
 ```
 
 Перезапустите процесс и убедитесь, что включены core и template Narrator:
@@ -302,17 +311,55 @@ sudo journalctl -u belmondo.service -n 100 --no-pager
 ```text
 /spy_admin enable
 /spy_admin status
+/spy_admin activity
+/spy_admin activity aggressive
+/spy_admin activity balanced
 /spy_admin spawn
+/spy_admin spawn dead_drop
+/spy_admin spawn intercept
+/spy_admin spawn cooperative_operation
+/spy_admin spawn chase
+/spy_admin spawn handler
+/spy_admin spawn npc
+/spy_admin spawn death_operation
 ```
 
 Затем:
 
-1. Убедиться, что событие пришло Rich Message с кнопкой.
-2. Нажать кнопку от двух разных пользовательских аккаунтов.
-3. Проверить, что событие завершилось, награды начислены один раз, а старая
-   кнопка больше не принимает клик.
+1. Убедиться, что Recruitment пришёл одним обычным Telegram-сообщением с
+   Narrator-текстом, прогрессом `0/3` и кнопкой.
+2. Нажать кнопку от четырёх разных пользовательских аккаунтов.
+3. Проверить, что первые три аккаунта получили по агенту, событие закрылось
+   после третьего distinct-клика, а четвёртый не получил награду. Каждый клик
+   должен редактировать исходное сообщение, не создавая новое; публично должны
+   появляться только `@username`, без Telegram display name.
 4. Открыть `/spy` от обычного игрока и проверить меню, профиль и статус.
-5. Повторить клик после завершения и убедиться, что награда не дублируется.
+5. До третьего участника повторить клик первым аккаунтом: счётчик мест и награда
+   не должны дублироваться.
+6. Создать Handler через `/spy_admin spawn handler`: без нужных агентов обмен
+   должен вернуть требуемую стоимость и оставить событие активным.
+7. После накопления ресурсов проверить успешный Handler exchange, появление
+   Tier 2/3 в `/spy` и кнопку повышения reputation.
+8. Создать Dead Drop, одновременно нажать «Обыскать тайник» с двух аккаунтов и
+   убедиться, что item/agent начислен только одному игроку.
+9. Открыть «Инвентарь», экипировать найденный equipment и проверить сохранение
+   слотов после restart.
+10. Создать Death Operation, нажать «Поставить сеть на кон» один раз и
+    убедиться, что состав не изменился, а bot запросил подтверждение.
+11. Нажать второй раз в течение 60 секунд: при успехе состав должен удвоиться
+    и получить Tier 3, при провале все агенты должны исчезнуть. Повторный клик
+    не должен менять результат.
+12. Для Intercept проверить верный и неверный ответ: первый ответ закрывает
+    событие, предмет выдаётся только за верный.
+13. Для Cooperative Operation сделать вклад тремя разными аккаунтами; повторный
+    вклад одного аккаунта не увеличивает счётчик, после цели награду получают все.
+14. Для Chase проверить смену кнопки после первого этапа и отдельные награды
+    инициатору и перехватчику.
+15. Для NPC проверить insufficient-resources без закрытия события, затем
+    успешный Recruiter/Operations Chief/Counterintelligence recipe.
+16. Через `/spy` открыть условия собственной службы; подтверждение должно быть
+    отдельной кнопкой. После выполнения requirements повышается `agency_level`,
+    reputation сбрасывается, а неиспользованные агенты/items сохраняются.
 
 Проверить журнал:
 
@@ -323,11 +370,13 @@ sudo journalctl -u belmondo.service --since "10 minutes ago" --no-pager
 Ожидаемые маркеры:
 
 - `spy_event_created` для естественно созданного события;
+- `spy_event_resolved` для успешного recruitment или обмена;
+- `spy_reputation_increased` после prestige;
 - `spy_narrative_selected ... source=template`;
 - отсутствие `scheduler tick failed`, `event publication failed` и traceback.
 
-Ручной `/spy_admin spawn` сейчас не пишет `spy_event_created`, поэтому его
-наличие проверяется сообщением в чате и данными БД.
+Ручной `/spy_admin spawn` также пишет `spy_event_created`; его наличие
+дополнительно проверяется сообщением в чате и данными БД.
 
 Проверить инвариант «не более одного активного события на чат»:
 
@@ -353,23 +402,32 @@ sudo systemctl restart belmondo.service
 
 В beta-чате создайте обычную активность сообщениями нескольких участников.
 Повторные сообщения одного пользователя учитываются не чаще одного раза в 20
-секунд. Команда `/spy_admin status` показывает накопленную активность и время
-следующего события.
+секунд. Команда `/spy_admin status` показывает накопленную активность.
 
-Рабочие диапазоны таймера:
+В профиле `balanced` peak-trigger должен сработать в scheduler tick, где одновременно:
 
-| Activity score | До следующего события |
-|---:|---:|
-| 6–14.9 | 45–75 минут |
-| 15–29.9 | 25–45 минут |
-| 30 и выше | 12–25 минут |
+- activity score достиг 5.5;
+- в текущем окне принято не менее трёх сообщений;
+- с предыдущего события прошло не менее 10 минут;
+- в чате нет активного события.
 
-После spawn сохраняется 45% накопленной активности. До достижения score 6
-событие не планируется. Для production-проверки не сокращайте интервалы в коде:
-ручной spawn уже проверяет обработку события, а естественный тест должен
-подтвердить реальные настройки планировщика.
+При стандартном `SPY_GAME_TICK_SECONDS=30` публикация должна начаться не позже
+следующего 30-секундного tick во время активной переписки. Дополнительно работают:
 
-## 13. Отдельно включить LLM Narrator
+- inertia-trigger: score ≥ 5.5, не более двух минут после последней активности,
+  шанс 1/2 на tick;
+- random-trigger: средний интервал около 90 минут на включённый чат.
+
+Все каналы используют общий 10-минутный cooldown. После spawn сохраняется 45%
+накопленной активности. Причина запуска записывается в `payload_json` как
+`trigger_reason` (`peak`, `inertia`, `random` или `manual`).
+
+Для тихого чата master может выполнить `/spy_admin activity aggressive`:
+threshold станет 4.5, peak — два сообщения за tick, inertia — `1/2` в течение
+трёх минут, random — около 45 минут, cooldown — 8 минут. Переключение обратно
+на `/spy_admin activity balanced` не сбрасывает score и не требует рестарта.
+
+## 13. Отдельно включить LLM Director и Narrator
 
 Перед включением убедитесь, что `auth.conf` содержит действующий ключ DeepSeek и
 с сервера доступен API. Не отправляйте сам ключ в проверочной команде:
@@ -378,7 +436,7 @@ sudo systemctl restart belmondo.service
 curl -I https://api.deepseek.com
 ```
 
-Включите Narrator:
+Сначала включите только Narrator:
 
 ```dotenv
 SPY_GAME_LLM_NARRATOR_ENABLED=true
@@ -397,11 +455,24 @@ sudo journalctl -u belmondo.service -n 100 --no-pager
 Ожидаемые варианты:
 
 - `spy_narrative_selected ... source=llm` — модель вернула валидный текст;
+- `spy_narrative_selected ... source=cache` — используется сохранённый вариант;
 - `spy_narrator: fallback ...` и затем `source=template` — timeout, ошибка API
   или невалидный ответ; событие всё равно должно быть опубликовано.
 
 LLM управляет только художественным `body`. Тип события, награды, дедлайн,
 кнопки и серверные правила модель не определяет.
+
+После успешного smoke Narrator отдельно включите Director:
+
+```dotenv
+SPY_GAME_LLM_DIRECTOR_ENABLED=true
+SPY_GAME_LLM_DIRECTOR_TIMEOUT_SECONDS=8
+```
+
+Перезапустите сервис и дождитесь естественного события. Director может вернуть
+только известный `event_type`, `tone`, `story_hook` и `intensity`; invalid JSON,
+неизвестная механика, timeout или API error автоматически переключаются на
+`RuleBasedDirector`. Награды, победители и SQL не передаются модели.
 
 ## 14. Наблюдение после включения
 
@@ -420,7 +491,8 @@ sudo journalctl -u belmondo.service -f
 - события появляются только в allowlist-чате;
 - после истечения deadline кнопка удаляется;
 - LLM timeout приводит к template fallback, а не к потере события;
-- `/spy_admin status` показывает разумные activity score и `next_event_at`.
+- `/spy_admin status` показывает разумный activity score, а в тишине не
+  появляется отложенный `next_event_at`.
 
 После суток beta-проверки повторите `PRAGMA integrity_check`, снимите backup и
 оцените число событий и игроков:
@@ -431,10 +503,11 @@ sudo -u belmondo sqlite3 /var/lib/belmondo-bot/spy-game.sqlite3 "PRAGMA integrit
 
 ## 15. Rollback и kill switch
 
-### Быстро выключить только Narrator
+### Быстро выключить LLM-слои
 
 ```dotenv
 SPY_GAME_LLM_NARRATOR_ENABLED=false
+SPY_GAME_LLM_DIRECTOR_ENABLED=false
 ```
 
 После изменения выполните `sudo systemctl restart belmondo.service`. Core-игра
@@ -454,6 +527,7 @@ SPY_GAME_LLM_NARRATOR_ENABLED=false
 SPY_GAME_ENABLED=false
 SPY_GAME_ALLOW_MANUAL_SPAWN=false
 SPY_GAME_LLM_NARRATOR_ENABLED=false
+SPY_GAME_LLM_DIRECTOR_ENABLED=false
 ```
 
 ```bash
@@ -497,7 +571,8 @@ sudo systemctl status belmondo.service --no-pager
 - allowlist содержит только beta-чат;
 - master может включить чат, обычный пользователь — нет;
 - ручное событие проходит полный цикл без двойной награды;
-- естественный таймер выставляет `next_event_at`;
+- peak создаёт событие в том же scheduler tick, а inertia не выходит за
+  двухминутное окно;
 - ручной spawn после smoke test выключен;
 - при ошибке LLM срабатывает template fallback;
 - rollback через flags проверен и понятен дежурному.

@@ -1,7 +1,9 @@
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -32,7 +34,7 @@ from spy_game.service import SpyGameService
 from spy_game.settings import SpySettings
 
 
-NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 30, 12, 0, tzinfo=MOSCOW)
 CHAT_ID = -100123
 
 
@@ -2070,7 +2072,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 20
+        assert migration_count == 21
     finally:
         await second.close()
 
@@ -2184,7 +2186,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            list(range(1, 22)),
             "economy_history",
             "user_items",
             "equipped_items",
@@ -2647,7 +2649,7 @@ async def test_recruitment_clicks_edit_original_message_without_public_names(
     monkeypatch,
 ):
     service = await initialized_service(tmp_path)
-    event = (await service.manual_spawn(CHAT_ID, now=datetime.now(timezone.utc))).event
+    event = (await service.manual_spawn(CHAT_ID, now=datetime.now(MOSCOW))).event
     send_rich = AsyncMock()
     monkeypatch.setattr(spy_transport, "send_rich_message", send_rich)
     send_message = AsyncMock()
@@ -3775,7 +3777,7 @@ async def test_intercept_publication_falls_back_when_send_game_fails(
 @pytest.mark.asyncio
 async def test_spies_game_callback_returns_user_bound_launch_url(tmp_path):
     service = await initialized_service(tmp_path)
-    current = datetime.now(timezone.utc)
+    current = datetime.now(MOSCOW)
     event = (
         await service.manual_spawn(CHAT_ID, event_type="intercept", now=current)
     ).event
@@ -3814,7 +3816,7 @@ async def test_spies_game_callback_returns_user_bound_launch_url(tmp_path):
 @pytest.mark.asyncio
 async def test_spies_game_callback_launches_dead_drop_from_telegram_message(tmp_path):
     service = await initialized_service(tmp_path)
-    current = datetime.now(timezone.utc)
+    current = datetime.now(MOSCOW)
     event = (
         await service.manual_spawn(CHAT_ID, event_type="dead_drop", now=current)
     ).event

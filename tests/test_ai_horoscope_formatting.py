@@ -1,11 +1,12 @@
 import json
 import sys
-from datetime import timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import httpx
 import pytest
+
+from time_utils import MOSCOW
 
 sys.modules.setdefault(
     "config",
@@ -13,7 +14,7 @@ sys.modules.setdefault(
         client=Mock(),
         logger=Mock(),
         TELEGRAM_MAX_MESSAGE_LENGTH=4096,
-        tz=timezone.utc,
+        tz=MOSCOW,
     ),
 )
 

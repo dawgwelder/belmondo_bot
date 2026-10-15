@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from config import logger
 from games.llm import compact, request_json, untrusted_json_block
+from time_utils import MOSCOW
 
 from .database import SQLiteDatabase
 from .models import SpawnEvent
@@ -264,7 +265,7 @@ class PersistentNarrator:
         self.database = database
         self.primary = primary
         self.repository = NarrativeRepository(cooldown_seconds, refresh_seconds)
-        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock = clock or (lambda: datetime.now(MOSCOW))
         self._lock = asyncio.Lock()
 
     @staticmethod

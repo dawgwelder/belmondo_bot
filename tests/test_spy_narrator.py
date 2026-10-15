@@ -1,10 +1,12 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from time_utils import MOSCOW
 
 import handlers.spy_game as spy_handlers
 from handlers.spy import transport as spy_transport
@@ -22,7 +24,7 @@ from spy_game.database import SQLiteDatabase
 from spy_game.settings import SpySettings
 
 
-NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 30, 12, 0, tzinfo=MOSCOW)
 EVENT = SpawnEvent("abcdef123456", -100, "recruitment", NOW + timedelta(minutes=3))
 
 
@@ -129,6 +131,7 @@ async def test_persistent_narrator_reuses_validated_llm_template(tmp_path):
     generated = GeneratedNarrator()
     narrator = PersistentNarrator(database, generated)
     try:
+        assert narrator.clock().tzinfo is MOSCOW
         first = await narrator.narrate(EVENT)
         second = await narrator.narrate(EVENT)
         assert first.source == "llm"

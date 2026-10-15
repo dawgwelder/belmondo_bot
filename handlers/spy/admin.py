@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
 from spy_game.models import ChatStatus
 from spy_game.scheduler import ActivityTriggerSettings
+from time_utils import MOSCOW
 from .constants import ACTIVITY_PROFILE_ALIASES, ACTIVITY_PROFILE_LABELS
 from .context import _service
 from .menu_views import build_status_blocks
@@ -107,7 +108,7 @@ async def spy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     elif action == "status":
         status = await service.get_chat_status(chat_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(MOSCOW)
         blocks = build_status_blocks(status, now)
         blocks.insert(
             -1,

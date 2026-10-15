@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from telegram import CallbackGame, InlineKeyboardButton, InlineKeyboardMarkup
 from spy_game.models import RecruitmentProgress, SpawnEvent
 from spy_game.narrator import EventNarrative
@@ -12,6 +12,7 @@ from spy_game.settings import (
     DEFAULT_MOLE_CASES,
     DEFAULT_NPC_RECIPES,
 )
+from time_utils import MOSCOW
 from .constants import RECRUITMENT_PROGRESS_MARKER
 
 
@@ -244,7 +245,7 @@ def build_event_blocks(
 ) -> list[dict]:
     lifetime_minutes = max(
         1,
-        math.ceil((event.expires_at - datetime.now(timezone.utc)).total_seconds() / 60),
+        math.ceil((event.expires_at - datetime.now(MOSCOW)).total_seconds() / 60),
     )
     is_handler = event.event_type == "handler"
     is_dead_drop = event.event_type == "dead_drop"

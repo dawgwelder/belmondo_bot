@@ -6,7 +6,9 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import moscow_iso as iso, moscow_now
 
 from . import death_mission as engine
 from .death_mission_rewards import bonus_options, bonus_spec, payout, returned_stake
@@ -28,12 +30,6 @@ TERMINAL = {
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def iso(now):
-    if now.tzinfo is None:
-        raise ValueError("datetime must be timezone-aware")
-    return now.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
 @dataclass(frozen=True)
@@ -528,7 +524,7 @@ class DeathMissionRepository:
             self.refresh(connection, self.row(connection, run_id=row["id"]), now)
 
     def pending_results(self, connection, now=None):
-        now = now or datetime.now(timezone.utc)
+        now = now or moscow_now()
         rows = connection.execute(
             "SELECT r.id, r.user_id, e.chat_id, e.message_id, u.username "
             "FROM death_mission_outbox o JOIN death_mission_runs r ON r.id=o.run_id "

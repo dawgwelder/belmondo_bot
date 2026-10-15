@@ -2,7 +2,7 @@
 import re
 
 from ..slots import STAKES, rules_payload
-from .base import UseCases, utc_now
+from .base import UseCases, moscow_now
 
 
 class SlotsUseCases(UseCases):
@@ -43,7 +43,7 @@ class SlotsUseCases(UseCases):
                 display_name=display_name,
                 operation_id=operation_id,
                 stake=stake,
-                now=now or utc_now(),
+                now=now or moscow_now(),
             ),
             immediate=True,
         )

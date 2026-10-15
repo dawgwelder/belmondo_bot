@@ -5,7 +5,7 @@ import re
 import secrets
 from dataclasses import replace
 from ..death_mission_repository import DeathMissionRun
-from .base import UseCases, utc_now
+from .base import UseCases, moscow_now
 
 
 class MissionsUseCases(UseCases):
@@ -19,7 +19,7 @@ class MissionsUseCases(UseCases):
                 username=username,
                 display_name=display_name,
                 token_hash=self._game_token_hash(token),
-                now=now or utc_now(),
+                now=now or moscow_now(),
             ),
             immediate=True,
         )
@@ -47,7 +47,7 @@ class MissionsUseCases(UseCases):
                 username=username,
                 display_name=display_name,
                 token_hash=self._game_token_hash(token),
-                now=now or utc_now(),
+                now=now or moscow_now(),
             ),
             immediate=True,
         )
@@ -64,7 +64,7 @@ class MissionsUseCases(UseCases):
             lambda connection: self._mission_repository(connection, self._game_token_hash(token)).get(
                 connection,
                 self._game_token_hash(token),
-                now or utc_now(),
+                now or moscow_now(),
             ),
             immediate=True,
         )
@@ -107,7 +107,7 @@ class MissionsUseCases(UseCases):
                 revision=revision,
                 operation_id=operation_id,
                 choice=choice,
-                now=now or utc_now(),
+                now=now or moscow_now(),
             ),
             immediate=True,
         )
@@ -144,7 +144,7 @@ class MissionsUseCases(UseCases):
                 revision=revision,
                 operation_id=operation_id,
                 choice=choice,
-                now=now or utc_now(),
+                now=now or moscow_now(),
             )
 
         return await self.database.transaction(operation, immediate=True)

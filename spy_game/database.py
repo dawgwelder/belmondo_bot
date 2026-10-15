@@ -8,8 +8,11 @@ import sqlite3
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
+
+from time_utils import moscow_iso, moscow_now
 
 T = TypeVar("T")
 logger = logging.getLogger("Belmondo Logger")
@@ -68,6 +71,13 @@ class SQLiteDatabase:
         migrations_dir = Path(__file__).with_name("migrations")
         # The connection context handles transactions; closing owns the resource.
         with closing(self._connect()) as connection, connection:
+            connection.create_function(
+                "moscow_timestamp",
+                1,
+                lambda value: (
+                    None if value is None else moscow_iso(datetime.fromisoformat(value))
+                ),
+            )
             mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             if str(mode).lower() != "wal":
                 raise RuntimeError(f"SQLite WAL mode unavailable: {mode}")
@@ -96,8 +106,8 @@ class SQLiteDatabase:
                         connection.execute(statement)
                     connection.execute(
                         "INSERT INTO schema_migrations(version, applied_at) "
-                        "VALUES (?, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'))",
-                        (version,),
+                        "VALUES (?, ?)",
+                        (version, moscow_iso(moscow_now())),
                     )
                     connection.commit()
                     logger.info("spy_migration_applied version=%s", version)

@@ -3,16 +3,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from time_utils import moscow_now  # noqa: F401 - shared clock re-export
 from ..database import SQLiteDatabase
 from ..duels import SpyDuelRepository
 from ..repositories import SpyRepository
 from ..scheduler import RandomSource
 from ..settings import SpySettings
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 @dataclass

@@ -1,7 +1,7 @@
 """Callback routing regressions: game buttons must never request horoscopes."""
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -9,13 +9,15 @@ import pytest
 from telegram import CallbackQuery, Chat, Message, Update, User
 
 
+from time_utils import MOSCOW
+
 sys.modules.setdefault(
     "config",
     SimpleNamespace(
         client=Mock(),
         logger=Mock(),
         TELEGRAM_MAX_MESSAGE_LENGTH=4096,
-        tz=timezone.utc,
+        tz=MOSCOW,
     ),
 )
 
@@ -39,7 +41,7 @@ def callback_update(data=None, *, game_short_name=None):
     user = User(id=42, first_name="Agent", is_bot=False)
     message = Message(
         message_id=7,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(MOSCOW),
         chat=Chat(id=-100123, type="supergroup"),
     )
     return Update(

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW, moscow_iso as _iso
 
 from .models import DuelWager, DuelWagerStatus
 from .settings import SpySettings
@@ -22,14 +24,8 @@ DUEL_BEATS = {
 }
 
 
-def _iso(value: datetime) -> str:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("datetime must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
-
-
 def _datetime(value: str | None) -> datetime | None:
-    return None if value is None else datetime.fromisoformat(value)
+    return None if value is None else datetime.fromisoformat(value).astimezone(MOSCOW)
 
 
 class SpyDuelRepository:

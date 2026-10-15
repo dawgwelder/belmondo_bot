@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from ..duels import DUEL_ACTIONS
 from ..models import DuelWager, DuelWagerStatus
-from .base import UseCases, utc_now
+from .base import UseCases, moscow_now
 
 
 class DuelsUseCases(UseCases):
@@ -29,7 +29,7 @@ class DuelsUseCases(UseCases):
             raise ValueError("invalid duel stake")
         if not isinstance(scenario, dict):
             raise ValueError("invalid duel scenario")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.create(
                 connection,
@@ -71,7 +71,7 @@ class DuelsUseCases(UseCases):
         *,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.get(
                 connection,
@@ -87,7 +87,7 @@ class DuelsUseCases(UseCases):
         *,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.get_active_for_chat(
                 connection,
@@ -106,7 +106,7 @@ class DuelsUseCases(UseCases):
         display_name: str | None,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.accept(
                 connection,
@@ -129,7 +129,7 @@ class DuelsUseCases(UseCases):
     ) -> DuelWager:
         if action not in DUEL_ACTIONS:
             raise ValueError("invalid duel action")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.choose(
                 connection,
@@ -148,7 +148,7 @@ class DuelsUseCases(UseCases):
         *,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.forfeit(
                 connection,
@@ -170,7 +170,7 @@ class DuelsUseCases(UseCases):
     ) -> DuelWager:
         if action not in {"cancel", "decline"}:
             raise ValueError("invalid pending duel action")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.close_pending(
                 connection,
@@ -189,7 +189,7 @@ class DuelsUseCases(UseCases):
         *,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.master_cancel(
                 connection,
@@ -205,7 +205,7 @@ class DuelsUseCases(UseCases):
         *,
         now: datetime | None = None,
     ) -> DuelWager:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.duel_repository.expire(
                 connection,

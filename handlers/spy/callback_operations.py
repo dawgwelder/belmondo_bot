@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
 from spy_game.telegram_messages import compact_event_query
 from spy_game.models import CooperativeStatus, DeathOperationStatus
 from spy_game.settings import AGENT_TYPES
+from time_utils import MOSCOW
 from .context import _service
 from .formatting import _display_name, _public_label
 from .transport import _send_rich
@@ -110,7 +111,7 @@ async def handle_death(
             1,
             math.ceil(
                 (
-                    result.confirmation_expires_at - datetime.now(timezone.utc)
+                    result.confirmation_expires_at - datetime.now(MOSCOW)
                 ).total_seconds()
             ),
         )

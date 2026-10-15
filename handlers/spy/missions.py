@@ -89,9 +89,9 @@ async def _death_mission_callback_locked(update, context, category, value):
                 message_id,
             ):
                 return None
-            from spy_game.service import utc_now
+            from spy_game.service import moscow_now
 
-            row = service.repository.death_mission.refresh(connection, row, utc_now())
+            row = service.repository.death_mission.refresh(connection, row, moscow_now())
             return (
                 service.repository.death_mission.view(connection, row).payload,
                 row["event_id"],

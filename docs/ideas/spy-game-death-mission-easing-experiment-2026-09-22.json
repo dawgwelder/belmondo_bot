@@ -1,0 +1,315 @@
+{
+  "runs_per_case": 2000,
+  "seed_prefix": "review-20260922-paired",
+  "note": "Temporary in-process overrides only, unchanged version for paired RNG. No production changes, no strong policy or bonus validation.",
+  "results": [
+    {
+      "policy": "careful",
+      "tactic": "balanced",
+      "win_percent": 22.15,
+      "extract_percent": 43.65,
+      "stake_return_ratio": 0.66125,
+      "total_return_ci95": [
+        0.628507,
+        0.693993
+      ],
+      "counts": {
+        "won": 443,
+        "extracted": 873,
+        "lost": 684
+      },
+      "deaths_by_node": {
+        "finale1": 27,
+        "finale2": 61,
+        "finale3": 249,
+        "node4": 59,
+        "node5": 288
+      },
+      "variant": "v3_current"
+    },
+    {
+      "policy": "informed",
+      "tactic": "balanced",
+      "win_percent": 31.65,
+      "extract_percent": 23.85,
+      "stake_return_ratio": 0.75225,
+      "total_return_ci95": [
+        0.714039,
+        0.790461
+      ],
+      "counts": {
+        "won": 633,
+        "lost": 890,
+        "extracted": 477
+      },
+      "deaths_by_node": {
+        "finale1": 39,
+        "finale2": 96,
+        "finale3": 312,
+        "node4": 69,
+        "node5": 374
+      },
+      "variant": "v3_current"
+    },
+    {
+      "policy": "careful",
+      "tactic": "balanced",
+      "win_percent": 32.05,
+      "extract_percent": 40.55,
+      "stake_return_ratio": 0.84375,
+      "total_return_ci95": [
+        0.807828,
+        0.879672
+      ],
+      "counts": {
+        "won": 641,
+        "lost": 548,
+        "extracted": 811
+      },
+      "deaths_by_node": {
+        "finale1": 75,
+        "finale2": 133,
+        "finale3": 289,
+        "node4": 6,
+        "node5": 45
+      },
+      "variant": "damage_only"
+    },
+    {
+      "policy": "informed",
+      "tactic": "balanced",
+      "win_percent": 42.95,
+      "extract_percent": 24.0,
+      "stake_return_ratio": 0.979,
+      "total_return_ci95": [
+        0.939314,
+        1.018686
+      ],
+      "counts": {
+        "won": 859,
+        "lost": 661,
+        "extracted": 480
+      },
+      "deaths_by_node": {
+        "finale1": 36,
+        "finale2": 140,
+        "finale3": 420,
+        "node4": 4,
+        "node5": 61
+      },
+      "variant": "damage_only"
+    },
+    {
+      "policy": "careful",
+      "tactic": "balanced",
+      "win_percent": 40.45,
+      "extract_percent": 30.3,
+      "stake_return_ratio": 0.9605,
+      "total_return_ci95": [
+        0.922003,
+        0.998997
+      ],
+      "counts": {
+        "won": 809,
+        "extracted": 606,
+        "lost": 585
+      },
+      "deaths_by_node": {
+        "finale1": 50,
+        "finale2": 122,
+        "finale3": 386,
+        "node4": 5,
+        "node5": 22
+      },
+      "variant": "gentler_route"
+    },
+    {
+      "policy": "informed",
+      "tactic": "balanced",
+      "win_percent": 51.45,
+      "extract_percent": 17.0,
+      "stake_return_ratio": 1.114,
+      "total_return_ci95": [
+        1.073358,
+        1.154642
+      ],
+      "counts": {
+        "won": 1029,
+        "lost": 631,
+        "extracted": 340
+      },
+      "deaths_by_node": {
+        "finale1": 13,
+        "finale2": 141,
+        "finale3": 440,
+        "node4": 4,
+        "node5": 33
+      },
+      "variant": "gentler_route"
+    }
+  ],
+  "exploratory_dp": [
+    {
+      "variant": "v3_current",
+      "tactic": "balanced",
+      "boss": "hq",
+      "upper_model_return": 0.9290608187787995
+    },
+    {
+      "variant": "v3_current",
+      "tactic": "balanced",
+      "boss": "train",
+      "upper_model_return": 1.0006116389635633
+    },
+    {
+      "variant": "v3_current",
+      "tactic": "assault",
+      "boss": "hq",
+      "upper_model_return": 1.04513406504089
+    },
+    {
+      "variant": "v3_current",
+      "tactic": "assault",
+      "boss": "train",
+      "upper_model_return": 1.1302443349184625
+    },
+    {
+      "variant": "damage_only",
+      "tactic": "balanced",
+      "boss": "hq",
+      "upper_model_return": 1.1638107850981623
+    },
+    {
+      "variant": "damage_only",
+      "tactic": "balanced",
+      "boss": "train",
+      "upper_model_return": 1.2783759945178736
+    },
+    {
+      "variant": "damage_only",
+      "tactic": "assault",
+      "boss": "hq",
+      "upper_model_return": 1.2491443449562192
+    },
+    {
+      "variant": "damage_only",
+      "tactic": "assault",
+      "boss": "train",
+      "upper_model_return": 1.3647704457466021
+    },
+    {
+      "variant": "gentler_route",
+      "tactic": "balanced",
+      "boss": "hq",
+      "upper_model_return": 1.3068373830852704
+    },
+    {
+      "variant": "gentler_route",
+      "tactic": "balanced",
+      "boss": "train",
+      "upper_model_return": 1.4288059231487693
+    },
+    {
+      "variant": "gentler_route",
+      "tactic": "assault",
+      "boss": "hq",
+      "upper_model_return": 1.3782857793353689
+    },
+    {
+      "variant": "gentler_route",
+      "tactic": "assault",
+      "boss": "train",
+      "upper_model_return": 1.498275994171553
+    }
+  ],
+  "date": "2026-09-22",
+  "base_version": "roguelite_v3",
+  "variants": {
+    "v3_current": {
+      "node_damage": [
+        2,
+        2,
+        3,
+        4,
+        5
+      ],
+      "node_risk_floor": [
+        0,
+        0,
+        10,
+        30,
+        40
+      ]
+    },
+    "damage_only": {
+      "node_damage": [
+        2,
+        2,
+        2,
+        3,
+        3
+      ],
+      "node_risk_floor": [
+        0,
+        0,
+        10,
+        30,
+        40
+      ]
+    },
+    "gentler_route": {
+      "node_damage": [
+        2,
+        2,
+        2,
+        3,
+        3
+      ],
+      "node_risk_floor": [
+        0,
+        0,
+        5,
+        15,
+        20
+      ]
+    }
+  },
+  "method": {
+    "sampling": "death_mission_simulation._sample(2000, seed_prefix, base_version, balanced, policy, Objective(stake_only)) for careful/informed; replace only the two Ruleset tuples per variant in an isolated process; clear engine._boss_odds between variants",
+    "paired_rng": "Keep the original version string so hidden route, module ranking and action hashes use identical keys across variants. Actions can diverge under different policies and resources.",
+    "sample_objective": {
+      "win": 2.0,
+      "extraction": 0.5,
+      "bonus": 0,
+      "stake": null
+    },
+    "dp_objective": {
+      "win": 2.2,
+      "extraction": 0.5,
+      "tactics": [
+        "balanced",
+        "assault"
+      ],
+      "bosses": [
+        "hq",
+        "train"
+      ]
+    },
+    "dp": "RoutePolicy.value(initial public position) * 2.2. New planner per combination; close caches after evaluation.",
+    "limitations": [
+      "No real economy or bot calls",
+      "Sampling covers only balanced, careful and informed",
+      "Normalized extraction 0.5, not concrete per-agent rounding",
+      "DP covers two tactics only; values use the existing hypothetical all_stakes_bound objective",
+      "No specialist effects, minigames or graph changes in these experiments",
+      "Not a complete release balance gate"
+    ]
+  },
+  "source_sha256": {
+    "spy_game/death_mission.py": "ed5902ced6fcdec6ed45a0341f6ea910a0198c95e123ed7c1fed2f4af378c5c9",
+    "spy_game/death_mission_content.py": "31a3bb382c1e7c56060f5b6939bab4b5e2a34d7b9d849101a26063c7114947c9",
+    "spy_game/death_mission_policy.py": "e3296d7477c109204b3fd3a44f642230f686bba89c8367790f6fab72098e3659",
+    "spy_game/death_mission_simulation.py": "cf4ccec4dc03cf3a15720b82e8a2e7c590c6a489ca3d00b1aa2af640e3a310b2",
+    "spy_game/death_mission_rewards.py": "478ba54e69c71fb05332c13f9fe376006859ec7f2b381e017f049e1669591516"
+  }
+}

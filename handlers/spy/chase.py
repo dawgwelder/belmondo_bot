@@ -1,6 +1,5 @@
 """Persisted chase timers and serialized Telegram updates."""
 import asyncio
-from datetime import timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -9,6 +8,7 @@ from config import logger
 from spy_game.chase_rules import CHASE_SECONDS
 from spy_game.models import ChaseStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
+from time_utils import MOSCOW
 from .context import _service
 from .formatting import _display_name
 
@@ -22,7 +22,7 @@ def chase_text(result):
     prize = ", ".join(rewards)
     if result.status is ChaseStatus.COMPLETED:
         return f"✅ Погоня завершена. {result.leader_name} забирает приз:\n{prize}"
-    deadline = result.deadline.astimezone(timezone.utc).strftime("%H:%M:%S UTC")
+    deadline = result.deadline.astimezone(MOSCOW).strftime("%H:%M:%S МСК")
     limit = (
         "Лимит ходов достигнут. Ждём финиша."
         if result.turn == len(CHASE_SECONDS)

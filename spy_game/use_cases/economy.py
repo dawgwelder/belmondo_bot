@@ -17,7 +17,7 @@ from ..models import (
     PrestigeResult,
     Profile,
 )
-from .base import UseCases, utc_now
+from .base import UseCases, moscow_now
 
 
 class EconomyUseCases(UseCases):
@@ -40,7 +40,7 @@ class EconomyUseCases(UseCases):
             )
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", operation_id):
             raise ValueError("contact operation ID is invalid")
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.contacts.exchange_with_contact(
                 connection,
@@ -67,7 +67,7 @@ class EconomyUseCases(UseCases):
     ) -> PrestigeResult:
         if not self.chat_is_available(chat_id):
             return PrestigeResult(EconomyStatus.DISABLED, expected_reputation)
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.progression.increase_reputation(
                 connection,
@@ -102,7 +102,7 @@ class EconomyUseCases(UseCases):
                 required_reputation,
                 required_agents,
             )
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.progression.found_agency(
                 connection,
@@ -124,7 +124,7 @@ class EconomyUseCases(UseCases):
         display_name: str | None,
         now: datetime | None = None,
     ) -> Profile:
-        current = now or utc_now()
+        current = now or moscow_now()
         return await self.database.transaction(
             lambda connection: self.repository.economy.ensure_user_and_profile(
                 connection,

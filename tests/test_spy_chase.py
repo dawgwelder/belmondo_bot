@@ -1,11 +1,11 @@
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from handlers.spy.chase import chase_tick
+from handlers.spy.chase import chase_text, chase_tick
 from spy_game.models import ChaseStatus, NpcStatus
 from spy_game.service import SpyGameService
 from test_spy_game import (
@@ -16,6 +16,20 @@ from test_spy_game import (
     grant_agents,
     grant_items,
 )
+
+
+def test_chase_deadline_is_displayed_in_moscow_without_shifting_the_instant():
+    deadline = datetime.fromisoformat("2026-08-30T23:59:30+00:00")
+    result = SimpleNamespace(
+        status=ChaseStatus.STARTED,
+        rewards=(),
+        deadline=deadline,
+        turn=1,
+        leader_name="Agent",
+        hold_seconds=30,
+    )
+    assert "Финиш: 02:59:30 МСК" in chase_text(result)
+    assert result.deadline is deadline
 
 
 async def chase(service):

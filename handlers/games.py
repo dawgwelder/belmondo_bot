@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -25,6 +25,7 @@ from games.scenarios import SCENARIOS, GameScenario
 from guards import ensure_master_in_chat_for_ai, pause
 from handlers.roulette import start_roulette
 from state import ensure_chat_state, remember_chat_user
+from time_utils import MOSCOW
 
 GAME_CALLBACK_PATTERN = r"^game:"
 GAME_MENU_CALLBACK_ACTION = "select"
@@ -283,7 +284,7 @@ def _schedule_timeout(
         f"game-timeout:{game.chat_id}:{game.game_id}:{game.phase.value}:"
         f"{secrets.token_hex(3)}"
     )
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    deadline = datetime.now(MOSCOW) + timedelta(seconds=seconds)
     job_queue = getattr(context, "job_queue", None)
     if job_queue is None:
         logger.error("games: JobQueue unavailable game=%s", game.game_id)

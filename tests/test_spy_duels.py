@@ -1,5 +1,7 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from time_utils import MOSCOW
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,7 +14,7 @@ from spy_game.service import SpyGameService
 from spy_game.settings import SpySettings
 
 
-NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 4, 12, 0, tzinfo=MOSCOW)
 CHAT_ID = -100987
 SCENARIO = {
     "title": "Операция «Эскроу»",
@@ -400,7 +402,7 @@ async def test_telegram_duel_callbacks_settle_wager_through_spy_service(
 ):
     service = await service_with_agents(tmp_path)
     try:
-        wager = await create_wager(service, now=datetime.now(timezone.utc))
+        wager = await create_wager(service, now=datetime.now(MOSCOW))
         await service.attach_duel_message(wager.duel_id, 900)
         duel_data = duel_handlers._duel_data_from_wager(wager)
         duel_data["timeout_job_name"] = f"duel-accept-timeout:{CHAT_ID}:wager1"

@@ -1,12 +1,13 @@
 """Spy Clicker Telegram menu."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from guards import pause
 from spy_game.models import Profile
 from spy_game.service import SpyGameService
+from time_utils import MOSCOW
 from .context import _service
 from .formatting import _display_name
 from .menu_views import _menu_keyboard, build_menu_blocks
@@ -35,7 +36,7 @@ async def _send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     status = await service.get_chat_status(chat.id)
     webapp = context.bot_data.get("spy_webapp")
     launch_url = webapp.launch_url(chat.id) if webapp is not None else None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(MOSCOW)
     achievements = await service.get_achievements(update.effective_user.id)
     blocks = build_menu_blocks(profile, status, now)
     archive_line = (

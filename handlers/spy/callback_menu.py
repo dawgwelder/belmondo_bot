@@ -1,10 +1,11 @@
 """Spy Clicker Telegram callback menu."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from spy_game import death_mission_ui
+from time_utils import MOSCOW
 from .context import _service
 from .menu import _profile_for_update, _send_menu
 from .menu_views import (
@@ -99,7 +100,7 @@ async def handle_menu(
         )
     elif value == "status":
         status = await service.get_chat_status(chat.id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(MOSCOW)
         blocks = build_status_blocks(status, now)
         fallback = (
             f"Активность: {status.activity_score:.1f}. "
