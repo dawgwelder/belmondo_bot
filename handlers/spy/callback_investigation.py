@@ -4,12 +4,11 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
-from spy_game.telegram_messages import compact_event_query
+from spy_game.telegram_messages import compact_event_query, publish_event_result
 from spy_game.models import ClaimStatus, FindMoleGameStatus, InterceptStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
 from .context import _service
 from .formatting import _display_name, _public_label
-from .transport import _send_rich
 
 
 async def handle_mole(
@@ -45,23 +44,12 @@ async def handle_mole(
             f"{agent.emoji} {agent.display_name} ×{result.agent_reward.amount}"
         )
         await query.answer(f"Крот раскрыт. Награда: {reward_text}", show_alert=True)
-        await compact_event_query(query, "✅ Крот раскрыт.")
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": "✅ КРОТ РАСКРЫТ"},
-                {
-                    "type": "paragraph",
-                    "text": (
-                        f"{_public_label(user)} завершил расследование и получил "
-                        f"{reward_text}."
-                    ),
-                },
-            ],
-            fallback_text=(
-                f"✅ {_public_label(user)} раскрыл крота и получил {reward_text}."
-            ),
+            query.message.message_id,
+            f"✅ КРОТ РАСКРЫТ\n"
+            f"{_public_label(user)} завершил расследование и получил {reward_text}.",
         )
     elif result.status is FindMoleGameStatus.FAILED:
         await query.answer(
@@ -115,7 +103,6 @@ async def handle_search(
         else:
             reward_text = "тайник оказался пуст"
         await query.answer(f"Результат: {reward_text}", show_alert=True)
-        await compact_event_query(query, "✅ Тайник обыскан.")
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_type=%s reward_id=%s reward_amount=%s",
@@ -126,17 +113,11 @@ async def handle_search(
             reward.reward_id,
             reward.amount,
         )
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": "✅ ТАЙНИК ВСКРЫТ"},
-                {
-                    "type": "paragraph",
-                    "text": f"{_public_label(user)} нашёл: {reward_text}.",
-                },
-            ],
-            fallback_text=f"✅ {_public_label(user)} нашёл: {reward_text}.",
+            query.message.message_id,
+            f"✅ ТАЙНИК ВСКРЫТ\n{_public_label(user)} нашёл: {reward_text}.",
         )
     elif result.status is ClaimStatus.EXPIRED:
         await query.answer("Тайник уже изъят Центром.", show_alert=True)
@@ -173,7 +154,6 @@ async def handle_intercept(
         )
         return
     if result.status in {InterceptStatus.CORRECT, InterceptStatus.INCORRECT}:
-        await compact_event_query(query, "📡 Перехват завершён.")
         if result.status is InterceptStatus.CORRECT:
             item = ITEM_TYPES[result.reward.reward_id]
             answer = f"Верно: {item.display_name} зачислен."
@@ -187,14 +167,11 @@ async def handle_intercept(
             title = "❌ КАНАЛ ПОТЕРЯН"
             body = f"Ответ {_public_label(user)} оказался ложным следом."
         await query.answer(answer, show_alert=True)
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": title},
-                {"type": "paragraph", "text": body},
-            ],
-            fallback_text=f"{title}\n{body}",
+            query.message.message_id,
+            f"{title}\n{body}",
         )
     elif result.status is InterceptStatus.EXPIRED:
         await query.answer("Канал уже замолчал.", show_alert=True)

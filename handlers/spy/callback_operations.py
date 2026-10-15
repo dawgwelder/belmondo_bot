@@ -6,13 +6,12 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
-from spy_game.telegram_messages import compact_event_query
+from spy_game.telegram_messages import compact_event_query, publish_event_result
 from spy_game.models import CooperativeStatus, DeathOperationStatus
 from spy_game.settings import AGENT_TYPES
 from time_utils import MOSCOW
 from .context import _service
 from .formatting import _display_name, _public_label
-from .transport import _send_rich
 
 
 async def handle_cooperate(
@@ -43,7 +42,6 @@ async def handle_cooperate(
             show_alert=True,
         )
     elif result.status is CooperativeStatus.COMPLETED:
-        await compact_event_query(query, "✅ Совместная операция завершена.")
         agent = AGENT_TYPES[result.reward.agent_type]
         await query.answer(
             f"Цель достигнута. Каждый получает {agent.display_name} "
@@ -57,14 +55,11 @@ async def handle_cooperate(
         )
         if result.radio_bonus_user_ids:
             body += f" Бонус рации: +1 осведомитель владельцам ({len(result.radio_bonus_user_ids)} чел.)."
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": "✅ ОПЕРАЦИЯ ЗАВЕРШЕНА"},
-                {"type": "paragraph", "text": body},
-            ],
-            fallback_text=f"✅ Операция завершена. {body}",
+            query.message.message_id,
+            f"✅ ОПЕРАЦИЯ ЗАВЕРШЕНА\n{body}",
         )
     elif result.status is CooperativeStatus.ALREADY_CONTRIBUTED:
         await query.answer(
@@ -126,7 +121,6 @@ async def handle_death(
         DeathOperationStatus.WON,
         DeathOperationStatus.LOST,
     }:
-        await compact_event_query(query, "💀 Смертельная операция завершена.")
         total_staked = sum(holding.amount for holding in result.staked)
         if result.status is DeathOperationStatus.WON:
             bonus = AGENT_TYPES[result.rewards[-1].agent_type]
@@ -156,14 +150,11 @@ async def handle_death(
             result.status.value,
             total_staked,
         )
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": title},
-                {"type": "paragraph", "text": body},
-            ],
-            fallback_text=f"{title}\n{body}",
+            query.message.message_id,
+            f"{title}\n{body}",
         )
     elif result.status is DeathOperationStatus.INSUFFICIENT_AGENTS:
         await query.answer("Для операции нужен хотя бы один агент.", show_alert=True)

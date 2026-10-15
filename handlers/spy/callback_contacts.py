@@ -4,12 +4,11 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import logger
-from spy_game.telegram_messages import compact_event_query
+from spy_game.telegram_messages import compact_event_query, publish_event_result
 from spy_game.models import EconomyStatus, NpcStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
 from .context import _service
 from .formatting import _display_name, _format_costs, _format_item_costs, _public_label
-from .transport import _send_rich
 
 
 async def handle_npc(
@@ -49,18 +48,11 @@ async def handle_npc(
                 f"{definition.emoji} {definition.display_name} ×{reward.amount}"
             )
         await query.answer(f"Сделка завершена: {reward_text}", show_alert=True)
-        await compact_event_query(query, "✅ Специальная сделка завершена.")
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": "✅ СПЕЦИАЛЬНАЯ СДЕЛКА"},
-                {
-                    "type": "paragraph",
-                    "text": f"{_public_label(user)} получил: {reward_text}.",
-                },
-            ],
-            fallback_text=(f"✅ {_public_label(user)} завершил сделку: {reward_text}."),
+            query.message.message_id,
+            f"✅ СПЕЦИАЛЬНАЯ СДЕЛКА\n{_public_label(user)} получил: {reward_text}.",
         )
     elif result.status is NpcStatus.INSUFFICIENT_RESOURCES:
         requirements = []
@@ -113,7 +105,6 @@ async def handle_exchange(
             f"Обмен завершён: {agent.display_name} ×{result.reward.amount}",
             show_alert=True,
         )
-        await compact_event_query(query, "✅ Обмен с куратором завершён.")
         logger.info(
             "spy_event_resolved event_id=%s chat_id=%s winner_id=%s "
             "reward_id=%s reward_amount=%s",
@@ -123,25 +114,14 @@ async def handle_exchange(
             result.reward.agent_type,
             result.reward.amount,
         )
-        await _send_rich(
-            context,
+        await publish_event_result(
+            context.bot,
             chat.id,
-            [
-                {"type": "paragraph", "text": "✅ ОБМЕН ЗАВЕРШЁН"},
-                {
-                    "type": "paragraph",
-                    "text": (
-                        f"{_public_label(user)} первым предъявил ресурсы.\n"
-                        f"Новый агент: {agent.emoji} {agent.display_name} "
-                        f"×{result.reward.amount}"
-                    ),
-                },
-                {"type": "footer", "text": "Куратор закрыл дипломат."},
-            ],
-            fallback_text=(
-                f"✅ {_public_label(user)} завершает обмен: "
-                f"{agent.display_name} ×{result.reward.amount}."
-            ),
+            query.message.message_id,
+            f"✅ ОБМЕН ЗАВЕРШЁН\n"
+            f"{_public_label(user)} первым предъявил ресурсы.\n"
+            f"Новый агент: {agent.emoji} {agent.display_name} "
+            f"×{result.reward.amount}\nКуратор закрыл дипломат.",
         )
     elif result.status is EconomyStatus.INSUFFICIENT_RESOURCES:
         await query.answer(

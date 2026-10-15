@@ -705,14 +705,15 @@ async def test_html5_game_api_uses_persisted_token_and_announces_once(tmp_path):
         assert result["status"] == "won"
         assert result["score"] == 5000
         assert result["reward"]["id"] == "access_code"
-        bot.send_message.assert_awaited_once()
+        assert "Код доступа ×1" in bot.edit_message_text.await_args.kwargs["text"]
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
-        assert "@bond" in bot.send_message.await_args.kwargs["text"]
-        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+        assert "@bond" in bot.edit_message_text.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.edit_message_text.await_args.kwargs["text"]
 
         await server.game_finish(request(headers, {"locks": state["targets"]}))
-        bot.send_message.assert_awaited_once()
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
 
@@ -772,14 +773,15 @@ async def test_html5_dead_drop_api_keeps_code_server_side_and_announces_once(tmp
         result = json.loads(response.text)
         assert result["status"] == "won"
         assert result["reward"]["id"] == "intel_file"
-        bot.send_message.assert_awaited_once()
+        assert "Разведданные ×1" in bot.edit_message_text.await_args.kwargs["text"]
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
-        assert "@bond" in bot.send_message.await_args.kwargs["text"]
-        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+        assert "@bond" in bot.edit_message_text.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.edit_message_text.await_args.kwargs["text"]
 
         await server.game_guess(request(headers, {"guess": [0, 0, 0]}))
-        bot.send_message.assert_awaited_once()
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
     finally:
@@ -848,12 +850,16 @@ async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
         ]
         assert result["rewards"][0]["id"] == "fake_passport"
         assert result["rewards"][1]["id"] == "informant"
+        assert (
+            "Поддельный паспорт ×1" in bot.edit_message_text.await_args.kwargs["text"]
+        )
+        assert "Осведомитель ×3" in bot.edit_message_text.await_args.kwargs["text"]
         assert "solution" not in response.text
-        bot.send_message.assert_awaited_once()
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
-        assert "@bond" in bot.send_message.await_args.kwargs["text"]
-        assert "Private Bond" not in bot.send_message.await_args.kwargs["text"]
+        assert "@bond" in bot.edit_message_text.await_args.kwargs["text"]
+        assert "Private Bond" not in bot.edit_message_text.await_args.kwargs["text"]
 
         await server.game_mole_accuse(
             request(
@@ -865,7 +871,7 @@ async def test_html5_find_mole_api_hides_solution_and_announces_once(tmp_path):
                 },
             )
         )
-        bot.send_message.assert_awaited_once()
+        bot.send_message.assert_not_awaited()
         bot.edit_message_text.assert_awaited_once()
         assert bot.edit_message_text.await_args.kwargs["reply_markup"] is None
     finally:

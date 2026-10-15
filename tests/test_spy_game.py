@@ -3615,6 +3615,22 @@ async def test_find_mole_inline_fallback_uses_same_resolver_when_html5_is_off(
         assert won.status is FindMoleGameStatus.WON
         assert won.item_reward.amount == 1
         assert won.agent_reward.amount == 3
+        for user_id in (42, 43):
+            inventory = await service.get_inventory(user_id)
+            agents = await service.get_agents(user_id)
+            repeated = await service.accuse_find_mole_event(
+                event_id=event.event_id,
+                chat_id=CHAT_ID,
+                user_id=user_id,
+                username=None,
+                display_name=None,
+                suspect_id=solution,
+                idempotency_key=f"telegram-query-late-{user_id}",
+                now=event.expires_at + timedelta(seconds=1),
+            )
+            assert repeated.status is FindMoleGameStatus.ALREADY_RESOLVED
+            assert await service.get_inventory(user_id) == inventory
+            assert await service.get_agents(user_id) == agents
     finally:
         await service.close()
 

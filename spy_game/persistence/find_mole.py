@@ -204,16 +204,18 @@ class FindMoleRepository(RepositoryComponent):
                 FindMoleGameStatus.INVALID_SUSPECT,
                 event_id=event_id,
             )
-        now_value = _iso(now)
-        if event["status"] == "expired" or event["expires_at"] <= now_value:
-            if event["status"] == "active":
-                self.lifecycle.expire_row(connection, event, now_value)
+        if event["status"] == "expired":
             return FindMoleGameRun(FindMoleGameStatus.EXPIRED, event_id=event_id)
         if event["status"] != "active":
             return FindMoleGameRun(
                 FindMoleGameStatus.ALREADY_RESOLVED,
                 event_id=event_id,
             )
+
+        now_value = _iso(now)
+        if event["expires_at"] <= now_value:
+            self.lifecycle.expire_row(connection, event, now_value)
+            return FindMoleGameRun(FindMoleGameStatus.EXPIRED, event_id=event_id)
 
         self.economy.ensure_user(connection, user_id, username, display_name, now_value)
         existing = connection.execute(
