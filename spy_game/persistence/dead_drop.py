@@ -241,6 +241,8 @@ class DeadDropRepository(RepositoryComponent):
         row = self._dead_drop_game_row(connection, token_hash)
         if row is None:
             return DeadDropGameRun(DeadDropGameStatus.NOT_FOUND)
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return DeadDropGameRun(DeadDropGameStatus.DISABLED)
         now_value = _iso(now)
         if row["run_status"] == "ready" and (
             row["run_expires_at"] <= now_value or row["event_expires_at"] <= now_value
@@ -265,6 +267,8 @@ class DeadDropRepository(RepositoryComponent):
         row = self._dead_drop_game_row(connection, token_hash)
         if row is None:
             return DeadDropGameRun(DeadDropGameStatus.NOT_FOUND)
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return DeadDropGameRun(DeadDropGameStatus.DISABLED)
         current_status = self._dead_drop_game_status(row)
         if current_status in {DeadDropGameStatus.WON, DeadDropGameStatus.FAILED}:
             return self._dead_drop_game_run(row, current_status)

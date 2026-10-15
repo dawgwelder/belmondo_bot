@@ -93,8 +93,11 @@ async def test_every_horoscope_button_still_routes_and_sends_forecast(
     app, godnoscope = callback_modules
     tracker = SimpleNamespace(get_horoscope=AsyncMock(return_value="Прогноз"))
     monkeypatch.setattr(godnoscope, "tracker", tracker)
+    from test_ai_background import Tasks
+
     context = SimpleNamespace(
-        bot_data={}, bot=SimpleNamespace(send_message=AsyncMock())
+        bot_data={}, chat_data={}, application=Tasks(),
+        bot=SimpleNamespace(send_message=AsyncMock()),
     )
     menu_message = SimpleNamespace(reply_text=AsyncMock())
     await godnoscope.godnoscope(SimpleNamespace(message=menu_message), context)
@@ -115,6 +118,7 @@ async def test_every_horoscope_button_still_routes_and_sends_forecast(
             callback_query=query, effective_chat=SimpleNamespace(id=-100123)
         )
         await matches[0].callback(update, context)
+        await context.application.tasks[-1]
         query.answer.assert_awaited_once_with()
         tracker.get_horoscope.assert_awaited_with(sign)
         context.bot.send_message.assert_awaited_with(chat_id=-100123, text="Прогноз")

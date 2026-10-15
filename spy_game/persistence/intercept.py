@@ -281,6 +281,8 @@ class InterceptRepository(RepositoryComponent):
         row = self._intercept_game_row(connection, token_hash)
         if row is None:
             return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return InterceptGameRun(InterceptGameStatus.DISABLED)
         now_value = _iso(now)
         if row["run_status"] == "ready" and (
             row["run_expires_at"] <= now_value or row["event_expires_at"] <= now_value
@@ -314,6 +316,8 @@ class InterceptRepository(RepositoryComponent):
         row = self._intercept_game_row(connection, token_hash)
         if row is None:
             return InterceptGameRun(InterceptGameStatus.NOT_FOUND)
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return InterceptGameRun(InterceptGameStatus.DISABLED)
         prompt = self._intercept_prompt(row["event_payload_json"])
         current_status = self._intercept_game_status(row)
         if current_status in {

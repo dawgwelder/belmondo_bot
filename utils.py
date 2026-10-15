@@ -6,8 +6,6 @@ import threading
 from datetime import timedelta
 from time import sleep
 
-from numpy.random import normal, uniform
-
 from quotes import quotes
 
 
@@ -80,23 +78,17 @@ def check_id(uid: int, update_uid: int) -> bool:
     return uid == update_uid
 
 
-def roll_probability(percent: float = 0.5) -> bool:
-    mu, sigma = 0.5, 0.15
-    value = abs(normal(mu, sigma))
-    return value >= percent
-
-
 def answer_probability(
     spam_mode: str,
 ) -> float:
     if spam_mode == "chaos":
-        return uniform(0, 1) > 0
+        return random.random() > 0
     elif spam_mode == "soft":
-        return uniform(0, 1) > 0.5
+        return random.random() > 0.5
     elif spam_mode == "medium":
-        return uniform(0, 1) >= 0.75
+        return random.random() >= 0.75
     elif spam_mode == "rare":
-        return uniform(0, 1) >= 0.95
+        return random.random() >= 0.95
     return 0.75
 
 

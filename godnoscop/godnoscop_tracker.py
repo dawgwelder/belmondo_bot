@@ -2,7 +2,7 @@ import json
 
 from babel.dates import format_date
 from datetime import datetime
-from telethon import TelegramClient
+from telethon_utils import managed_client
 
 
 horo_list = [
@@ -28,15 +28,6 @@ class GodnoscopTracker:
         self.godnoscopes = self.load_data()
         self.not_updated_text = "Они еще не проапдейтили гороскопы!"
 
-    async def create_client(self):
-        client = TelegramClient(
-            str(self.config["auth"]["phone"]),
-            self.config["auth"]["api_id"],
-            self.config["auth"]["api_hash"],
-        )
-        await client.start()
-        return client
-
     @staticmethod
     def get_last_date():
         return datetime.now().date()  # + timedelta(days=1)
@@ -53,17 +44,16 @@ class GodnoscopTracker:
         return None
 
     async def update_godnoscopes(self):
-        self.godnoscopes["last_date"] = str(self.get_last_date())
-        self.godnoscopes["data"] = {}
-        client = await self.create_client()
-        async for message in client.iter_messages("godnoscopp", limit=20):
-            parsed = self.parse_post(message.text)
-            if parsed is not None:
-                sign, post = parsed
-                if post is not None:
-                    self.godnoscopes["data"][sign] = post
-        self.dump_data()
-        await client.disconnect()
+        async with managed_client(self.config) as client:
+            self.godnoscopes["last_date"] = str(self.get_last_date())
+            self.godnoscopes["data"] = {}
+            async for message in client.iter_messages("godnoscopp", limit=20):
+                parsed = self.parse_post(message.text)
+                if parsed is not None:
+                    sign, post = parsed
+                    if post is not None:
+                        self.godnoscopes["data"][sign] = post
+            self.dump_data()
         return self.godnoscopes
 
     def load_data(self):

@@ -178,8 +178,27 @@ class ChaseRepository(RepositoryComponent):
             self.get_result(connection, row["event_id"])
             for row in connection.execute(
                 """SELECT c.event_id FROM chase_rounds c JOIN game_events e ON e.id=c.event_id
-               WHERE e.status='resolved' AND c.notified_at IS NULL AND e.message_id IS NOT NULL"""
+               WHERE e.status='resolved' AND c.notified_at IS NULL AND e.message_id IS NOT NULL
+                 AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= ?)
+               ORDER BY c.next_attempt_at, c.event_id LIMIT 20""",
+                (now_value,),
             ).fetchall()
+        )
+
+    def claim_notification(self, connection, event_id, now):
+        return connection.execute(
+            """UPDATE chase_rounds SET next_attempt_at=?
+               WHERE event_id=? AND notified_at IS NULL
+                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?)""",
+            (_iso(now + timedelta(seconds=60)), event_id, _iso(now)),
+        ).rowcount == 1
+
+    def defer_notification(self, connection, event_id, retry_at):
+        connection.execute(
+            """UPDATE chase_rounds
+               SET next_attempt_at=max(COALESCE(next_attempt_at, ''), ?)
+               WHERE event_id=? AND notified_at IS NULL""",
+            (_iso(retry_at), event_id),
         )
 
     def mark_notified(self, connection, event_id, now):

@@ -23,6 +23,19 @@ SCENARIO = {
 }
 
 
+class TaskApplication:
+    def __init__(self):
+        self.tasks = []
+
+    def create_task(self, coroutine, **kwargs):
+        task = asyncio.create_task(coroutine, name=kwargs.get("name"))
+        self.tasks.append(task)
+        return task
+
+    async def wait_tasks(self):
+        await asyncio.gather(*self.tasks)
+
+
 class FixedRandom:
     def randint(self, start, end):
         return start
@@ -414,6 +427,7 @@ async def test_telegram_duel_callbacks_settle_wager_through_spy_service(
             chat_data={"duels": {wager.duel_id: duel_data}},
             bot_data={"spy_game": service, "master": 999},
             job_queue=job_queue,
+            application=TaskApplication(),
         )
 
         async def click(user_id, username, data):
@@ -450,6 +464,7 @@ async def test_telegram_duel_callbacks_settle_wager_through_spy_service(
         )
         monkeypatch.setattr(duel_handlers, "_narrate_wagered_duel", narrator)
         result_query = await click(2, "opponent", "duel:wager1:move:attack")
+        await context.application.wait_tasks()
 
         assert await balance(service, 1) == 13
         assert await balance(service, 2) == 5
@@ -495,6 +510,7 @@ async def test_duel_command_defaults_to_one_agent_wager(tmp_path, monkeypatch):
         bot_data={"spy_game": service, "master": 999, "paused": False},
         bot=SimpleNamespace(),
         job_queue=job_queue,
+        application=TaskApplication(),
     )
     monkeypatch.setattr(
         duel_handlers,
@@ -508,6 +524,7 @@ async def test_duel_command_defaults_to_one_agent_wager(tmp_path, monkeypatch):
     )
     try:
         await duel_handlers.duel(update, context)
+        await context.application.wait_tasks()
 
         assert await balance(service, 1) == 9
         challenge_text = message.reply_text.await_args.args[0]

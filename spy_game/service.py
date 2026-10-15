@@ -113,6 +113,8 @@ class SpyGameService(UseCases):
         self.get_chase = self.events.get_chase
         self.settle_chases = self.events.settle_chases
         self.mark_chase_notified = self.events.mark_chase_notified
+        self.claim_chase_notification = self.events.claim_chase_notification
+        self.defer_chase_notification = self.events.defer_chase_notification
         self.interact_with_npc = self.events.interact_with_npc
         self.exchange_with_contact = self.economy.exchange_with_contact
         self.increase_reputation = self.economy.increase_reputation

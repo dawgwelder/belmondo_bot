@@ -8,6 +8,7 @@ import re
 from collections import deque
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
@@ -32,13 +33,49 @@ _WEEKDAYS_RU = (
 )
 
 
-def _ensure_system_prompt(chat_deque: deque, prompt: str) -> None:
-    """Keep exactly one system prompt at the head of the deque."""
-    if chat_deque and chat_deque[0].get("role") == "system":
-        if chat_deque[0].get("content") != prompt:
-            chat_deque[0] = {"role": "system", "content": prompt}
-        return
-    chat_deque.appendleft({"role": "system", "content": prompt})
+_AI_TIMEOUT_SECONDS = 120
+
+
+def _background_ai(handler):
+    """Reserve one AI request per chat without holding up Telegram updates."""
+    @wraps(handler)
+    async def wrapper(update, context):
+        chat_data = ensure_chat_state(context)
+        active = chat_data.get("ai_task")
+        if active is not None and not active.done():
+            if update.callback_query is not None:
+                await update.callback_query.answer("Подождите текущий ответ.")
+            return
+
+        async def run():
+            try:
+                await asyncio.wait_for(handler(update, context), _AI_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning("%s: AI request timed out", handler.__name__)
+                await asyncio.wait_for(
+                    context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="Ответ занял слишком много времени. Попробуйте ещё раз.",
+                    ),
+                    timeout=10,
+                )
+            finally:
+                if chat_data.get("ai_task") is asyncio.current_task():
+                    chat_data.pop("ai_task", None)
+
+        managed = run()
+        try:
+            chat_data["ai_task"] = context.application.create_task(
+                managed, update=update,
+                name=f"ai:{handler.__name__}:{update.effective_chat.id}",
+            )
+            # PTB may be cancelled before its wrapper starts awaiting our coroutine.
+            chat_data["ai_task"].add_done_callback(lambda _: managed.close())
+        except Exception:
+            managed.close()
+            raise
+
+    return wrapper
 
 
 async def process_ai_response(
@@ -54,6 +91,11 @@ async def process_ai_response(
     ):
         return
 
+    await _process_ai_response(update, context)
+
+
+@_background_ai
+async def _process_ai_response(update, context) -> None:
     if not await ensure_master_in_chat_for_ai(update, context):
         return
 
@@ -71,7 +113,6 @@ async def process_ai_response(
         content = update.message.text
 
         chat_deque = chat_data["chat_deque"]
-        _ensure_system_prompt(chat_deque, const.professional_prompt)
         chat_deque.append({"role": "user", "content": content})
 
         try:
@@ -79,7 +120,10 @@ async def process_ai_response(
                 model="deepseek-v4-flash",
                 reasoning_effort="high",
                 extra_body={"thinking": {"type": "enabled"}},
-                messages=list(chat_deque),
+                messages=[
+                    {"role": "system", "content": const.professional_prompt},
+                    *chat_deque,
+                ],
                 stream=True,
             )
             text = await parse_stream(stream)
@@ -241,10 +285,10 @@ async def _animated_placeholder(
         yield placeholder
     finally:
         stop.set()
-        try:
-            await task
-        except Exception:
-            logger.exception("%s: placeholder animation task failed", log_prefix)
+        task.cancel()
+        result, = await asyncio.gather(task, return_exceptions=True)
+        if isinstance(result, Exception):
+            logger.error("%s: placeholder animation task failed: %s", log_prefix, result)
 
 
 async def _fail_placeholder(
@@ -606,6 +650,7 @@ async def _send_ai_horoscope_structured(
 
 
 @pause
+@_background_ai
 async def ai_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send AI horoscope with a live placeholder message showing progress."""
     if update.effective_user.id in const.excluded_uids:
@@ -701,6 +746,7 @@ def _build_tarot_spread(deck: list[dict]) -> list[dict]:
 
 
 @pause
+@_background_ai
 async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Three-card tarot reading via DeepSeek, with a live status placeholder."""
     if not await ensure_master_in_chat_for_ai(update, context):
@@ -836,6 +882,7 @@ async def magic_prediction(
     )
 
 
+@_background_ai
 async def magic_prediction_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -917,6 +964,9 @@ async def magic_prediction_callback(
 async def clear_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clear AI context."""
     chat_data = ensure_chat_state(context)
+    task = chat_data.get("ai_task")
+    if task is not None and not task.done():
+        task.cancel()
     chat_data["chat_deque"] = deque(maxlen=100)
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text="Контекст очищен"

@@ -132,7 +132,7 @@ async def test_migration_preserves_deadlines_precision_nulls_and_restarts(tmp_pa
                 connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[
                     0
                 ]
-                == 21
+                == 22
             )
             assert all(
                 row[0].endswith("+03:00")

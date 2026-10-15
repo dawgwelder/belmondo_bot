@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from config import config, logger
 from godnoscop.godnoscop_tracker import GodnoscopTracker, horo_list
 from guards import pause
+from handlers.ai import _background_ai
 from horoscope import generate_post
 
 GODNOSCOPE_CALLBACK_PATTERN = r"^(?:" + "|".join(map(re.escape, horo_list)) + r")\Z"
@@ -70,6 +71,12 @@ async def button_godnoscope(
         or query.data not in horo_list
     ):
         return
+    await _send_godnoscope(update, context)
+
+
+@_background_ai
+async def _send_godnoscope(update, context) -> None:
+    query = update.callback_query
     await query.answer()
 
     try:

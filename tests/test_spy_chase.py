@@ -208,7 +208,10 @@ async def test_chase_telegram_result_delivery_retries_without_double_reward(
             edit_message_text=AsyncMock(side_effect=[RuntimeError("offline"), None])
         )
         context = SimpleNamespace(bot=bot, bot_data={})
+        clock = [NOW + timedelta(seconds=30)]
+        monkeypatch.setattr("spy_game.use_cases.events.moscow_now", lambda: clock[0])
         await chase_tick(context)
+        clock[0] += timedelta(seconds=60)
         await chase_tick(context)
         assert bot.edit_message_text.await_count == 2
         assert "@agent1" in bot.edit_message_text.call_args.kwargs["text"]
@@ -276,7 +279,7 @@ async def test_upgrade_keeps_legacy_chase_starter_and_original_deadline(tmp_path
 
     def legacy(connection):
         connection.execute("DROP TABLE chase_rounds")
-        connection.execute("DELETE FROM schema_migrations WHERE version IN (15,16)")
+        connection.execute("DELETE FROM schema_migrations WHERE version IN (15,16,22)")
         connection.execute("DROP TABLE item_durability")
         connection.execute("DROP TABLE equipment_uses")
         connection.execute("ALTER TABLE intercept_game_runs DROP COLUMN reward_id")

@@ -1,14 +1,15 @@
 """Persisted chase timers and serialized Telegram updates."""
 import asyncio
+from datetime import timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 
 from config import logger
 from spy_game.chase_rules import CHASE_SECONDS
 from spy_game.models import ChaseStatus
 from spy_game.settings import AGENT_TYPES, ITEM_TYPES
-from time_utils import MOSCOW
+from time_utils import MOSCOW, moscow_now
 from .context import _service
 from .formatting import _display_name
 
@@ -44,6 +45,9 @@ def chase_lock(context, event_id):
 async def render_chase(context, service, result):
     if result.message_id is None:
         return
+    completed = result.status is ChaseStatus.COMPLETED
+    if completed and not await service.claim_chase_notification(result.event_id):
+        return
     keyboard = None
     if result.status is ChaseStatus.STARTED and result.turn < len(CHASE_SECONDS):
         keyboard = InlineKeyboardMarkup(
@@ -55,17 +59,36 @@ async def render_chase(context, service, result):
                 ]
             ]
         )
+    text = chase_text(result)
     try:
-        await context.bot.edit_message_text(
-            chat_id=result.chat_id,
-            message_id=result.message_id,
-            text=chase_text(result),
-            reply_markup=keyboard,
-        )
-    except BadRequest as error:
-        if "message is not modified" not in str(error).lower():
-            raise
-    if result.status is ChaseStatus.COMPLETED:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=result.chat_id,
+                message_id=result.message_id,
+                text=text,
+                reply_markup=keyboard,
+            )
+        except BadRequest as error:
+            reason = str(error).lower()
+            if "message is not modified" in reason:
+                pass
+            elif completed and any(
+                message in reason
+                for message in ("message to edit not found", "message can't be edited")
+            ):
+                await context.bot.send_message(chat_id=result.chat_id, text=text)
+            else:
+                raise
+    except RetryAfter as error:
+        if completed:
+            delay = error.retry_after
+            if not isinstance(delay, timedelta):
+                delay = timedelta(seconds=delay)
+            await service.defer_chase_notification(
+                result.event_id, moscow_now() + delay
+            )
+        raise
+    if completed:
         await service.mark_chase_notified(result.event_id)
 
 

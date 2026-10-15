@@ -1,5 +1,6 @@
 """AI game master powered one-round duels between two chat members."""
 
+import asyncio
 import json
 import random
 import re
@@ -21,6 +22,7 @@ DUEL_CALLBACK_PATTERN = r"^duel:"
 DUEL_MODEL = "deepseek-v4-flash"
 DUEL_ACCEPT_TIMEOUT_SECONDS = 120
 DUEL_MOVE_TIMEOUT_SECONDS = 180
+DUEL_MODEL_TIMEOUT_SECONDS = 45
 
 _ACTIONS = {
     "attack": ("Атаковать", "переходит в прямую атаку"),
@@ -153,6 +155,19 @@ def _extract_json(text: str) -> dict:
     return json.loads(source)
 
 
+async def _request_duel_json(prompt: str) -> dict:
+    async def request():
+        stream = await client.chat.completions.create(
+            model=DUEL_MODEL,
+            messages=_duel_ai_messages(prompt),
+            stream=True,
+        )
+        async with stream:
+            return _extract_json(await parse_stream(stream))
+
+    return await asyncio.wait_for(request(), timeout=DUEL_MODEL_TIMEOUT_SECONDS)
+
+
 async def _generate_scenario(challenger_name: str, opponent_name: str) -> dict:
     prompt = (
         "Ты гейм-мастер короткой шуточной дуэли двух профессионалов. "
@@ -162,12 +177,7 @@ async def _generate_scenario(challenger_name: str, opponent_name: str) -> dict:
         "Каждое значение должно быть строкой, setting и condition — не длиннее двух предложений."
     )
     try:
-        stream = await client.chat.completions.create(
-            model=DUEL_MODEL,
-            messages=_duel_ai_messages(prompt),
-            stream=True,
-        )
-        result = _extract_json(await parse_stream(stream))
+        result = await _request_duel_json(prompt)
         if all(
             isinstance(result.get(key), str)
             for key in ("title", "setting", "condition")
@@ -204,12 +214,7 @@ async def _judge_duel(duel: dict) -> dict:
         '"reason":"одно короткое предложение, почему победил именно этот игрок"}'
     )
     try:
-        stream = await client.chat.completions.create(
-            model=DUEL_MODEL,
-            messages=_duel_ai_messages(prompt),
-            stream=True,
-        )
-        result = _extract_json(await parse_stream(stream))
+        result = await _request_duel_json(prompt)
         if (
             result.get("winner") in ("challenger", "opponent")
             and isinstance(result.get("narration"), str)
@@ -250,12 +255,7 @@ async def _narrate_wagered_duel(duel: dict, winner_key: str) -> dict:
         "предложения, в reason — одно короткое предложение."
     )
     try:
-        stream = await client.chat.completions.create(
-            model=DUEL_MODEL,
-            messages=_duel_ai_messages(prompt),
-            stream=True,
-        )
-        result = _extract_json(await parse_stream(stream))
+        result = await _request_duel_json(prompt)
         if isinstance(result.get("narration"), str) and isinstance(
             result.get("reason"), str
         ):
@@ -590,90 +590,136 @@ async def duel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             else _display_name(opponent),
             "username": opponent.username.lower() if opponent.username else None,
         }
-    scenario = await _generate_scenario(challenger_data["name"], opponent_data["name"])
-    timeout_job_name = f"duel-accept-timeout:{update.effective_chat.id}:{duel_id}"
-    if stake_amount is not None:
-        wager = await service.create_duel_wager(
-            duel_id=duel_id,
-            chat_id=update.effective_chat.id,
-            challenger_user_id=update.effective_user.id,
-            challenger_username=update.effective_user.username,
-            challenger_display_name=update.effective_user.full_name,
-            opponent_user_id=opponent_data["id"],
-            opponent_username=opponent_data.get("username"),
-            opponent_display_name=(
-                opponent.full_name if not isinstance(opponent, str) else None
-            ),
-            stake_amount=stake_amount,
-            scenario=scenario,
-        )
-        if wager.status is DuelWagerStatus.INSUFFICIENT_AGENTS:
-            await update.message.reply_text(
-                f"Для вызова нужно минимум {stake_amount} осведомителей."
-            )
-            return
-        if wager.status is DuelWagerStatus.ACTIVE_DUEL_EXISTS:
-            await update.message.reply_text(
-                "В этом чате уже идёт ставочная дуэль. Дождитесь её завершения."
-            )
-            return
-        if wager.status is DuelWagerStatus.DISABLED:
-            await update.message.reply_text(
-                "Сначала владелец должен включить Spy Clicker в этом чате."
-            )
-            return
-        if wager.status is not DuelWagerStatus.PENDING:
-            await update.message.reply_text("Не удалось зарезервировать ставку.")
-            return
-        duel_data = _duel_data_from_wager(wager)
-        duel_data["timeout_job_name"] = timeout_job_name
-    else:
-        duel_data = {
-            "id": duel_id,
-            "status": "pending",
-            "timeout_job_name": timeout_job_name,
-            "players": {"challenger": challenger_data, "opponent": opponent_data},
-            "scenario": scenario,
-            "actions": {},
-        }
+    duel_data = {
+        "id": duel_id,
+        "status": "preparing",
+        "players": {"challenger": challenger_data, "opponent": opponent_data},
+    }
     duels[duel_id] = duel_data
+    _schedule_duel_task(
+        update,
+        context,
+        duel_data,
+        _prepare_duel(update, context, duel_data, opponent, stake_amount),
+    )
+
+
+def _schedule_duel_task(update, context, duel_data: dict, continuation) -> None:
     try:
+        duel_data["task"] = context.application.create_task(
+            continuation,
+            update=update,
+            name=f"duel:{duel_data['id']}:{duel_data['status']}",
+        )
+        duel_data["task"].add_done_callback(lambda _: continuation.close())
+    except BaseException:
+        continuation.close()
+        if _duel_store(context).get(duel_data["id"]) is duel_data:
+            _duel_store(context).pop(duel_data["id"])
+        raise
+
+
+async def _prepare_duel(update, context, duel_data, opponent, stake_amount) -> None:
+    duels = _duel_store(context)
+    duel_id = duel_data["id"]
+    challenger_data = duel_data["players"]["challenger"]
+    opponent_data = duel_data["players"]["opponent"]
+    service = _spy_service(context)
+    timeout_job_name = f"duel-accept-timeout:{update.effective_chat.id}:{duel_id}"
+    wager_attempted = False
+    published = False
+    challenge_message = None
+    try:
+        scenario = await _generate_scenario(challenger_data["name"], opponent_data["name"])
+        if duels.get(duel_id) is not duel_data:
+            return
+        if stake_amount is not None:
+            wager_attempted = True
+            wager = await service.create_duel_wager(
+                duel_id=duel_id,
+                chat_id=update.effective_chat.id,
+                challenger_user_id=update.effective_user.id,
+                challenger_username=update.effective_user.username,
+                challenger_display_name=update.effective_user.full_name,
+                opponent_user_id=opponent_data["id"],
+                opponent_username=opponent_data.get("username"),
+                opponent_display_name=(
+                    opponent.full_name if not isinstance(opponent, str) else None
+                ),
+                stake_amount=stake_amount,
+                scenario=scenario,
+            )
+            if duels.get(duel_id) is not duel_data:
+                return
+            if wager.status is not DuelWagerStatus.PENDING:
+                failure = {
+                    DuelWagerStatus.INSUFFICIENT_AGENTS:
+                        f"Для вызова нужно минимум {stake_amount} осведомителей.",
+                    DuelWagerStatus.ACTIVE_DUEL_EXISTS:
+                        "В этом чате уже идёт ставочная дуэль. Дождитесь её завершения.",
+                    DuelWagerStatus.DISABLED:
+                        "Сначала владелец должен включить Spy Clicker в этом чате.",
+                }.get(wager.status, "Не удалось зарезервировать ставку.")
+                await update.message.reply_text(failure)
+                return
+            duel_data.update(_duel_data_from_wager(wager))
+            # Callbacks must wait until the challenge and its timeout are ready.
+            duel_data["status"] = "preparing"
+        else:
+            duel_data.update(scenario=scenario, actions={})
+        duel_data["timeout_job_name"] = timeout_job_name
         challenge_message = await update.message.reply_text(
             _challenge_text(duel_data), reply_markup=_challenge_keyboard(duel_id)
         )
-    except Exception:
-        duels.pop(duel_id, None)
         if stake_amount is not None:
-            await service.cancel_duel_wager_as_master(duel_id)
-        raise
-    if stake_amount is not None:
-        await service.attach_duel_message(duel_id, challenge_message.message_id)
-    if context.job_queue is None:
-        logger.error(
-            "duel: JobQueue is unavailable; acceptance timeout was not scheduled"
+            await service.attach_duel_message(duel_id, challenge_message.message_id)
+        if duels.get(duel_id) is not duel_data:
+            return
+        if context.job_queue is None:
+            logger.error(
+                "duel: JobQueue is unavailable; acceptance timeout was not scheduled"
+            )
+        else:
+            context.job_queue.run_once(
+                duel_accept_timeout,
+                (
+                    service.settings.duel_accept_seconds
+                    if stake_amount is not None
+                    else DUEL_ACCEPT_TIMEOUT_SECONDS
+                ),
+                data={
+                    "duel_id": duel_id,
+                    "chat_id": update.effective_chat.id,
+                    "message_id": challenge_message.message_id,
+                },
+                name=duel_data["timeout_job_name"],
+                chat_id=update.effective_chat.id,
+            )
+        duel_data["status"] = "pending"
+        published = True
+        logger.info(
+            "duel: challenge created chat=%s challenger=%s opponent=%s",
+            update.effective_chat.id,
+            challenger_data["id"],
+            opponent_data["id"],
         )
-    else:
-        context.job_queue.run_once(
-            duel_accept_timeout,
-            (
-                service.settings.duel_accept_seconds
-                if stake_amount is not None
-                else DUEL_ACCEPT_TIMEOUT_SECONDS
-            ),
-            data={
-                "duel_id": duel_id,
-                "chat_id": update.effective_chat.id,
-                "message_id": challenge_message.message_id,
-            },
-            name=duel_data["timeout_job_name"],
-            chat_id=update.effective_chat.id,
-        )
-    logger.info(
-        "duel: challenge created chat=%s challenger=%s opponent=%s",
-        update.effective_chat.id,
-        challenger_data["id"],
-        opponent_data["id"],
-    )
+    finally:
+        duel_data.pop("task", None)
+        if not published:
+            try:
+                if wager_attempted:
+                    await service.cancel_duel_wager_as_master(duel_id)
+            finally:
+                if duels.get(duel_id) is duel_data:
+                    duels.pop(duel_id)
+                if challenge_message is not None:
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=update.effective_chat.id,
+                            message_id=challenge_message.message_id,
+                        )
+                    except Exception:
+                        logger.exception("duel: failed to delete stale challenge %s", duel_id)
 
 
 async def duel_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -716,6 +762,19 @@ async def duel_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     allowed_ids = participant_ids | {master_id}
     if update.effective_user.id not in allowed_ids and not is_named_opponent:
         await update.message.reply_text("Отменить эту дуэль могут только её участники.")
+        return
+
+    if duel_data["status"] == "preparing":
+        duels.pop(duel_id)
+        task = duel_data.get("task")
+        if task is not None:
+            task.cancel()
+        await update.message.reply_text("Подготовка дуэли отменена.")
+        return
+    if duel_data["status"] == "judging":
+        await update.message.reply_text(
+            "Результат дуэли уже определён. Гейм-мастер готовит итог."
+        )
         return
 
     _cancel_accept_timeout(context, duel_data)
@@ -795,6 +854,10 @@ async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
         duel_data = _duel_data_from_wager(wager)
         duels[duel_id] = duel_data
+
+    if duel_data["status"] in {"preparing", "judging"}:
+        await query.answer("Гейм-мастер готовит дуэль или её итог.", show_alert=True)
+        return
 
     challenger_id = duel_data["players"]["challenger"]["id"]
     opponent_id = duel_data["players"]["opponent"]["id"]
@@ -1004,40 +1067,64 @@ async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     duel_data["status"] = "judging"
-    await query.edit_message_text(
-        _round_text(duel_data) + "\n\nГейм-мастер выносит вердикт..."
-    )
+    try:
+        await query.edit_message_text(
+            _round_text(duel_data) + "\n\nГейм-мастер выносит вердикт..."
+        )
+    except Exception:
+        logger.exception("duel: failed to announce judgement %s", duel_id)
+    winner_key = None
     if wager_result is not None:
         winner_key = (
             "challenger" if wager_result.winner_user_id == challenger_id else "opponent"
         )
-        judgement = await _narrate_wagered_duel(duel_data, winner_key)
         _cancel_accept_timeout(context, duel_data)
-    else:
-        judgement = await _judge_duel(duel_data)
-    winner = duel_data["players"][judgement["winner"]]
-    challenger_action = _ACTIONS[duel_data["actions"][str(challenger_id)]][0]
-    opponent_action = _ACTIONS[duel_data["actions"][str(opponent_id)]][0]
-    duels.pop(duel_id, None)
+    _schedule_duel_task(
+        update,
+        context,
+        duel_data,
+        _publish_duel_verdict(update, context, duel_data, winner_key),
+    )
 
-    await query.edit_message_text(
-        f"{duel_data['scenario']['title']}\n\n"
-        f"{duel_data['players']['challenger']['name']}: {challenger_action}\n"
-        f"{duel_data['players']['opponent']['name']}: {opponent_action}\n\n"
-        f"{judgement['narration']}\n\n"
-        f"Победитель: {winner['name']}\n"
-        f"Вердикт гейм-мастера: {judgement['reason']}"
-        + (
-            f"\nБанк: "
-            f"{_agent_amount_text(duel_data['agent_type'], duel_data['stake_amount'] * 2)}."
-            if duel_data.get("wagered")
-            else ""
+
+async def _publish_duel_verdict(update, context, duel_data: dict, winner_key) -> None:
+    duels = _duel_store(context)
+    duel_id = duel_data["id"]
+    challenger_id = duel_data["players"]["challenger"]["id"]
+    opponent_id = duel_data["players"]["opponent"]["id"]
+    try:
+        judgement = (
+            await _narrate_wagered_duel(duel_data, winner_key)
+            if winner_key is not None
+            else await _judge_duel(duel_data)
         )
-    )
-    logger.info(
-        "duel: completed chat=%s winner=%s challenger=%s opponent=%s",
-        update.effective_chat.id,
-        winner["id"],
-        challenger_id,
-        opponent_id,
-    )
+        if duels.get(duel_id) is not duel_data or duel_data["status"] != "judging":
+            return
+        winner = duel_data["players"][judgement["winner"]]
+        challenger_action = _ACTIONS[duel_data["actions"][str(challenger_id)]][0]
+        opponent_action = _ACTIONS[duel_data["actions"][str(opponent_id)]][0]
+        await update.callback_query.edit_message_text(
+            f"{duel_data['scenario']['title']}\n\n"
+            f"{duel_data['players']['challenger']['name']}: {challenger_action}\n"
+            f"{duel_data['players']['opponent']['name']}: {opponent_action}\n\n"
+            f"{judgement['narration']}\n\n"
+            f"Победитель: {winner['name']}\n"
+            f"Вердикт гейм-мастера: {judgement['reason']}"
+            + (
+                f"\nБанк: "
+                f"{_agent_amount_text(duel_data['agent_type'], duel_data['stake_amount'] * 2)}."
+                if duel_data.get("wagered")
+                else ""
+            )
+        )
+        logger.info(
+            "duel: completed chat=%s winner=%s challenger=%s opponent=%s",
+            update.effective_chat.id,
+            winner["id"],
+            challenger_id,
+            opponent_id,
+        )
+    finally:
+        duel_data.pop("task", None)
+        if duels.get(duel_id) is duel_data:
+            duels.pop(duel_id)

@@ -60,6 +60,11 @@ class SpyWebAppServer:
         )
         self.rate_limiter = _RateLimiter(settings.rate_limit_per_minute)
         self.game_rate_limiter = _RateLimiter(settings.rate_limit_per_minute)
+        self.game_read_rate_limiter = _RateLimiter(settings.rate_limit_per_minute)
+        # nginx shares a loopback peer; never trust client-supplied forwarded IPs.
+        self.game_request_limiter = _RateLimiter(
+            settings.rate_limit_per_minute * 10, max_subjects=1
+        )
         self._runner: web.AppRunner | None = None
         self.app = self._build_application()
 
@@ -523,15 +528,21 @@ class SpyWebAppServer:
             raise web.HTTPServiceUnavailable(text="Spy Clicker временно выключен")
         return game_type, result
 
-    def _limit_game_mutation(self, request: web.Request) -> None:
+    def _limit_game_request(self, request: web.Request, *, read: bool = False) -> None:
+        if not self.game_request_limiter.allow("game"):
+            raise web.HTTPTooManyRequests(
+                text="Слишком много игровых запросов. Повторите через минуту."
+            )
         token = request.headers.get("X-Spy-Game-Token", "")
         subject = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        if not self.game_rate_limiter.allow(subject):
+        limiter = self.game_read_rate_limiter if read else self.game_rate_limiter
+        if not limiter.allow(subject):
             raise web.HTTPTooManyRequests(
                 text="Слишком много игровых запросов. Повторите через минуту."
             )
 
     async def game_state(self, request: web.Request) -> web.Response:
+        self._limit_game_request(request, read=True)
         game_type, result = await self._game_session(request)
         if game_type == "death_operation":
             return self._json_response(presenters.death_payload(result))
@@ -542,7 +553,7 @@ class SpyWebAppServer:
         return self._json_response(presenters.dead_drop_game_payload(result))
 
     async def game_death_action(self, request: web.Request) -> web.Response:
-        self._limit_game_mutation(request)
+        self._limit_game_request(request)
         game_type, _ = await self._game_session(request)
         if game_type != "death_operation":
             raise web.HTTPBadRequest(text="Это не Смертельная операция")
@@ -574,7 +585,7 @@ class SpyWebAppServer:
         return self._json_response({"url": f"{self.BASE_PATH}/game/#run={result.launch_token}"})
 
     async def game_finish(self, request: web.Request) -> web.Response:
-        self._limit_game_mutation(request)
+        self._limit_game_request(request)
         active = await self._intercept_game_run(request)
         if active.status is not InterceptGameStatus.READY:
             return self._json_response(presenters.intercept_game_payload(active))
@@ -594,7 +605,7 @@ class SpyWebAppServer:
         return self._json_response(presenters.intercept_game_payload(result))
 
     async def game_guess(self, request: web.Request) -> web.Response:
-        self._limit_game_mutation(request)
+        self._limit_game_request(request)
         game_type, active = await self._game_session(request)
         if game_type != "dead_drop":
             raise web.HTTPBadRequest(text="Эта операция не использует кодовый замок")
@@ -616,7 +627,7 @@ class SpyWebAppServer:
         return self._json_response(presenters.dead_drop_game_payload(result))
 
     async def game_mole_accuse(self, request: web.Request) -> web.Response:
-        self._limit_game_mutation(request)
+        self._limit_game_request(request)
         game_type, active = await self._game_session(request)
         if game_type != "find_mole":
             raise web.HTTPBadRequest(text="Эта операция не содержит дела о кроте")

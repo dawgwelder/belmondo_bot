@@ -2072,7 +2072,7 @@ async def test_migrations_are_idempotent_and_progress_survives_restart(tmp_path)
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
         )
-        assert migration_count == 21
+        assert migration_count == 22
     finally:
         await second.close()
 
@@ -2186,7 +2186,7 @@ async def test_existing_version_one_database_upgrades_to_current_schema(tmp_path
             )
         )
         assert state == (
-            list(range(1, 22)),
+            list(range(1, 23)),
             "economy_history",
             "user_items",
             "equipped_items",

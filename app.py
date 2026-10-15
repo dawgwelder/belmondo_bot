@@ -201,10 +201,17 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
     for handler in _build_callback_handlers():
         application.add_handler(handler)
 
+    if application.job_queue is None:
+        await spy_service.close()
+        raise RuntimeError("Spy Game requires python-telegram-bot JobQueue")
+    application.job_queue.run_repeating(
+        spy_game_tick,
+        interval=spy_settings.tick_seconds,
+        first=1,
+        name="spy-game-tick",
+        job_kwargs={"max_instances": 1, "coalesce": True},
+    )
     if spy_settings.enabled:
-        if application.job_queue is None:
-            await spy_service.close()
-            raise RuntimeError("Spy Game requires python-telegram-bot JobQueue")
         from handlers.spy.chase import chase_tick
 
         application.job_queue.run_repeating(
@@ -212,13 +219,6 @@ async def main(mode: str = "dev", spam_mode: str = "medium", token: str = None) 
             interval=1,
             first=1,
             name="spy-chase-tick",
-            job_kwargs={"max_instances": 1, "coalesce": True},
-        )
-        application.job_queue.run_repeating(
-            spy_game_tick,
-            interval=spy_settings.tick_seconds,
-            first=1,
-            name="spy-game-tick",
             job_kwargs={"max_instances": 1, "coalesce": True},
         )
 

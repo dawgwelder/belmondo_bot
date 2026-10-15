@@ -136,6 +136,8 @@ class FindMoleRepository(RepositoryComponent):
         row = self._find_mole_game_row(connection, token_hash)
         if row is None:
             return FindMoleGameRun(FindMoleGameStatus.NOT_FOUND)
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED)
         now_value = _iso(now)
         if row["run_status"] == "ready" and (
             row["run_expires_at"] <= now_value or row["event_expires_at"] <= now_value
@@ -266,6 +268,8 @@ class FindMoleRepository(RepositoryComponent):
         idempotency_key: str,
         now: datetime,
     ) -> FindMoleGameRun:
+        if not self.settings.chat_is_allowed(row["chat_id"]):
+            return FindMoleGameRun(FindMoleGameStatus.DISABLED)
         current_status = self._find_mole_game_status(row)
         if current_status in {FindMoleGameStatus.WON, FindMoleGameStatus.FAILED}:
             return self._find_mole_game_run(row, current_status)

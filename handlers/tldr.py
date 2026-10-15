@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from config import client, logger
 from guards import ensure_master_in_chat_for_ai, pause
-from handlers.ai import _animated_placeholder, _fail_placeholder
+from handlers.ai import _animated_placeholder, _background_ai, _fail_placeholder
 from state import ensure_chat_state
 from telegram_utils import parse_stream, send_long_message
 from tldr.history import fetch_chat_text_messages
@@ -26,6 +26,7 @@ _TLDR_MODEL = "deepseek-v4-flash"
 
 
 @pause
+@_background_ai
 async def tldr(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Summarize the last N chat messages in Belmondo voice."""
     if update.message is None or update.effective_chat is None:

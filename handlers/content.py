@@ -5,7 +5,6 @@ import os
 import random
 
 import aiofiles
-import pandas as pd
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -170,7 +169,7 @@ async def send_morning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @pause
 async def show_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show day-specific sticker."""
-    weekday = pd.Timestamp(datetime.datetime.now(tz)).weekday()
+    weekday = datetime.datetime.now(tz).weekday()
     sticker = os.path.join("img/eva", f"{weekday}.webp")
 
     try:

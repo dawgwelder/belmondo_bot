@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from telethon import TelegramClient
+from telethon_utils import managed_client
 
 from tldr.summarize import ChatMessage, filter_text_messages
 
@@ -41,16 +41,6 @@ def message_to_chat_message(message: Any) -> ChatMessage | None:
     )
 
 
-async def _create_client(config) -> TelegramClient:
-    client = TelegramClient(
-        str(config["auth"]["phone"]),
-        config["auth"]["api_id"],
-        config["auth"]["api_hash"],
-    )
-    await client.start()
-    return client
-
-
 async def fetch_chat_text_messages(
     chat_id: int,
     limit: int,
@@ -64,8 +54,7 @@ async def fetch_chat_text_messages(
 
         config = app_config
 
-    client = await _create_client(config)
-    try:
+    async with managed_client(config) as client:
         collected: list[ChatMessage] = []
         async for message in client.iter_messages(chat_id, limit=limit):
             sender = getattr(message, "sender", None)
@@ -89,5 +78,3 @@ async def fetch_chat_text_messages(
         return filter_text_messages(
             collected, exclude_message_id=exclude_message_id
         )
-    finally:
-        await client.disconnect()

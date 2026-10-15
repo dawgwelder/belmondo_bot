@@ -282,3 +282,19 @@ class EventsUseCases(UseCases):
             ),
             immediate=True,
         )
+
+    async def claim_chase_notification(self, event_id, *, now=None):
+        return await self.database.transaction(
+            lambda connection: self.repository.chase.claim_notification(
+                connection, event_id, now or moscow_now()
+            ),
+            immediate=True,
+        )
+
+    async def defer_chase_notification(self, event_id, retry_at):
+        await self.database.transaction(
+            lambda connection: self.repository.chase.defer_notification(
+                connection, event_id, retry_at
+            ),
+            immediate=True,
+        )
