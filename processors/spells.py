@@ -27,15 +27,6 @@ async def process_special_commands(
             parse_mode="markdown",
         )
 
-    if re.search(r"\bамир\b", msg):
-        td = datetime.datetime(2026, 10, 14, tzinfo=tz) - datetime.datetime.now(tz)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            reply_to_message_id=update.message.message_id,
-            text=f"Амиру до свободы осталось {utils.td_convert(td)}",
-            parse_mode="markdown",
-        )
-
     if re.search(r"\bрулетка\b", msg):
         await start_roulette(update, context)
 
