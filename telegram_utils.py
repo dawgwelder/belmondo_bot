@@ -3,8 +3,9 @@
 import asyncio
 
 import httpx
+from telegram.error import BadRequest
 
-from config import TELEGRAM_MAX_MESSAGE_LENGTH
+from config import TELEGRAM_MAX_MESSAGE_LENGTH, logger
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -61,13 +62,28 @@ async def send_long_message(
     max_length: int = TELEGRAM_MAX_MESSAGE_LENGTH,
 ) -> None:
     """Send a message, splitting it into multiple messages if it exceeds Telegram's limit."""
+
+    async def send_chunk(**kwargs):
+        try:
+            await bot.send_message(**kwargs)
+        except BadRequest as error:
+            if not parse_mode or "can't parse entities" not in str(error).lower():
+                raise
+            logger.warning(
+                "send_long_message: invalid %s entities chat_id=%s; retrying as plain text",
+                parse_mode,
+                chat_id,
+            )
+            kwargs["parse_mode"] = None
+            await bot.send_message(**kwargs)
+
     if len(text) <= max_length:
         kwargs = {"chat_id": chat_id, "text": text}
         if parse_mode:
             kwargs["parse_mode"] = parse_mode
         if reply_to_message_id:
             kwargs["reply_to_message_id"] = reply_to_message_id
-        await bot.send_message(**kwargs)
+        await send_chunk(**kwargs)
         return
 
     chunks: list[str] = []
@@ -109,6 +125,6 @@ async def send_long_message(
             kwargs["parse_mode"] = parse_mode
         if reply_to_message_id and i == 0:
             kwargs["reply_to_message_id"] = reply_to_message_id
-        await bot.send_message(**kwargs)
+        await send_chunk(**kwargs)
         if i < len(chunks) - 1:
             await asyncio.sleep(0.1)
